@@ -168,7 +168,7 @@ describe("addSavedEnvironment", () => {
         pairingUrl: "https://my.server/pair#token=abc",
       }),
     ).rejects.toThrow(
-      "This environment is already your current connection. You can't add it as a separate saved environment.",
+      "This environment is already your current connection. You cannot add it as a separate saved environment.",
     );
 
     expect(mockBootstrapRemoteBearerSession).not.toHaveBeenCalled();

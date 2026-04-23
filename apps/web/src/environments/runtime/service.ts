@@ -972,7 +972,7 @@ export async function addSavedEnvironment(input: {
   if (existingConnection) {
     if (existingConnection.kind === "primary") {
       throw new Error(
-        "This environment is already your current connection. You can't add it as a separate saved environment.",
+        "This environment is already your current connection. You cannot add it as a separate saved environment.",
       );
     }
 
@@ -982,7 +982,7 @@ export async function addSavedEnvironment(input: {
     }
 
     const runtimeState = getSavedEnvironmentRuntimeState(environmentId);
-    const recoveredTimestamp = runtimeState.connectedAt ?? isoNow();
+    const recoveredTimestamp = runtimeState?.connectedAt ?? isoNow();
     const recoveredRecord: SavedEnvironmentRecord = {
       environmentId,
       label: input.label.trim() || descriptor.label,
