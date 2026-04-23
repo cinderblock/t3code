@@ -9,6 +9,8 @@ const mockWriteSavedEnvironmentBearerToken = vi.fn();
 const mockSetSavedEnvironmentRegistry = vi.fn();
 const mockUpsert = vi.fn();
 const mockListSavedEnvironmentRecords = vi.fn();
+const mockCreateEnvironmentConnection = vi.fn();
+const mockCreateWsRpcClient = vi.fn();
 
 vi.mock("../remote/target", () => ({
   resolveRemotePairingTarget: mockResolveRemotePairingTarget,
@@ -55,7 +57,27 @@ vi.mock("./catalog", () => ({
 }));
 
 vi.mock("./connection", () => ({
-  createEnvironmentConnection: vi.fn(),
+  createEnvironmentConnection: mockCreateEnvironmentConnection,
+}));
+
+vi.mock("../primary", () => ({
+  getPrimaryKnownEnvironment: vi.fn(() => ({
+    environmentId: EnvironmentId.make("primary-environment"),
+    label: "Primary",
+    source: "manual",
+    target: {
+      httpBaseUrl: "https://primary.example.com/",
+      wsBaseUrl: "wss://primary.example.com/",
+    },
+  })),
+}));
+
+vi.mock("../../rpc/wsTransport", () => ({
+  WsTransport: vi.fn(),
+}));
+
+vi.mock("../../rpc/wsRpcClient", () => ({
+  createWsRpcClient: mockCreateWsRpcClient,
 }));
 
 describe("addSavedEnvironment", () => {
@@ -79,6 +101,32 @@ describe("addSavedEnvironment", () => {
     mockWriteSavedEnvironmentBearerToken.mockResolvedValue(false);
     mockSetSavedEnvironmentRegistry.mockResolvedValue(undefined);
     mockListSavedEnvironmentRecords.mockReturnValue([]);
+    mockCreateEnvironmentConnection.mockImplementation(({ kind, knownEnvironment }) => ({
+      kind,
+      environmentId: knownEnvironment.environmentId,
+      knownEnvironment,
+      client: {
+        dispose: vi.fn(),
+      },
+      ensureBootstrapped: vi.fn(),
+      reconnect: vi.fn(),
+      dispose: vi.fn(),
+    }));
+    mockCreateWsRpcClient.mockReturnValue({
+      server: {
+        subscribeLifecycle: vi.fn(() => vi.fn()),
+        subscribeConfig: vi.fn(() => vi.fn()),
+      },
+      orchestration: {
+        subscribeShell: vi.fn(() => vi.fn()),
+        subscribeThread: vi.fn(() => vi.fn()),
+      },
+      terminal: {
+        onEvent: vi.fn(() => vi.fn()),
+      },
+      reconnect: vi.fn(),
+      dispose: vi.fn(),
+    });
   });
 
   it("rolls back persisted metadata when bearer token persistence fails", async () => {
@@ -100,6 +148,30 @@ describe("addSavedEnvironment", () => {
     expect(mockSetSavedEnvironmentRegistry).toHaveBeenCalledWith([]);
     expect(mockUpsert).not.toHaveBeenCalled();
 
+    await resetEnvironmentServiceForTests();
+  });
+
+  it("shows a specific error when pairing the already-active primary environment", async () => {
+    mockFetchRemoteEnvironmentDescriptor.mockResolvedValue({
+      environmentId: EnvironmentId.make("primary-environment"),
+      label: "Primary environment",
+    });
+
+    const { addSavedEnvironment, getPrimaryEnvironmentConnection, resetEnvironmentServiceForTests } =
+      await import("./service");
+
+    getPrimaryEnvironmentConnection();
+
+    await expect(
+      addSavedEnvironment({
+        label: "Firefly",
+        pairingUrl: "https://my.server/pair#token=abc",
+      }),
+    ).rejects.toThrow(
+      "This environment is already your current connection. You can't add it as a separate saved environment.",
+    );
+
+    expect(mockBootstrapRemoteBearerSession).not.toHaveBeenCalled();
     await resetEnvironmentServiceForTests();
   });
 });

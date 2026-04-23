@@ -967,9 +967,31 @@ export async function addSavedEnvironment(input: {
     httpBaseUrl: resolvedTarget.httpBaseUrl,
   });
   const environmentId = descriptor.environmentId;
+  const existingConnection = environmentConnections.get(environmentId);
+  if (existingConnection) {
+    if (existingConnection.kind === "primary") {
+      throw new Error(
+        "This environment is already your current connection. You can't add it as a separate saved environment.",
+      );
+    }
 
-  if (environmentConnections.has(environmentId)) {
-    throw new Error("This environment is already connected.");
+    const existingRecord = getSavedEnvironmentRecord(environmentId);
+    if (existingRecord) {
+      throw new Error("This environment is already connected.");
+    }
+
+    const recoveredTimestamp = isoNow();
+    const recoveredRecord: SavedEnvironmentRecord = {
+      environmentId,
+      label: input.label.trim() || descriptor.label,
+      wsBaseUrl: resolvedTarget.wsBaseUrl,
+      httpBaseUrl: resolvedTarget.httpBaseUrl,
+      createdAt: recoveredTimestamp,
+      lastConnectedAt: recoveredTimestamp,
+    };
+    await persistSavedEnvironmentRecord(recoveredRecord);
+    useSavedEnvironmentRegistryStore.getState().upsert(recoveredRecord);
+    return recoveredRecord;
   }
 
   const bearerSession = await bootstrapRemoteBearerSession({
