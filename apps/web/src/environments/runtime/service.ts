@@ -38,6 +38,7 @@ import {
 import { resolveRemotePairingTarget } from "../remote/target";
 import {
   getSavedEnvironmentRecord,
+  getSavedEnvironmentRuntimeState,
   hasSavedEnvironmentRegistryHydrated,
   listSavedEnvironmentRecords,
   persistSavedEnvironmentRecord,
@@ -980,7 +981,8 @@ export async function addSavedEnvironment(input: {
       throw new Error("This environment is already connected.");
     }
 
-    const recoveredTimestamp = isoNow();
+    const runtimeState = getSavedEnvironmentRuntimeState(environmentId);
+    const recoveredTimestamp = runtimeState.connectedAt ?? isoNow();
     const recoveredRecord: SavedEnvironmentRecord = {
       environmentId,
       label: input.label.trim() || descriptor.label,
