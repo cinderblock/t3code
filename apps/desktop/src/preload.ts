@@ -227,3 +227,11 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     },
   },
 } satisfies DesktopBridge);
+
+contextBridge.exposeInMainWorld("__t3CrashLog", {
+  send: (payload: { level: string; source: string; message: string; data?: unknown }) => {
+    try {
+      ipcRenderer.send("__t3-debug-renderer-log", payload);
+    } catch {}
+  },
+});

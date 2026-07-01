@@ -1,7 +1,9 @@
+import * as NodeFs from "node:fs";
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -196,5 +198,22 @@ const desktopRuntimeLayer = desktopClerkLayer.pipe(
     ),
   ),
 );
+
+// Surface renderer-side errors (window.onerror, unhandledrejection, console.error/warn)
+// to a dedicated file alongside the existing desktop logs. The renderer otherwise
+// only logs to DevTools, which is invisible during crash triage.
+{
+  const baseDir = process.env.T3_HOME ?? NodePath.join(NodeOS.homedir(), ".t3");
+  const stateLeaf = process.env.VITE_DEV_SERVER_URL ? "dev" : "userdata";
+  const rendererLogPath = NodePath.join(baseDir, stateLeaf, "logs", "renderer.log");
+  Electron.ipcMain.on("__t3-debug-renderer-log", (_event, payload) => {
+    try {
+      const line =
+        JSON.stringify({ ts: new Date().toISOString(), ...(payload as object) }) + "\n";
+      NodeFs.mkdirSync(NodePath.dirname(rendererLogPath), { recursive: true });
+      NodeFs.appendFileSync(rendererLogPath, line);
+    } catch {}
+  });
+}
 
 DesktopApp.program.pipe(Effect.provide(desktopRuntimeLayer), NodeRuntime.runMain);

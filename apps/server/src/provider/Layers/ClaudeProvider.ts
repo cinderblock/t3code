@@ -602,7 +602,9 @@ const probeClaudeCapabilities = (
           settingSources: ["user", "project", "local"],
           allowedTools: [],
           env: claudeEnvironment,
-          stderr: () => {},
+          stderr: (data: string) => {
+            process.stderr.write(`[claude-probe stderr] ${data}`);
+          },
         },
       });
       const init = await q.initializationResult();
