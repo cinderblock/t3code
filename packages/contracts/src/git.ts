@@ -101,6 +101,11 @@ export type GitResolvedPullRequest = typeof GitResolvedPullRequest.Type;
 
 export const VcsStatusInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
+  // Honored only by vcs.refreshStatus: when false, refresh local status but skip the
+  // remote/upstream `git fetch`, reusing the cached remote status. Lets passive triggers
+  // (e.g. window refocus) update local status without a network fetch that can collide
+  // with the connection health-check probe. Defaults to a full (local + remote) refresh.
+  refreshRemote: Schema.optional(Schema.Boolean),
 });
 export type VcsStatusInput = typeof VcsStatusInput.Type;
 

@@ -160,7 +160,10 @@ export class VcsStatusBroadcaster extends Context.Service<
     readonly refreshLocalStatus: (
       cwd: string,
     ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
-    readonly refreshStatus: (cwd: string) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
+    readonly refreshStatus: (
+      cwd: string,
+      options?: { readonly refreshUpstream?: boolean },
+    ) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
     readonly streamStatus: (
       input: VcsStatusInput,
       options?: StreamStatusOptions,
@@ -364,14 +367,22 @@ export const make = Effect.gen(function* () {
 
   const refreshStatus: VcsStatusBroadcaster["Service"]["refreshStatus"] = Effect.fn(
     "VcsStatusBroadcaster.refreshStatus",
-  )(function* (rawCwd) {
+  )(function* (rawCwd, options) {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
-    yield* Effect.all([workflow.invalidateLocalStatus(cwd), workflow.invalidateRemoteStatus(cwd)], {
-      concurrency: "unbounded",
-      discard: true,
-    });
+    const refreshUpstream = options?.refreshUpstream !== false;
+    // When refreshUpstream is false, recompute local status but leave the remote cache intact
+    // so remoteStatus reuses the last fetch instead of triggering a fresh `git fetch`.
+    yield* Effect.all(
+      refreshUpstream
+        ? [workflow.invalidateLocalStatus(cwd), workflow.invalidateRemoteStatus(cwd)]
+        : [workflow.invalidateLocalStatus(cwd)],
+      {
+        concurrency: "unbounded",
+        discard: true,
+      },
+    );
     const [local, remote] = yield* Effect.all(
-      [workflow.localStatus({ cwd }), workflow.remoteStatus({ cwd })],
+      [workflow.localStatus({ cwd }), workflow.remoteStatus({ cwd }, { refreshUpstream })],
       { concurrency: "unbounded" },
     );
     return yield* updateCachedStatus(cwd, local, remote, { publish: true });

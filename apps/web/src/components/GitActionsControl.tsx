@@ -139,18 +139,22 @@ const GIT_STATUS_WINDOW_REFRESH_DEBOUNCE_MS = 250;
 
 type RefreshVcsStatus = (target: {
   readonly environmentId: ScopedThreadRef["environmentId"];
-  readonly input: { readonly cwd: string };
+  readonly input: { readonly cwd: string; readonly refreshRemote?: boolean };
 }) => Promise<unknown>;
 
 function requestVcsStatusRefresh(
   refresh: RefreshVcsStatus,
   environmentId: ScopedThreadRef["environmentId"] | null,
   cwd: string | null,
+  options?: { readonly refreshRemote?: boolean },
 ): void {
   if (environmentId === null || cwd === null) {
     return;
   }
-  void refresh({ environmentId, input: { cwd } });
+  void refresh({
+    environmentId,
+    input: { cwd, ...(options?.refreshRemote === false ? { refreshRemote: false } : {}) },
+  });
 }
 const RUNNING_SOURCE_CONTROL_ACTIONS = ["runStackedAction", "pull", "publishRepository"] as const;
 
@@ -1190,7 +1194,13 @@ export default function GitActionsControl({
       }
       refreshTimeout = window.setTimeout(() => {
         refreshTimeout = null;
-        requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
+        // Passive window refocus: refresh local status only. Forcing a remote `git fetch` here
+        // can stall the backend past the connection health-check probe timeout (a slow fetch
+        // shows up as "did not respond to a connection health check"). The 30s server-side
+        // broadcaster keeps remote status fresh.
+        requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd, {
+          refreshRemote: false,
+        });
       }, GIT_STATUS_WINDOW_REFRESH_DEBOUNCE_MS);
     };
     const handleVisibilityChange = () => {
