@@ -51,6 +51,9 @@ const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
 
 const STATUS_UPSTREAM_REFRESH_FAILURE_COOLDOWN = Duration.seconds(5);
+// Upper bound for the exponential failure backoff so a chronically-unreachable remote
+// settles at one attempt every few minutes instead of hammering every failure cooldown.
+const STATUS_UPSTREAM_REFRESH_MAX_FAILURE_COOLDOWN = Duration.minutes(5);
 const STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY = 2_048;
 const STATUS_UPSTREAM_REFRESH_ENV = Object.freeze({
   GCM_INTERACTIVE: "never",
@@ -953,13 +956,32 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return true as const;
   });
 
+  // Consecutive fetch-failure count per remote, so an unreachable/slow remote backs off
+  // exponentially instead of being re-fetched every failure cooldown (which floods the
+  // backend with git spawns and can starve the connection health check).
+  const statusRemoteRefreshFailureStreak = new Map<string, number>();
+  const statusRemoteRefreshFailureKey = (key: StatusRemoteRefreshCacheKey) =>
+    `${key.gitCommonDir} ${key.remoteName}`;
+
   const statusRemoteRefreshCache = yield* Cache.makeWith(refreshStatusRemoteCacheEntry, {
     capacity: STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY,
-    // Keep successful refreshes warm and briefly back off failed refreshes to avoid retry storms.
-    timeToLive: (exit) =>
-      Exit.isSuccess(exit)
-        ? STATUS_UPSTREAM_REFRESH_INTERVAL
-        : STATUS_UPSTREAM_REFRESH_FAILURE_COOLDOWN,
+    // Keep successful refreshes warm; back failed refreshes off exponentially (5s, 10s, 20s, …
+    // capped at STATUS_UPSTREAM_REFRESH_MAX_FAILURE_COOLDOWN) so a chronically-failing remote
+    // is not retried every few seconds.
+    timeToLive: (exit, key) => {
+      const failureKey = statusRemoteRefreshFailureKey(key);
+      if (Exit.isSuccess(exit)) {
+        statusRemoteRefreshFailureStreak.delete(failureKey);
+        return STATUS_UPSTREAM_REFRESH_INTERVAL;
+      }
+      const failures = (statusRemoteRefreshFailureStreak.get(failureKey) ?? 0) + 1;
+      statusRemoteRefreshFailureStreak.set(failureKey, failures);
+      const backoffMs = Math.min(
+        Duration.toMillis(STATUS_UPSTREAM_REFRESH_FAILURE_COOLDOWN) * 2 ** (failures - 1),
+        Duration.toMillis(STATUS_UPSTREAM_REFRESH_MAX_FAILURE_COOLDOWN),
+      );
+      return Duration.millis(backoffMs);
+    },
   });
 
   const refreshStatusUpstreamIfStale = Effect.fn("refreshStatusUpstreamIfStale")(function* (
