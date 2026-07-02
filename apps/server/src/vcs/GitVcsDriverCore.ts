@@ -48,7 +48,10 @@ const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 120_000;
 const REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES = 80_000;
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 120_000;
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
-const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(5);
+// Allow enough time for a real fetch to complete (SSH cold handshakes can push an otherwise
+// ~2s fetch over a tighter budget, especially under load). The exponential failure backoff
+// and cached executable resolution keep this from turning into a retry storm.
+const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(15);
 
 const STATUS_UPSTREAM_REFRESH_FAILURE_COOLDOWN = Duration.seconds(5);
 // Upper bound for the exponential failure backoff so a chronically-unreachable remote
