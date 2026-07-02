@@ -48,10 +48,14 @@ const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 120_000;
 const REVIEW_UNTRACKED_DIFF_MAX_OUTPUT_BYTES = 80_000;
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 120_000;
 const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
-// Allow enough time for a real fetch to complete (SSH cold handshakes can push an otherwise
-// ~2s fetch over a tighter budget, especially under load). The exponential failure backoff
-// and cached executable resolution keep this from turning into a retry storm.
-const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(15);
+// A real status fetch is ~2-3s (an SSH cold handshake dominates on Windows, which can't
+// multiplex). With the concurrency cap below keeping fetches from contending, 8s leaves margin
+// without letting a contended/hung fetch bog the backend as long as a larger budget would.
+const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(8);
+// Max concurrent status `git fetch`es across ALL repos. Without this, N open repos each fire
+// their own fetch at once → N simultaneous SSH handshakes that contend, blow past the timeout,
+// and bog the backend enough to trip the connection health check.
+const STATUS_UPSTREAM_REFRESH_CONCURRENCY = 4;
 
 const STATUS_UPSTREAM_REFRESH_FAILURE_COOLDOWN = Duration.seconds(5);
 // Upper bound for the exponential failure backoff so a chronically-unreachable remote
@@ -926,22 +930,27 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     );
   });
 
+  // Throttle concurrent status fetches so many open repos don't fire a storm of simultaneous
+  // SSH handshakes. The permit wait sits outside the git command's own timeout.
+  const statusRemoteFetchSemaphore = yield* Semaphore.make(STATUS_UPSTREAM_REFRESH_CONCURRENCY);
   const fetchRemoteForStatus = (
     gitCommonDir: string,
     remoteName: string,
   ): Effect.Effect<void, GitCommandError> => {
     const fetchCwd =
       path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
-    return executeGit(
-      "GitVcsDriver.fetchRemoteForStatus",
-      fetchCwd,
-      ["--git-dir", gitCommonDir, "fetch", "--quiet", "--no-tags", remoteName],
-      {
-        allowNonZeroExit: true,
-        env: STATUS_UPSTREAM_REFRESH_ENV,
-        timeoutMs: Duration.toMillis(STATUS_UPSTREAM_REFRESH_TIMEOUT),
-      },
-    ).pipe(Effect.asVoid);
+    return statusRemoteFetchSemaphore.withPermits(1)(
+      executeGit(
+        "GitVcsDriver.fetchRemoteForStatus",
+        fetchCwd,
+        ["--git-dir", gitCommonDir, "fetch", "--quiet", "--no-tags", remoteName],
+        {
+          allowNonZeroExit: true,
+          env: STATUS_UPSTREAM_REFRESH_ENV,
+          timeoutMs: Duration.toMillis(STATUS_UPSTREAM_REFRESH_TIMEOUT),
+        },
+      ).pipe(Effect.asVoid),
+    );
   };
 
   const resolveGitCommonDir = Effect.fn("resolveGitCommonDir")(function* (cwd: string) {
