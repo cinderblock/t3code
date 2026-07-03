@@ -30,7 +30,9 @@ import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
 
 const RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000] as const;
-const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
+// Generous so a busy-but-alive backend (e.g. a burst of git-status work right after a reconnect)
+// can finish connection setup instead of timing out and reconnecting into a bootstrap spiral.
+const CONNECTION_ESTABLISHMENT_TIMEOUT = "30 seconds";
 const CONNECTION_PROBE_TIMEOUT = "15 seconds";
 const BACKOFF_RESET_AFTER_MS = 30_000;
 // A single slow health-check probe must not tear down a live connection. A busy backend (e.g.

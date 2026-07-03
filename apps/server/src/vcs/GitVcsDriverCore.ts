@@ -54,8 +54,10 @@ const STATUS_UPSTREAM_REFRESH_INTERVAL = Duration.seconds(15);
 const STATUS_UPSTREAM_REFRESH_TIMEOUT = Duration.seconds(8);
 // Max concurrent status `git fetch`es across ALL repos. Without this, N open repos each fire
 // their own fetch at once → N simultaneous SSH handshakes that contend, blow past the timeout,
-// and bog the backend enough to trip the connection health check.
-const STATUS_UPSTREAM_REFRESH_CONCURRENCY = 4;
+// and bog the backend enough to trip the connection health check. Kept low: a single fetch is
+// ~3-4s (SSH cold handshake dominates on Windows, no multiplexing), and even a handful in
+// parallel contend enough to push past the timeout, so a small cap keeps each fetch succeeding.
+const STATUS_UPSTREAM_REFRESH_CONCURRENCY = 2;
 
 const STATUS_UPSTREAM_REFRESH_FAILURE_COOLDOWN = Duration.seconds(5);
 // Upper bound for the exponential failure backoff so a chronically-unreachable remote
