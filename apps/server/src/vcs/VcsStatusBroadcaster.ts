@@ -10,7 +10,6 @@ import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
-import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SynchronizedRef from "effect/SynchronizedRef";
 import type {
@@ -26,11 +25,6 @@ import { mergeGitStatusParts } from "@t3tools/shared/git";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 
 const DEFAULT_VCS_STATUS_REFRESH_INTERVAL = Duration.seconds(30);
-// Cap how many repos refresh status concurrently in the background pollers. With many open repos,
-// the per-repo status pass (repo detection + ahead/behind, plus any upstream fetch) otherwise fans
-// out for all repos at once and can freeze the backend event loop at startup, so connection setup
-// times out. Keep it small; on-demand (user-initiated) status requests are not throttled by this.
-const STATUS_REFRESH_CONCURRENCY = 3;
 const VCS_STATUS_REFRESH_FAILURE_BASE_DELAY = Duration.seconds(30);
 const VCS_STATUS_REFRESH_FAILURE_MAX_DELAY = Duration.minutes(15);
 const MAX_FAILURE_DIAGNOSTIC_VALUES = 8;
@@ -394,8 +388,6 @@ export const make = Effect.gen(function* () {
     return yield* updateCachedStatus(cwd, local, remote, { publish: true });
   });
 
-  const statusRefreshSemaphore = yield* Semaphore.make(STATUS_REFRESH_CONCURRENCY);
-
   const makeRemoteRefreshLoop = (
     cwd: string,
     automaticRemoteRefreshInterval: Effect.Effect<Duration.Duration, never>,
@@ -414,13 +406,9 @@ export const make = Effect.gen(function* () {
           return activeInterval;
         }
 
-        const exit = yield* statusRefreshSemaphore
-          .withPermits(1)(
-            refreshRemoteStatus(cwd, {
-              refreshUpstream: !Duration.isZero(configuredInterval),
-            }),
-          )
-          .pipe(Effect.exit);
+        const exit = yield* refreshRemoteStatus(cwd, {
+          refreshUpstream: !Duration.isZero(configuredInterval),
+        }).pipe(Effect.exit);
         if (Exit.isSuccess(exit)) {
           yield* Ref.set(needsInitialRefreshRef, false);
           yield* Ref.set(consecutiveFailuresRef, 0);
