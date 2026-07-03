@@ -33,6 +33,40 @@ const RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000] as const;
 const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
 const CONNECTION_PROBE_TIMEOUT = "15 seconds";
 const BACKOFF_RESET_AFTER_MS = 30_000;
+// A single slow health-check probe must not tear down a live connection. A busy backend (e.g.
+// heavy git-status work) can delay the probe RPC well past CONNECTION_PROBE_TIMEOUT while the
+// socket is perfectly alive, and reconnecting only re-runs bootstrap and bogs the backend more
+// (a disconnect spiral). Retry the probe up to this many times before treating the connection as
+// dead. A genuinely dead socket is still detected immediately and separately via session.closed;
+// this retry loop only extends how long we tolerate a *slow* (not closed) connection.
+const CONNECTION_PROBE_MAX_ATTEMPTS = 4;
+const CONNECTION_PROBE_RETRY_DELAY = "1 second";
+
+// Probe the connection, tolerating a slow-but-open backend: a probe timeout is retried; only a
+// probe that keeps timing out (or fails outright) marks the connection as unhealthy. A real socket
+// close is surfaced elsewhere via session.closed, so this never masks an actually-dead connection.
+const runConnectionHealthCheck = (
+  probe: Effect.Effect<void, ConnectionAttemptError>,
+  label: string,
+): Effect.Effect<void, ConnectionAttemptError> =>
+  Effect.gen(function* () {
+    for (let attempt = 1; ; attempt++) {
+      const outcome = yield* probe.pipe(Effect.timeoutOption(CONNECTION_PROBE_TIMEOUT));
+      if (Option.isSome(outcome)) {
+        return;
+      }
+      if (attempt >= CONNECTION_PROBE_MAX_ATTEMPTS) {
+        return yield* new ConnectionTransientError({
+          reason: "timeout",
+          detail: `${label} did not respond to a connection health check.`,
+        });
+      }
+      yield* Effect.logWarning(
+        `${label} health check slow (attempt ${attempt}/${CONNECTION_PROBE_MAX_ATTEMPTS}); connection still open, retrying.`,
+      );
+      yield* Effect.sleep(CONNECTION_PROBE_RETRY_DELAY);
+    }
+  });
 
 interface SupervisorIntent {
   readonly desired: boolean;
@@ -403,17 +437,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
             return;
           }
           if (next.reason === "application-active") {
-            const probe = yield* lease.session.probe.pipe(
-              Effect.timeoutOrElse({
-                duration: CONNECTION_PROBE_TIMEOUT,
-                orElse: () =>
-                  Effect.fail(
-                    new ConnectionTransientError({
-                      reason: "timeout",
-                      detail: `${target.label} did not respond to a connection health check.`,
-                    }),
-                  ),
-              }),
+            const probe = yield* runConnectionHealthCheck(lease.session.probe, target.label).pipe(
               Effect.forkChild,
             );
             for (;;) {
