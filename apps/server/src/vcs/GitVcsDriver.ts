@@ -415,7 +415,21 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         timeoutMs: 5_000,
         maxOutputBytes: 4_096,
       },
-    ).pipe(Effect.map((result) => result.exitCode === 0 && result.stdout.trim() === "true"));
+    ).pipe(
+      Effect.map((result) => result.exitCode === 0 && result.stdout.trim() === "true"),
+      // A timeout determining work-tree membership must not escape as an unhandled defect and
+      // crash status refresh. Under load this best-effort check can time out on a live repo;
+      // degrade to "not a work tree" for this cycle — it self-corrects on the next refresh.
+      Effect.catchTags({
+        VcsProcessTimeoutError: (error) =>
+          Effect.logDebug(
+            `GitVcsDriver.isInsideWorkTree timed out for ${cwd}; treating as not a work tree`,
+          ).pipe(
+            Effect.annotateLogs("timeoutMs", error.timeoutMs),
+            Effect.as(false),
+          ),
+      }),
+    );
 
   const execute: VcsDriver.VcsDriver["Service"]["execute"] = (input) =>
     gitCommand(vcsProcess, input.operation, input.cwd, input.args, {
