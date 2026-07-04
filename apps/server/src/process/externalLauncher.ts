@@ -260,28 +260,36 @@ function buildBrowserLaunch(
   };
 }
 
+// Bound each editor availability lookup. isCommandAvailable walks PATH with fs.stat, and a slow or
+// unresponsive PATH entry (e.g. a dead mapped network drive) otherwise made this detection block
+// the backend for ~a minute — long enough to trip the connection health check. A timed-out lookup
+// is treated as "not available".
+const EDITOR_DETECTION_TIMEOUT = "2 seconds";
+
 const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors")(function* (
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
 ): Effect.fn.Return<ReadonlyArray<EditorId>, never, FileSystem.FileSystem | Path.Path> {
-  const available: EditorId[] = [];
-
-  for (const editor of EDITORS) {
-    if (editor.commands === null) {
-      const command = fileManagerCommandForPlatform(platform);
-      if (yield* isCommandAvailable(command, { env })) {
-        available.push(editor.id);
+  const isEditorAvailable = (editor: (typeof EDITORS)[number]) =>
+    Effect.gen(function* () {
+      if (editor.commands === null) {
+        return yield* isCommandAvailable(fileManagerCommandForPlatform(platform), { env });
       }
-      continue;
-    }
+      return Option.isSome(yield* resolveAvailableCommand(editor.commands, env));
+    }).pipe(
+      Effect.timeoutOption(EDITOR_DETECTION_TIMEOUT),
+      Effect.map(Option.getOrElse(() => false)),
+    );
 
-    const command = yield* resolveAvailableCommand(editor.commands, env);
-    if (Option.isSome(command)) {
-      available.push(editor.id);
-    }
-  }
+  // Check editors concurrently so total time is bounded by the slowest single lookup, not the sum.
+  const results = yield* Effect.all(
+    EDITORS.map((editor) =>
+      isEditorAvailable(editor).pipe(Effect.map((available) => ({ id: editor.id, available }))),
+    ),
+    { concurrency: "unbounded" },
+  );
 
-  return available;
+  return results.filter((result) => result.available).map((result) => result.id);
 });
 
 const resolveBrowserLaunch = Effect.fn("externalLauncher.resolveBrowserLaunch")(function* (
