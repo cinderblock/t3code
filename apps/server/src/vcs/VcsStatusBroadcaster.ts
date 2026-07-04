@@ -25,6 +25,11 @@ import { mergeGitStatusParts } from "@t3tools/shared/git";
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 
 const DEFAULT_VCS_STATUS_REFRESH_INTERVAL = Duration.seconds(30);
+// Defer each poller's first status refresh by this much. With many open repos, N pollers all doing
+// their initial status pass at process start can keep the backend busy long enough that it fails to
+// serve its readiness endpoint before the desktop bootstrap's timeout — and the app won't start.
+// Waiting lets the backend come up and answer readiness first; the (deferred) status pass then runs.
+const STATUS_REFRESH_STARTUP_GRACE = Duration.seconds(10);
 const VCS_STATUS_REFRESH_FAILURE_BASE_DELAY = Duration.seconds(30);
 const VCS_STATUS_REFRESH_FAILURE_MAX_DELAY = Duration.minutes(15);
 const MAX_FAILURE_DIAGNOSTIC_VALUES = 8;
@@ -394,6 +399,8 @@ export const make = Effect.gen(function* () {
     refreshImmediately: boolean,
   ) => {
     return Effect.gen(function* () {
+      // Let the backend finish coming up (and serve readiness) before this poller's first refresh.
+      yield* Effect.sleep(STATUS_REFRESH_STARTUP_GRACE);
       const consecutiveFailuresRef = yield* Ref.make(0);
       const needsInitialRefreshRef = yield* Ref.make(refreshImmediately);
       const refreshRemoteStatusIfEnabled = Effect.gen(function* () {
