@@ -1534,22 +1534,36 @@ function SavedBackendListRow({
               </TooltipPopup>
             </Tooltip>
           ) : (
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={isConnecting || removingEnvironmentId === environmentId}
-              onClick={() =>
-                void (isConnected ? onRemove(environmentId) : onConnect(environmentId))
-              }
-            >
-              {isConnected
-                ? removingEnvironmentId === environmentId
-                  ? "Disconnecting…"
-                  : "Disconnect"
-                : isConnecting
-                  ? "Connecting…"
-                  : "Connect"}
-            </Button>
+            <>
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={isConnecting || removingEnvironmentId === environmentId}
+                onClick={() =>
+                  void (isConnected ? onRemove(environmentId) : onConnect(environmentId))
+                }
+              >
+                {isConnected
+                  ? removingEnvironmentId === environmentId
+                    ? "Disconnecting…"
+                    : "Disconnect"
+                  : isConnecting
+                    ? "Connecting…"
+                    : "Connect"}
+              </Button>
+              {/* A backend that never connects sits in connecting/reconnecting forever,
+                  which disables the button above — removal must stay reachable. */}
+              {isConnected ? null : (
+                <Button
+                  size="xs"
+                  variant="destructive-outline"
+                  disabled={removingEnvironmentId === environmentId}
+                  onClick={() => void onRemove(environmentId)}
+                >
+                  {removingEnvironmentId === environmentId ? "Removing…" : "Remove"}
+                </Button>
+              )}
+            </>
           )}
         </div>
       </div>
