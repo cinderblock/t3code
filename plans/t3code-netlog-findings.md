@@ -65,6 +65,28 @@ errors worth fixing, in support of the ongoing crash/startup-freeze investigatio
       non-retryable / long-backoff "version skew or incompatible environment" state with UI surfacing.
 - [ ] (Optional, dev QoL) add `--no-proxy-server` in dev launch to silence WPAD noise.
 
+## 4. `UnknownVizError` snapshot spam (separate console log, 2026-07-16 run)
+
+Repeated `Error occurred in handler for 'desktop:preview-automation-snapshot'` with
+`cause: [Error: UnknownVizError]` across tab_1/2/3.
+
+- **What it is:** `webContents.capturePage()` (`preview/Manager.ts`) rejects with Chromium's
+  compositor error when the target has no compositable frame — a backgrounded/occluded preview
+  tab (only the visible view is painted), or a page that failed to load (e.g. the interleaved
+  `http://localhost:3199/admin ERR_CONNECTION_REFUSED` — a preview tab pointed at a down dev
+  server, so nothing to capture).
+- **Not a crash.** "Error occurred in handler for …" is Electron's own log for a rejected
+  `ipcMain.handle` promise (`DesktopIpc.ts:96`); it's serialized back to the renderer and the app
+  keeps running. The window close was independent/manual.
+- **Weakness fixed:** in `captureAutomationSnapshot` the `capturePage()` call sat inside
+  `Effect.all([...])` alongside the AX tree / diagnostics / timelines, so one uncapturable frame
+  failed the _entire_ snapshot. Now the screenshot degrades to `null` (via `Effect.option`) and the
+  rest of the snapshot returns normally.
+  - `packages/contracts/src/previewAutomation.ts`: `screenshot` is now `Schema.NullOr(...)`.
+  - `apps/server/src/mcp/McpHttpServer.ts`: `preview_snapshot` omits the image content block and
+    reports `screenshot: null` when absent (previously always appended an image / indexed into it).
+  - Tests: `Manager.test.ts` (null + success paths), existing `McpHttpServer.test.ts` still green.
+
 ## Things not to do
 
 - Don't treat the `online-metrix` / `-181` console errors as app bugs — third-party content.

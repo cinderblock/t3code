@@ -716,6 +716,102 @@ describe("PreviewManager", () => {
     ),
   );
 
+  const snapshotWebContentsMock = (capturePage: () => Promise<unknown>) => {
+    const sendCommand = vi.fn(async (method: string) => {
+      if (method === "Runtime.evaluate") {
+        return {
+          result: {
+            value: {
+              url: "https://example.com",
+              title: "Example",
+              loading: false,
+              visibleText: "hello",
+              interactiveElements: [],
+            },
+          },
+        };
+      }
+      if (method === "Accessibility.getFullAXTree") {
+        return { nodes: [] };
+      }
+      return undefined;
+    });
+    fromId.mockReturnValue({
+      id: 42,
+      isDestroyed: () => false,
+      getType: () => "webview",
+      getURL: () => "https://example.com",
+      getTitle: () => "Example",
+      isLoading: () => false,
+      isDevToolsOpened: () => false,
+      getZoomFactor: () => 1,
+      setZoomFactor: vi.fn(),
+      on: vi.fn(),
+      off: vi.fn(),
+      ipc: { on: vi.fn(), off: vi.fn() },
+      send: webviewSend,
+      navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+      setWindowOpenHandler: vi.fn(),
+      capturePage,
+      debugger: {
+        isAttached: () => false,
+        attach: vi.fn(),
+        sendCommand,
+        on: vi.fn(),
+        off: vi.fn(),
+      },
+    } as never);
+  };
+
+  effectIt.effect("returns a null screenshot when the tab has no capturable frame", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        // A backgrounded/occluded tab, or a page that failed to load, has no
+        // compositable frame, so capturePage rejects with UnknownVizError.
+        const capturePage = vi.fn(async () => {
+          throw new Error("UnknownVizError");
+        });
+        snapshotWebContentsMock(capturePage);
+
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+        const snapshot = yield* manager.automationSnapshot("tab_1");
+
+        expect(capturePage).toHaveBeenCalledOnce();
+        // The screenshot degrades to null, but the rest of the snapshot is intact.
+        expect(snapshot.screenshot).toBeNull();
+        expect(snapshot.url).toBe("https://example.com");
+        expect(snapshot.visibleText).toBe("hello");
+        expect(snapshot.accessibilityTree).toEqual({ nodes: [] });
+      }),
+    ),
+  );
+
+  effectIt.effect("includes the screenshot when the frame can be captured", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const png = Buffer.from("snapshot-png");
+        const capturePage = vi.fn(async () => ({
+          getSize: () => ({ width: 320, height: 240 }),
+          resize: vi.fn(),
+          toPNG: () => png,
+        }));
+        snapshotWebContentsMock(capturePage);
+
+        yield* manager.createTab("tab_1");
+        yield* manager.registerWebview("tab_1", 42);
+        const snapshot = yield* manager.automationSnapshot("tab_1");
+
+        expect(snapshot.screenshot).toEqual({
+          mimeType: "image/png",
+          data: png.toString("base64"),
+          width: 320,
+          height: 240,
+        });
+      }),
+    ),
+  );
+
   effectIt.effect("types in background webviews and enables native key input", () =>
     withManager((manager) =>
       Effect.gen(function* () {

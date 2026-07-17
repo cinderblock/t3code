@@ -1917,6 +1917,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       );
       const [accessibility, sourceImage, diagnostics, timelines] = yield* Effect.all([
         send("Accessibility.getFullAXTree"),
+        // A backgrounded/occluded tab or a page that failed to load has no
+        // compositable frame, so capturePage rejects with UnknownVizError.
+        // Don't let that discard the rest of the snapshot (accessibility tree,
+        // visible text, console, network) — degrade to a null screenshot.
         attemptPromise(
           {
             operation: "automationSnapshot.capturePage",
@@ -1924,29 +1928,35 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             webContentsId: wc.id,
           },
           () => wc.capturePage(),
-        ),
+        ).pipe(Effect.option),
         Ref.get(diagnosticsRef),
         Ref.get(actionTimelineRef),
       ]);
-      const sourceSize = sourceImage.getSize();
-      const image =
-        sourceSize.width > MAX_SCREENSHOT_WIDTH
-          ? sourceImage.resize({ width: MAX_SCREENSHOT_WIDTH })
-          : sourceImage;
-      const size = image.getSize();
       const browserDiagnostics = diagnostics.get(wc.id);
+      const screenshot = Option.match(sourceImage, {
+        onNone: () => null,
+        onSome: (captured) => {
+          const sourceSize = captured.getSize();
+          const image =
+            sourceSize.width > MAX_SCREENSHOT_WIDTH
+              ? captured.resize({ width: MAX_SCREENSHOT_WIDTH })
+              : captured;
+          const size = image.getSize();
+          return {
+            mimeType: "image/png" as const,
+            data: image.toPNG().toString("base64"),
+            width: size.width,
+            height: size.height,
+          };
+        },
+      });
       return {
         ...page,
         accessibilityTree: accessibility,
         consoleEntries: [...(browserDiagnostics?.consoleEntries ?? [])],
         networkEntries: [...(browserDiagnostics?.networkEntries ?? [])],
         actionTimeline: [...(timelines.get(tabId) ?? [])],
-        screenshot: {
-          mimeType: "image/png" as const,
-          data: image.toPNG().toString("base64"),
-          width: size.width,
-          height: size.height,
-        },
+        screenshot,
       };
     },
   );

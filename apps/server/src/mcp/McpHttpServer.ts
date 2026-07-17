@@ -157,22 +157,26 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
             onFailure: previewSnapshotFailure,
             onSuccess: ({ encodedResult }) => {
               const snapshot = encodedResult as {
+                // Null when the tab had no compositable frame (backgrounded,
+                // occluded, or a page that failed to load).
                 readonly screenshot: {
                   readonly mimeType: "image/png";
                   readonly data: string;
                   readonly width: number;
                   readonly height: number;
-                };
+                } | null;
                 readonly [key: string]: unknown;
               };
               const { screenshot, ...page } = snapshot;
               const metadata = {
                 ...page,
-                screenshot: {
-                  mimeType: screenshot.mimeType,
-                  width: screenshot.width,
-                  height: screenshot.height,
-                },
+                screenshot: screenshot
+                  ? {
+                      mimeType: screenshot.mimeType,
+                      width: screenshot.width,
+                      height: screenshot.height,
+                    }
+                  : null,
               };
               return Effect.succeed(
                 new McpSchema.CallToolResult({
@@ -180,11 +184,15 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
                   structuredContent: metadata,
                   content: [
                     { type: "text", text: JSON.stringify(metadata) },
-                    {
-                      type: "image",
-                      data: new Uint8Array(Buffer.from(screenshot.data, "base64")),
-                      mimeType: screenshot.mimeType,
-                    },
+                    ...(screenshot
+                      ? [
+                          {
+                            type: "image" as const,
+                            data: new Uint8Array(Buffer.from(screenshot.data, "base64")),
+                            mimeType: screenshot.mimeType,
+                          },
+                        ]
+                      : []),
                   ],
                 }),
               );
