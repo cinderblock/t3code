@@ -13,6 +13,12 @@ import * as VcsDriver from "./VcsDriver.ts";
 
 const DETECTION_CACHE_CAPACITY = 2_048;
 const DETECTION_CACHE_TTL = Duration.seconds(2);
+// Cache detection FAILURES too, briefly. A failure means the path couldn't be probed at all — e.g.
+// an unreachable folder (a network drive not visible to the backend). Without this, every status /
+// checkpoint / title operation re-runs git against that path, and those spawns pile up and can
+// destabilize the backend. Backing the failure off means one probe per window instead of a storm,
+// and it self-heals when the path becomes reachable again.
+const DETECTION_FAILURE_TTL = Duration.seconds(30);
 
 export interface VcsDriverResolveInput {
   readonly cwd: string;
@@ -115,7 +121,7 @@ export const make = Effect.gen(function* () {
     (key) => detectResolvedKind(parseDetectionCacheKey(key)),
     {
       capacity: DETECTION_CACHE_CAPACITY,
-      timeToLive: (exit) => (Exit.isSuccess(exit) ? DETECTION_CACHE_TTL : Duration.zero),
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? DETECTION_CACHE_TTL : DETECTION_FAILURE_TTL),
     },
   );
 
