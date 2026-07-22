@@ -193,5 +193,25 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
         expect(resolved).toContain("public/brand/logo.svg");
       }),
     );
+
+    it.effect("caches resolution so a later removal still serves the cached path", () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
+        const cwd = yield* makeTempDir;
+        yield* writeTextFile(cwd, "favicon.svg", "<svg>favicon</svg>");
+
+        const first = yield* resolver.resolvePath(cwd);
+        expect(first).toContain("favicon.svg");
+
+        // Remove the file the resolver just found; a cache hit must still serve the prior path
+        // rather than re-walking the filesystem and returning null.
+        yield* fileSystem.remove(path.join(cwd, "favicon.svg")).pipe(Effect.orDie);
+
+        const second = yield* resolver.resolvePath(cwd);
+        expect(second).toBe(first);
+      }),
+    );
   });
 });

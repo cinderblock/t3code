@@ -6,7 +6,9 @@
  *
  * @module ProjectFaviconResolver
  */
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -16,6 +18,23 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+
+// Favicon files effectively never change during a session, but the web client re-issues an asset
+// URL per project on every reconnect. Without a cache each request re-walks ~21 stat + 7 read
+// candidates, and under reconnect churn (git-status storms) those walks pile onto an already busy
+// event loop and push `assets.createUrl` past the client's 15s slow-request threshold. Cache the
+// resolved path (positive and negative) per normalized workspace root for a short TTL so a burst of
+// reconnects costs at most one walk per project.
+const FAVICON_CACHE_TTL = Duration.minutes(5);
+
+// Bound a single resolution so a slow or hung filesystem entry (e.g. an unresponsive mapped network
+// drive in one of the candidate paths) degrades to the fallback favicon instead of blocking the RPC.
+const FAVICON_RESOLVE_TIMEOUT = Duration.seconds(5);
+
+interface FaviconCacheEntry {
+  readonly value: string | null;
+  readonly expiresAtMs: number;
+}
 
 // Well-known favicon paths checked in order.
 const FAVICON_CANDIDATES = [
@@ -118,6 +137,8 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
 
+  const cache = new Map<string, FaviconCacheEntry>();
+
   const resolveIconHref = (href: string): ReadonlyArray<string> => {
     const clean = href.replace(/^\//, "");
     return [path.join("public", clean), clean];
@@ -164,19 +185,9 @@ export const make = Effect.gen(function* () {
     return null;
   });
 
-  const resolvePath: ProjectFaviconResolver["Service"]["resolvePath"] = Effect.fn(
-    "ProjectFaviconResolver.resolvePath",
-  )(function* (cwd) {
-    const projectCwd = yield* workspacePaths.normalizeWorkspaceRoot(cwd).pipe(
-      Effect.mapError(
-        (cause) =>
-          new ProjectFaviconResolutionError({
-            operation: "normalize-workspace",
-            workspaceRoot: cwd,
-            cause,
-          }),
-      ),
-    );
+  const walkForFavicon = Effect.fn("ProjectFaviconResolver.walkForFavicon")(function* (
+    projectCwd: string,
+  ): Effect.fn.Return<string | null, ProjectFaviconResolutionError> {
     for (const candidate of FAVICON_CANDIDATES) {
       const existing = yield* findExistingFile(projectCwd, [candidate]);
       if (existing) {
@@ -229,6 +240,41 @@ export const make = Effect.gen(function* () {
     }
 
     return null;
+  });
+
+  const resolvePath: ProjectFaviconResolver["Service"]["resolvePath"] = Effect.fn(
+    "ProjectFaviconResolver.resolvePath",
+  )(function* (cwd) {
+    const projectCwd = yield* workspacePaths.normalizeWorkspaceRoot(cwd).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ProjectFaviconResolutionError({
+            operation: "normalize-workspace",
+            workspaceRoot: cwd,
+            cause,
+          }),
+      ),
+    );
+
+    const nowMs = yield* Clock.currentTimeMillis;
+    const cached = cache.get(projectCwd);
+    if (cached && cached.expiresAtMs > nowMs) {
+      return cached.value;
+    }
+
+    // Degrade to the fallback favicon (null) if a single candidate stat/read hangs, so a slow
+    // filesystem can't keep the asset RPC pending past the client's slow-request threshold. Real
+    // resolution failures are still surfaced; only the timeout is mapped to absence.
+    const resolved = Option.getOrElse(
+      yield* walkForFavicon(projectCwd).pipe(Effect.timeoutOption(FAVICON_RESOLVE_TIMEOUT)),
+      () => null,
+    );
+
+    cache.set(projectCwd, {
+      value: resolved,
+      expiresAtMs: nowMs + Duration.toMillis(FAVICON_CACHE_TTL),
+    });
+    return resolved;
   });
 
   return ProjectFaviconResolver.of({ resolvePath });
