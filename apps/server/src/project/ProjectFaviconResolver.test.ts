@@ -58,6 +58,7 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
 
     it.effect("resolves icon hrefs from project source files", () =>
       Effect.gen(function* () {
+        const path = yield* Path.Path;
         const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
         const cwd = yield* makeTempDir;
         yield* writeTextFile(cwd, "index.html", '<link rel="icon" href="/brand/logo.svg">');
@@ -66,7 +67,7 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
         const resolved = yield* resolver.resolvePath(cwd);
 
         expect(resolved).not.toBeNull();
-        expect(resolved).toContain("public/brand/logo.svg");
+        expect(resolved).toContain(path.join("public", "brand", "logo.svg"));
       }),
     );
 
@@ -181,6 +182,7 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
 
     it.effect("continues to later sources after an outside-root icon href", () =>
       Effect.gen(function* () {
+        const path = yield* Path.Path;
         const resolver = yield* ProjectFaviconResolver.ProjectFaviconResolver;
         const cwd = yield* makeTempDir;
         yield* writeTextFile(cwd, "index.html", '<link rel="icon" href="../../secret.svg">');
@@ -190,7 +192,7 @@ it.layer(TestLayer)("ProjectFaviconResolverLive", (it) => {
         const resolved = yield* resolver.resolvePath(cwd);
 
         expect(resolved).not.toBeNull();
-        expect(resolved).toContain("public/brand/logo.svg");
+        expect(resolved).toContain(path.join("public", "brand", "logo.svg"));
       }),
     );
 
