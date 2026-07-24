@@ -18,6 +18,8 @@ import {
   OrchestrationThreadActivity,
   ProviderInteractionMode,
   ProviderDriverKind,
+  QueuedMessageId,
+  type QueuedMessageTrigger,
   RuntimeMode,
   TerminalOpenInput,
 } from "@t3tools/contracts";
@@ -148,7 +150,7 @@ import {
   nextProjectScriptId,
   projectScriptIdFromCommand,
 } from "~/projectScripts";
-import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
+import { newDraftId, newMessageId, newThreadId, randomUUID } from "~/lib/utils";
 import { getProviderModelCapabilities, resolveSelectableProvider } from "../providerModels";
 import { useEnvironmentSettings } from "../hooks/useSettings";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
@@ -190,6 +192,11 @@ import {
 } from "../state/server";
 import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
+import {
+  primaryAccountUsageAtom,
+  primaryQueuedMessagesAtom,
+  usageEnvironment,
+} from "../state/usage";
 import { vcsEnvironment } from "../state/vcs";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
@@ -210,6 +217,7 @@ import { type ExpandedImagePreview } from "./chat/ExpandedImagePreview";
 import { NoActiveThreadState } from "./NoActiveThreadState";
 import { resolveEffectiveEnvMode } from "./BranchToolbar.logic";
 import { ProviderStatusBanner } from "./chat/ProviderStatusBanner";
+import { QueuedMessagesPanel } from "./chat/QueuedMessagesPanel";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import {
@@ -1026,6 +1034,12 @@ function ChatViewContent(props: ChatViewProps) {
   });
   const openPreview = useAtomCommand(previewEnvironment.open, { reportFailure: false });
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
+  const enqueueQueuedMessage = useAtomCommand(
+    usageEnvironment.enqueueMessage,
+    "queued message enqueue",
+  );
+  const usageAccounts = useAtomValue(primaryAccountUsageAtom);
+  const queuedMessages = useAtomValue(primaryQueuedMessagesAtom);
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, { reportFailure: false });
@@ -1818,6 +1832,97 @@ function ChatViewContent(props: ChatViewProps) {
     activeThread?.session ?? null,
     localDispatchStartedAt,
   );
+  // Auto-convert a cap-hit failure into a queued message: when the latest
+  // turn errored because the account's rate limit rejected it, requeue the
+  // failed user message to fire once the limiting window resets. Guarded so
+  // each failed turn converts at most once.
+  const autoQueuedCapHitTurnIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!isServerThread || !activeThread) return;
+    if (activeLatestTurn?.state !== "error") return;
+    const failedTurnId = activeLatestTurn.turnId;
+    if (autoQueuedCapHitTurnIdsRef.current.has(failedTurnId)) return;
+    let rateLimitActivity: OrchestrationThreadActivity | null = null;
+    for (let index = threadActivities.length - 1; index >= 0; index -= 1) {
+      const activity = threadActivities[index];
+      if (activity && activity.kind === "account.rate-limits.updated") {
+        rateLimitActivity = activity;
+        break;
+      }
+    }
+    if (!rateLimitActivity) return;
+    // Only convert when the rejection belongs to the failed turn (or is
+    // account-scoped without a turn association).
+    if (rateLimitActivity.turnId !== null && rateLimitActivity.turnId !== failedTurnId) return;
+    const payload =
+      rateLimitActivity.payload && typeof rateLimitActivity.payload === "object"
+        ? (rateLimitActivity.payload as Record<string, unknown>)
+        : null;
+    const rateLimitInfo =
+      payload?.rateLimitInfo && typeof payload.rateLimitInfo === "object"
+        ? (payload.rateLimitInfo as Record<string, unknown>)
+        : null;
+    if (rateLimitInfo?.status !== "rejected") return;
+    // Be conservative: only requeue when the thread's latest user message is
+    // unambiguously the one whose turn failed.
+    const lastUserMessage =
+      [...activeThread.messages].reverse().find((message) => message.role === "user") ?? null;
+    if (!lastUserMessage || lastUserMessage.turnId !== failedTurnId) return;
+    const failedMessageText = lastUserMessage.text;
+    if (failedMessageText.trim().length === 0) return;
+    if (
+      queuedMessages.some(
+        (queued) =>
+          queued.threadId === activeThread.id &&
+          queued.status === "pending" &&
+          queued.text === failedMessageText,
+      )
+    ) {
+      autoQueuedCapHitTurnIdsRef.current.add(failedTurnId);
+      return;
+    }
+    const threadInstanceId = activeThread.modelSelection.instanceId;
+    const account =
+      usageAccounts.find((candidate) =>
+        candidate.snapshot.instanceIds.some((instanceId) => instanceId === threadInstanceId),
+      ) ??
+      usageAccounts[0] ??
+      null;
+    if (!account) return;
+    const rateLimitType =
+      typeof rateLimitInfo.rateLimitType === "string" ? rateLimitInfo.rateLimitType : null;
+    const windowId = rateLimitType?.includes("seven_day") ? "weekly:all" : "session:all";
+    autoQueuedCapHitTurnIdsRef.current.add(failedTurnId);
+    void enqueueQueuedMessage({
+      environmentId,
+      input: {
+        id: QueuedMessageId.make(randomUUID()),
+        threadId: activeThread.id,
+        messageId: newMessageId(),
+        text: failedMessageText,
+        trigger: {
+          type: "window-reset",
+          accountKey: account.snapshot.accountKey,
+          windowId,
+        },
+        sendContext: {
+          modelSelection: activeThread.modelSelection,
+          runtimeMode: activeThread.runtimeMode,
+          interactionMode: activeThread.interactionMode,
+        },
+        origin: "cap-hit-auto",
+      },
+    });
+  }, [
+    activeLatestTurn,
+    activeThread,
+    enqueueQueuedMessage,
+    environmentId,
+    isServerThread,
+    queuedMessages,
+    threadActivities,
+    usageAccounts,
+  ]);
   useEffect(() => {
     attachmentPreviewHandoffByMessageIdRef.current = attachmentPreviewHandoffByMessageId;
   }, [attachmentPreviewHandoffByMessageId]);
@@ -3875,6 +3980,34 @@ function ChatViewContent(props: ChatViewProps) {
     ],
   );
 
+  const onQueueDraft = (trigger: QueuedMessageTrigger) => {
+    if (!activeThread || !isServerThread || activeEnvironmentUnavailable) return;
+    const sendCtx = composerRef.current?.getSendContext();
+    if (!sendCtx) return;
+    const text = promptRef.current.trim();
+    if (text.length === 0) return;
+    const threadIdForQueue = activeThread.id;
+    promptRef.current = "";
+    clearComposerDraftContent(composerDraftTarget);
+    composerRef.current?.resetCursorState();
+    void enqueueQueuedMessage({
+      environmentId,
+      input: {
+        id: QueuedMessageId.make(randomUUID()),
+        threadId: threadIdForQueue,
+        messageId: newMessageId(),
+        text,
+        trigger,
+        sendContext: {
+          modelSelection: sendCtx.selectedModelSelection,
+          runtimeMode,
+          interactionMode,
+        },
+        origin: "user",
+      },
+    });
+  };
+
   const onSend = async (e?: { preventDefault: () => void }) => {
     e?.preventDefault();
     if (
@@ -5139,6 +5272,7 @@ function ChatViewContent(props: ChatViewProps) {
               </div>
               <div className="chat-composer-horizontal-inset">
                 <div className="pointer-events-auto relative z-10 isolate">
+                  <QueuedMessagesPanel threadId={activeThread.id} className="relative z-0" />
                   <ComposerBannerStack className="relative z-0" items={composerBannerItems} />
                   <div className="relative z-10">
                     <ChatComposer
@@ -5190,6 +5324,7 @@ function ChatViewContent(props: ChatViewProps) {
                       composerTerminalContextsRef={composerTerminalContextsRef}
                       composerElementContextsRef={composerElementContextsRef}
                       onSend={onSend}
+                      onQueueDraft={onQueueDraft}
                       onInterrupt={onInterrupt}
                       onImplementPlanInNewThread={onImplementPlanInNewThread}
                       onRespondToApproval={onRespondToApproval}

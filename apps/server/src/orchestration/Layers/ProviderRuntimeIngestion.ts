@@ -534,6 +534,35 @@ function runtimeEventToActivities(
       ];
     }
 
+    case "account.rate-limits.updated": {
+      // The SDK's rate_limit_event, previously dropped here. The payload
+      // carries the raw SDK message; surface it as a thread activity so
+      // the client can react instantly when a usage cap engages (e.g.
+      // offering to queue the pending message until the window resets).
+      const rateLimits = event.payload.rateLimits;
+      const info =
+        typeof rateLimits === "object" && rateLimits !== null && "rate_limit_info" in rateLimits
+          ? (rateLimits as { rate_limit_info?: unknown }).rate_limit_info
+          : undefined;
+      const status =
+        typeof info === "object" && info !== null && "status" in info
+          ? (info as { status?: unknown }).status
+          : undefined;
+      const rejected = status === "rejected";
+      return [
+        {
+          id: event.eventId,
+          createdAt: event.createdAt,
+          tone: rejected ? "error" : "info",
+          kind: "account.rate-limits.updated",
+          summary: rejected ? "Usage limit reached" : "Rate limit status updated",
+          payload: info !== undefined ? { rateLimitInfo: info } : { raw: rateLimits },
+          turnId: toTurnId(event.turnId) ?? null,
+          ...maybeSequence,
+        },
+      ];
+    }
+
     case "thread.token-usage.updated": {
       const payload = buildContextWindowActivityPayload(event);
       if (!payload) {

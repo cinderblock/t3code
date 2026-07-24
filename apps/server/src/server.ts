@@ -64,6 +64,8 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
+import * as UsageBroadcaster from "./usage/UsageBroadcaster.ts";
+import * as QueuedMessageService from "./queue/QueuedMessageService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
@@ -286,12 +288,16 @@ const ProviderRuntimeLayerLive = ProviderSessionReaperLive.pipe(
 
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // Core Services
-  Layer.provideMerge(CheckpointingLayerLive),
+  // Queued messages sit above the orchestration engine (they dispatch
+  // turn-start commands) and above the usage broadcaster (usage-based
+  // triggers read its snapshots). Folded into the checkpointing slot to
+  // stay within pipe's 20-argument ceiling.
+  Layer.provideMerge(Layer.mergeAll(QueuedMessageService.layer, CheckpointingLayerLive)),
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
   Layer.provideMerge(GitLayerLive),
   Layer.provideMerge(VcsLayerLive),
   Layer.provideMerge(ProviderRuntimeLayerLive),
-  Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive)),
+  Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive, UsageBroadcaster.layer)),
   Layer.provideMerge(PersistenceLayerLive),
   Layer.provideMerge(Keybindings.layer),
   Layer.provideMerge(ProviderRegistryLive),

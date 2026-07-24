@@ -5,6 +5,7 @@ import type {
   PreviewAnnotationPayload,
   ProviderApprovalDecision,
   ProviderInteractionMode,
+  QueuedMessageTrigger,
   ResolvedKeybindingsConfig,
   RuntimeMode,
   ScopedThreadRef,
@@ -24,6 +25,7 @@ import {
 } from "@t3tools/client-runtime/connection";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
+import { useAtomValue } from "@effect/atom-react";
 import {
   memo,
   useCallback,
@@ -58,6 +60,7 @@ import {
   removeInlineTerminalContextPlaceholder,
 } from "../../lib/terminalContext";
 import { useComposerPathSearch } from "../../lib/composerPathSearchState";
+import { primaryAccountUsageAtom } from "../../state/usage";
 import { type ElementContextDraft } from "../../lib/elementContext";
 import { ComposerPendingElementContexts } from "./ComposerPendingElementContexts";
 import { ComposerPendingReviewComments } from "./ComposerPendingReviewComments";
@@ -84,17 +87,20 @@ import {
   renderProviderTraitsPicker,
 } from "./composerProviderState";
 import { ContextWindowMeter } from "./ContextWindowMeter";
+import { QueuedMessageTriggerForm } from "./QueuedMessageTriggerPicker";
 import { buildExpandedImagePreview, type ExpandedImagePreview } from "./ExpandedImagePreview";
 import { basenameOfPath } from "../../pierre-icons";
 import { cn, randomUUID } from "~/lib/utils";
 import { Separator } from "../ui/separator";
 import { Button } from "../ui/button";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import {
   BotIcon,
   CircleAlertIcon,
+  ClockIcon,
   ListTodoIcon,
   PencilRulerIcon,
   type LucideIcon,
@@ -506,6 +512,8 @@ export interface ChatComposerProps {
 
   // Callbacks
   onSend: (e?: { preventDefault: () => void }) => void;
+  /** Queue the current draft to send later when `trigger` fires. */
+  onQueueDraft: (trigger: QueuedMessageTrigger) => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
   onRespondToApproval: (
@@ -550,7 +558,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThreadId,
     activeThreadEnvironmentId: _activeThreadEnvironmentId,
     activeThread,
-    isServerThread: _isServerThread,
+    isServerThread,
     isLocalDraftThread: _isLocalDraftThread,
     phase,
     isConnecting,
@@ -590,6 +598,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerTerminalContextsRef,
     composerElementContextsRef,
     onSend,
+    onQueueDraft,
     onInterrupt,
     onImplementPlanInNewThread,
     onRespondToApproval,
@@ -880,6 +889,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const [isComposerFooterCompact, setIsComposerFooterCompact] = useState(false);
   const [isComposerPrimaryActionsCompact, setIsComposerPrimaryActionsCompact] = useState(false);
   const [isComposerModelPickerOpen, setIsComposerModelPickerOpen] = useState(false);
+  const [isQueueTriggerPickerOpen, setIsQueueTriggerPickerOpen] = useState(false);
   const [isComposerFocused, setIsComposerFocused] = useState(false);
   const isMobileViewport = useMediaQuery("max-sm");
   const isComposerCollapsedMobile = isMobileViewport && !isComposerFocused;
@@ -1137,6 +1147,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const collapsedComposerPrimaryActionDisabled =
     phase === "running" || isSendBusy || isConnecting || !composerSendState.hasSendableContent;
   const collapsedComposerPrimaryActionLabel = "Send message";
+  // Queue draft ("send later") affordance next to the send button.
+  const usageAccounts = useAtomValue(primaryAccountUsageAtom);
+  const showQueueDraftButton =
+    isServerThread &&
+    pendingPrimaryAction === null &&
+    !(pendingUserInputs.length === 0 && showPlanFollowUpPrompt);
+  const queueDraftDisabled =
+    isSendBusy || isConnecting || environmentUnavailable !== null || prompt.trim().length === 0;
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
 
@@ -2537,6 +2555,38 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 }
                 className="flex shrink-0 flex-nowrap items-center justify-end gap-2"
               >
+                {showQueueDraftButton ? (
+                  <Popover
+                    open={isQueueTriggerPickerOpen}
+                    onOpenChange={setIsQueueTriggerPickerOpen}
+                  >
+                    <PopoverTrigger
+                      render={
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon-sm"
+                          className="rounded-full text-muted-foreground/80"
+                          disabled={queueDraftDisabled}
+                          aria-label="Queue message to send later"
+                        />
+                      }
+                    >
+                      <ClockIcon className="size-4" />
+                    </PopoverTrigger>
+                    <PopoverPopup side="top" align="end" className="w-72 max-w-none">
+                      <QueuedMessageTriggerForm
+                        accounts={usageAccounts}
+                        preferredInstanceId={selectedInstanceId}
+                        confirmLabel="Queue message"
+                        onConfirm={(trigger) => {
+                          setIsQueueTriggerPickerOpen(false);
+                          onQueueDraft(trigger);
+                        }}
+                      />
+                    </PopoverPopup>
+                  </Popover>
+                ) : null}
                 <ComposerFooterPrimaryActions
                   compact={isComposerPrimaryActionsCompact}
                   activeContextWindow={activeContextWindow}

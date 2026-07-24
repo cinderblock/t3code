@@ -143,6 +143,22 @@ import {
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
+import {
+  AccountUsageError,
+  AccountUsageStreamEvent,
+  UsageHistoryInput,
+  UsageHistoryResult,
+} from "./usage.ts";
+import {
+  QueuedMessage,
+  QueuedMessageCancelInput,
+  QueuedMessageEnqueueInput,
+  QueuedMessageError,
+  QueuedMessageListInput,
+  QueuedMessageListResult,
+  QueuedMessageStreamEvent,
+  QueuedMessageUpdateInput,
+} from "./queuedMessage.ts";
 
 export const WS_METHODS = {
   // Project registry methods
@@ -223,7 +239,18 @@ export const WS_METHODS = {
   sourceControlCloneRepository: "sourceControl.cloneRepository",
   sourceControlPublishRepository: "sourceControl.publishRepository",
 
+  // Usage metering
+  usageGetHistory: "usage.getHistory",
+
+  // Queued messages
+  queueEnqueueMessage: "queue.enqueueMessage",
+  queueUpdateMessage: "queue.updateMessage",
+  queueCancelMessage: "queue.cancelMessage",
+  queueListMessages: "queue.listMessages",
+
   // Streaming subscriptions
+  subscribeAccountUsage: "subscribeAccountUsage",
+  subscribeQueuedMessages: "subscribeQueuedMessages",
   subscribeVcsStatus: "subscribeVcsStatus",
   subscribeTerminalEvents: "subscribeTerminalEvents",
   subscribeTerminalMetadata: "subscribeTerminalMetadata",
@@ -681,6 +708,50 @@ export const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess,
   stream: true,
 });
 
+export const WsUsageGetHistoryRpc = Rpc.make(WS_METHODS.usageGetHistory, {
+  payload: UsageHistoryInput,
+  success: UsageHistoryResult,
+  error: Schema.Union([AccountUsageError, EnvironmentAuthorizationError]),
+});
+
+export const WsSubscribeAccountUsageRpc = Rpc.make(WS_METHODS.subscribeAccountUsage, {
+  payload: Schema.Struct({}),
+  success: AccountUsageStreamEvent,
+  error: Schema.Union([AccountUsageError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
+export const WsQueueEnqueueMessageRpc = Rpc.make(WS_METHODS.queueEnqueueMessage, {
+  payload: QueuedMessageEnqueueInput,
+  success: QueuedMessage,
+  error: Schema.Union([QueuedMessageError, EnvironmentAuthorizationError]),
+});
+
+export const WsQueueUpdateMessageRpc = Rpc.make(WS_METHODS.queueUpdateMessage, {
+  payload: QueuedMessageUpdateInput,
+  success: QueuedMessage,
+  error: Schema.Union([QueuedMessageError, EnvironmentAuthorizationError]),
+});
+
+export const WsQueueCancelMessageRpc = Rpc.make(WS_METHODS.queueCancelMessage, {
+  payload: QueuedMessageCancelInput,
+  success: QueuedMessage,
+  error: Schema.Union([QueuedMessageError, EnvironmentAuthorizationError]),
+});
+
+export const WsQueueListMessagesRpc = Rpc.make(WS_METHODS.queueListMessages, {
+  payload: QueuedMessageListInput,
+  success: QueuedMessageListResult,
+  error: Schema.Union([QueuedMessageError, EnvironmentAuthorizationError]),
+});
+
+export const WsSubscribeQueuedMessagesRpc = Rpc.make(WS_METHODS.subscribeQueuedMessages, {
+  payload: QueuedMessageListInput,
+  success: QueuedMessageStreamEvent,
+  error: Schema.Union([QueuedMessageError, EnvironmentAuthorizationError]),
+  stream: true,
+});
+
 export const WsRpcGroup = RpcGroup.make(
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
@@ -706,6 +777,13 @@ export const WsRpcGroup = RpcGroup.make(
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsAssetsCreateUrlRpc,
+  WsUsageGetHistoryRpc,
+  WsSubscribeAccountUsageRpc,
+  WsQueueEnqueueMessageRpc,
+  WsQueueUpdateMessageRpc,
+  WsQueueCancelMessageRpc,
+  WsQueueListMessagesRpc,
+  WsSubscribeQueuedMessagesRpc,
   WsSubscribeVcsStatusRpc,
   WsVcsPullRpc,
   WsVcsRefreshStatusRpc,

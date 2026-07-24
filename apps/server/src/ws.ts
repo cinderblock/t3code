@@ -88,6 +88,8 @@ import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
+import * as UsageBroadcaster from "./usage/UsageBroadcaster.ts";
+import * as QueuedMessageService from "./queue/QueuedMessageService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
@@ -306,6 +308,13 @@ const RPC_REQUIRED_SCOPE = new Map<string, AuthEnvironmentScope>([
   [WS_METHODS.shellOpenInEditor, AuthOrchestrationOperateScope],
   [WS_METHODS.filesystemBrowse, AuthOrchestrationReadScope],
   [WS_METHODS.assetsCreateUrl, AuthOrchestrationReadScope],
+  [WS_METHODS.usageGetHistory, AuthOrchestrationReadScope],
+  [WS_METHODS.subscribeAccountUsage, AuthOrchestrationReadScope],
+  [WS_METHODS.queueEnqueueMessage, AuthOrchestrationOperateScope],
+  [WS_METHODS.queueUpdateMessage, AuthOrchestrationOperateScope],
+  [WS_METHODS.queueCancelMessage, AuthOrchestrationOperateScope],
+  [WS_METHODS.queueListMessages, AuthOrchestrationReadScope],
+  [WS_METHODS.subscribeQueuedMessages, AuthOrchestrationReadScope],
   [WS_METHODS.subscribeVcsStatus, AuthOrchestrationReadScope],
   [WS_METHODS.vcsRefreshStatus, AuthOrchestrationReadScope],
   [WS_METHODS.vcsPull, AuthOrchestrationOperateScope],
@@ -402,6 +411,8 @@ const makeWsRpcLayer = (
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const usageBroadcaster = yield* UsageBroadcaster.UsageBroadcaster;
+      const queuedMessages = yield* QueuedMessageService.QueuedMessageService;
       const terminalManager = yield* TerminalManager.TerminalManager;
       const previewManager = yield* PreviewManager.PreviewManager;
       const portDiscovery = yield* PortScanner.PortDiscovery;
@@ -1449,6 +1460,38 @@ const makeWsRpcLayer = (
               });
             }),
             { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.usageGetHistory]: (input) =>
+          observeRpcEffect(WS_METHODS.usageGetHistory, usageBroadcaster.getHistory(input), {
+            "rpc.aggregate": "usage",
+          }),
+        [WS_METHODS.subscribeAccountUsage]: (_input) =>
+          observeRpcStream(WS_METHODS.subscribeAccountUsage, usageBroadcaster.streamUsage, {
+            "rpc.aggregate": "usage",
+          }),
+        [WS_METHODS.queueEnqueueMessage]: (input) =>
+          observeRpcEffect(WS_METHODS.queueEnqueueMessage, queuedMessages.enqueue(input), {
+            "rpc.aggregate": "queue",
+          }),
+        [WS_METHODS.queueUpdateMessage]: (input) =>
+          observeRpcEffect(WS_METHODS.queueUpdateMessage, queuedMessages.update(input), {
+            "rpc.aggregate": "queue",
+          }),
+        [WS_METHODS.queueCancelMessage]: (input) =>
+          observeRpcEffect(WS_METHODS.queueCancelMessage, queuedMessages.cancel(input), {
+            "rpc.aggregate": "queue",
+          }),
+        [WS_METHODS.queueListMessages]: (input) =>
+          observeRpcEffect(WS_METHODS.queueListMessages, queuedMessages.list(input), {
+            "rpc.aggregate": "queue",
+          }),
+        [WS_METHODS.subscribeQueuedMessages]: (input) =>
+          observeRpcStream(
+            WS_METHODS.subscribeQueuedMessages,
+            queuedMessages.streamMessages(input),
+            {
+              "rpc.aggregate": "queue",
+            },
           ),
         [WS_METHODS.subscribeVcsStatus]: (input) =>
           observeRpcStream(

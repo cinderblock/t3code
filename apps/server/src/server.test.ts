@@ -100,6 +100,8 @@ import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriver from "./vcs/VcsDriver.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
+import * as UsageBroadcaster from "./usage/UsageBroadcaster.ts";
+import * as QueuedMessageService from "./queue/QueuedMessageService.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
@@ -650,6 +652,19 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provide(
         Layer.mergeAll(
+          Layer.mock(UsageBroadcaster.UsageBroadcaster)({
+            getSnapshots: Effect.succeed([]),
+            streamUsage: Stream.empty,
+            getHistory: () => Effect.succeed({ samples: [] }),
+            pollSoon: Effect.void,
+          }),
+          Layer.mock(QueuedMessageService.QueuedMessageService)({
+            enqueue: () => Effect.die("QueuedMessageService not stubbed in this test"),
+            update: () => Effect.die("QueuedMessageService not stubbed in this test"),
+            cancel: () => Effect.die("QueuedMessageService not stubbed in this test"),
+            list: () => Effect.succeed({ messages: [] }),
+            streamMessages: () => Stream.empty,
+          }),
           Layer.mock(PreviewManager.PreviewManager)({
             open: () => Effect.die("PreviewManager not stubbed in this test"),
             navigate: () => Effect.die("PreviewManager not stubbed in this test"),
