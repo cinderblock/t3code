@@ -93,12 +93,15 @@ export const createOxlintRuleHarness = (
     const configPath = path.join(fixtureDir, ".oxlintrc.json");
     const sourcePath = path.join(fixtureDir, options.filename ?? "fixture.ts");
     const repoRoot = path.join(import.meta.dirname, "..", "..");
-    const oxlintBin = path.join(
+    // Run the JS entry through the current Node executable instead of the .bin
+    // shim — the shim is a POSIX shell script that Windows cannot spawn.
+    const oxlintEntry = path.join(
       repoRoot,
       "node_modules",
       ".pnpm",
       "node_modules",
-      ".bin",
+      "oxlint",
+      "bin",
       "oxlint",
     );
     const pluginPath = path.join(repoRoot, "oxlint-plugin-t3code", "index.ts");
@@ -113,7 +116,9 @@ export const createOxlintRuleHarness = (
     yield* fs.writeFileString(sourcePath, source);
 
     const output = yield* spawnAndCollectOutput(
-      ChildProcess.make(oxlintBin, ["--config", configPath, sourcePath], { cwd: repoRoot }),
+      ChildProcess.make(process.execPath, [oxlintEntry, "--config", configPath, sourcePath], {
+        cwd: repoRoot,
+      }),
     );
 
     if (output.exitCode !== 0) {
