@@ -381,16 +381,10 @@ export const make = Effect.gen(function* () {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
     const refreshUpstream = options?.refreshUpstream !== false;
     // When refreshUpstream is false, recompute local status but leave the remote cache intact
-    // so remoteStatus reuses the last fetch instead of triggering a fresh `git fetch`.
-    yield* Effect.all(
-      refreshUpstream
-        ? [workflow.invalidateLocalStatus(cwd), workflow.invalidateRemoteStatus(cwd)]
-        : [workflow.invalidateLocalStatus(cwd)],
-      {
-        concurrency: "unbounded",
-        discard: true,
-      },
-    );
+    // so remoteStatus reuses the last fetch instead of triggering a fresh `git fetch`. Otherwise
+    // use invalidateStatus (not the two partial invalidations) so an explicit refresh also
+    // bypasses GitManager's slow PR-lookup cache.
+    yield* refreshUpstream ? workflow.invalidateStatus(cwd) : workflow.invalidateLocalStatus(cwd);
     const [local, remote] = yield* Effect.all(
       [workflow.localStatus({ cwd }), workflow.remoteStatus({ cwd }, { refreshUpstream })],
       { concurrency: "unbounded" },

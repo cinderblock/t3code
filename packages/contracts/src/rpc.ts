@@ -122,6 +122,9 @@ import {
   ServerRemoveKeybindingInput,
   ServerRemoveKeybindingResult,
   ServerProviderUpdatedPayload,
+  ServerSelfUpdateError,
+  ServerSelfUpdateInput,
+  ServerSelfUpdateResult,
   ServerTraceDiagnosticsResult,
   ServerProcessDiagnosticsResult,
   ServerProcessResourceHistoryInput,
@@ -217,9 +220,11 @@ export const WS_METHODS = {
   previewAutomationFocusHost: "previewAutomation.focusHost",
 
   // Server meta
+  serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
   serverRefreshProviders: "server.refreshProviders",
   serverUpdateProvider: "server.updateProvider",
+  serverUpdateServer: "server.updateServer",
   serverUpsertKeybinding: "server.upsertKeybinding",
   serverRemoveKeybinding: "server.removeKeybinding",
   serverGetSettings: "server.getSettings",
@@ -273,6 +278,12 @@ export const WsServerRemoveKeybindingRpc = Rpc.make(WS_METHODS.serverRemoveKeybi
   error: Schema.Union([KeybindingsConfigError, EnvironmentAuthorizationError]),
 });
 
+export const WsServerProbeRpc = Rpc.make(WS_METHODS.serverProbe, {
+  payload: Schema.Struct({}),
+  success: Schema.Struct({}),
+  error: EnvironmentAuthorizationError,
+});
+
 export const WsServerGetConfigRpc = Rpc.make(WS_METHODS.serverGetConfig, {
   payload: Schema.Struct({}),
   success: ServerConfig,
@@ -297,6 +308,12 @@ export const WsServerUpdateProviderRpc = Rpc.make(WS_METHODS.serverUpdateProvide
   payload: ServerProviderUpdateInput,
   success: ServerProviderUpdatedPayload,
   error: Schema.Union([ServerProviderUpdateError, EnvironmentAuthorizationError]),
+});
+
+export const WsServerUpdateServerRpc = Rpc.make(WS_METHODS.serverUpdateServer, {
+  payload: ServerSelfUpdateInput,
+  success: ServerSelfUpdateResult,
+  error: Schema.Union([ServerSelfUpdateError, EnvironmentAuthorizationError]),
 });
 
 export const WsServerGetSettingsRpc = Rpc.make(WS_METHODS.serverGetSettings, {
@@ -753,9 +770,11 @@ export const WsSubscribeQueuedMessagesRpc = Rpc.make(WS_METHODS.subscribeQueuedM
 });
 
 export const WsRpcGroup = RpcGroup.make(
+  WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,
   WsServerUpdateProviderRpc,
+  WsServerUpdateServerRpc,
   WsServerUpsertKeybindingRpc,
   WsServerRemoveKeybindingRpc,
   WsServerGetSettingsRpc,

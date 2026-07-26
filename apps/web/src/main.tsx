@@ -15,7 +15,10 @@ import { isElectron } from "./env";
 import { ManagedRelayAuthProvider } from "./cloud/managedAuth";
 import { hasCloudPublicConfig } from "./cloud/publicConfig";
 import { getRouter } from "./router";
-import { syncDocumentWindowControlsOverlayClass } from "./lib/windowControlsOverlay";
+import {
+  syncDocumentElectronPlatformClasses,
+  syncDocumentWindowControlsOverlayClass,
+} from "./lib/windowControlsOverlay";
 import { AppRoot } from "./AppRoot";
 
 // Forward renderer-side errors to a desktop log file (main.ts writes ~/.t3/{dev,userdata}/logs/renderer.log).
@@ -98,6 +101,7 @@ const history = isElectron ? createHashHistory() : createBrowserHistory();
 const router = getRouter(history);
 
 if (isElectron) {
+  syncDocumentElectronPlatformClasses(navigator.platform);
   syncDocumentWindowControlsOverlayClass();
 }
 

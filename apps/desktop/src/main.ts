@@ -1,8 +1,16 @@
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on("error", (err: NodeJS.ErrnoException) => {
+    if (err.code !== "EPIPE") throw err;
+  });
+}
+
+// @effect-diagnostics-next-line nodeBuiltinImport:off - crash-triage renderer log writes synchronously outside the Effect runtime
 import * as NodeFs from "node:fs";
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - crash-triage renderer log writes synchronously outside the Effect runtime
 import * as NodePath from "node:path";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -208,6 +216,7 @@ const desktopRuntimeLayer = desktopClerkLayer.pipe(
   const rendererLogPath = NodePath.join(baseDir, stateLeaf, "logs", "renderer.log");
   Electron.ipcMain.on("__t3-debug-renderer-log", (_event, payload) => {
     try {
+      // @effect-diagnostics-next-line globalDate:off - sync timestamp for the crash-triage log outside the Effect runtime
       const line = JSON.stringify({ ts: new Date().toISOString(), ...(payload as object) }) + "\n";
       NodeFs.mkdirSync(NodePath.dirname(rendererLogPath), { recursive: true });
       NodeFs.appendFileSync(rendererLogPath, line);
