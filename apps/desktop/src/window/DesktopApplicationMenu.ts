@@ -189,7 +189,30 @@ export const make = Effect.gen(function* () {
           { role: "togglefullscreen" },
         ],
       },
-      { role: "windowMenu" },
+      environment.platform === "darwin"
+        ? { role: "windowMenu" }
+        : {
+            // On Windows/Linux we deliberately do NOT use `{ role: "windowMenu" }`.
+            // That role binds a Close item to Ctrl+W, and because this is a
+            // single-window app, closing the window quits everything (see
+            // DesktopLifecycle "window-all-closed" -> app.quit). An accidental
+            // Ctrl+W would then tear down the whole session with no warning, and
+            // it also collides with the renderer's Ctrl+W (terminal.close). So we
+            // build the Window menu ourselves and give Close a plain click handler
+            // with no accelerator: menu-click close stays (it's intentional), the
+            // keyboard binding is dropped, and Ctrl+W is left for the renderer.
+            label: "Window",
+            submenu: [
+              { role: "minimize" },
+              { type: "separator" },
+              {
+                label: "Close Window",
+                click: (_menuItem, browserWindow) => {
+                  browserWindow?.close();
+                },
+              },
+            ],
+          },
       {
         role: "help",
         submenu: [

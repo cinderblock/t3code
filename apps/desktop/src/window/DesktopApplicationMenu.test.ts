@@ -134,4 +134,66 @@ describe("DesktopApplicationMenu", () => {
       assert.equal(yield* Deferred.await(selectedAction), "open-settings");
     }),
   );
+
+  it.effect("does not bind Ctrl+W to closing the window (single-window app quits)", () =>
+    Effect.gen(function* () {
+      const selectedAction = yield* Deferred.make<string>();
+      const applicationMenuTemplate =
+        yield* Deferred.make<readonly Electron.MenuItemConstructorOptions[]>();
+
+      yield* Effect.gen(function* () {
+        const menu = yield* DesktopApplicationMenu.DesktopApplicationMenu;
+        yield* menu.configure;
+      }).pipe(
+        Effect.provide(
+          DesktopApplicationMenu.layer.pipe(
+            Layer.provideMerge(makeElectronMenuLayer(applicationMenuTemplate)),
+            Layer.provideMerge(makeDesktopWindowLayer(selectedAction)),
+            Layer.provideMerge(desktopUpdatesLayer),
+            Layer.provideMerge(electronDialogLayer),
+            Layer.provideMerge(electronAppLayer),
+            Layer.provideMerge(
+              DesktopEnvironment.layer(environmentInput).pipe(
+                Layer.provide(Layer.mergeAll(NodeServices.layer, DesktopConfig.layerTest({}))),
+              ),
+            ),
+          ),
+        ),
+      );
+
+      const template = yield* Deferred.await(applicationMenuTemplate);
+
+      const normalizeAccelerator = (accelerator: string) =>
+        accelerator.toLowerCase().replace(/cmdorctrl|command|cmd|control/g, "ctrl");
+
+      const bindsCtrlW = (items: readonly Electron.MenuItemConstructorOptions[]): boolean =>
+        items.some((item) => {
+          if (typeof item.accelerator === "string") {
+            const normalized = normalizeAccelerator(item.accelerator);
+            if (normalized === "ctrl+w") return true;
+          }
+          // `role: "close"` / `role: "windowMenu"` imply a Ctrl+W accelerator on
+          // Windows/Linux even without an explicit `accelerator`, so treat them as
+          // binders too.
+          if (item.role === "close" || item.role === "windowMenu") return true;
+          if (Array.isArray(item.submenu) && bindsCtrlW(item.submenu)) return true;
+          return false;
+        });
+
+      assert.isFalse(
+        bindsCtrlW(template),
+        "No menu item may bind Ctrl+W on Windows/Linux: it would quit the single-window app.",
+      );
+
+      const windowMenu = template.find((item) => item.label === "Window");
+      assert.isDefined(windowMenu);
+      if (!Array.isArray(windowMenu.submenu)) {
+        throw new Error("Expected Window menu submenu to be an array.");
+      }
+      const closeItem = windowMenu.submenu.find((item) => item.label === "Close Window");
+      assert.isDefined(closeItem);
+      assert.isUndefined(closeItem.accelerator);
+      assert.notEqual(closeItem.role, "close");
+    }),
+  );
 });
