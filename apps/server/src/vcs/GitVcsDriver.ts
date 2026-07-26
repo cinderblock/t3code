@@ -424,10 +424,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         VcsProcessTimeoutError: (error) =>
           Effect.logDebug(
             `GitVcsDriver.isInsideWorkTree timed out for ${cwd}; treating as not a work tree`,
-          ).pipe(
-            Effect.annotateLogs("timeoutMs", error.timeoutMs),
-            Effect.as(false),
-          ),
+          ).pipe(Effect.annotateLogs("timeoutMs", error.timeoutMs), Effect.as(false)),
       }),
     );
 

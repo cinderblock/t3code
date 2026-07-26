@@ -23,12 +23,7 @@ import { AppRoot } from "./AppRoot";
 declare global {
   interface Window {
     __t3CrashLog?: {
-      send: (payload: {
-        level: string;
-        source: string;
-        message: string;
-        data?: unknown;
-      }) => void;
+      send: (payload: { level: string; source: string; message: string; data?: unknown }) => void;
     };
   }
 }

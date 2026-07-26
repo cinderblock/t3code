@@ -208,8 +208,7 @@ const desktopRuntimeLayer = desktopClerkLayer.pipe(
   const rendererLogPath = NodePath.join(baseDir, stateLeaf, "logs", "renderer.log");
   Electron.ipcMain.on("__t3-debug-renderer-log", (_event, payload) => {
     try {
-      const line =
-        JSON.stringify({ ts: new Date().toISOString(), ...(payload as object) }) + "\n";
+      const line = JSON.stringify({ ts: new Date().toISOString(), ...(payload as object) }) + "\n";
       NodeFs.mkdirSync(NodePath.dirname(rendererLogPath), { recursive: true });
       NodeFs.appendFileSync(rendererLogPath, line);
     } catch {}

@@ -29,6 +29,7 @@ delete childEnv.ELECTRON_RUN_AS_NODE;
 
 const electronCommand = resolveElectronLaunchCommand([
   `--user-data-dir=${resolveUserDataDir()}`,
+  ...process.argv.slice(2),
   "dist-electron/main.cjs",
 ]);
 const child = NodeChildProcess.spawn(electronCommand.electronPath, electronCommand.args, {

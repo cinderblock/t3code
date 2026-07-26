@@ -183,11 +183,30 @@ decimal_places }` — amounts in integer minor units. Visibility must derive fro
 - [x] Server smoke test: headless `node src/bin.ts serve --port 39371` with scratch
       `T3CODE_HOME` — migrations 1–34 ran, server listening; awaiting first poller
       samples in scratch DB (proves credentials→fetch→parse→persist).
-- [ ] Lint (running) + fmt
-- [ ] Commit (workspace-contention check first; stage only my hunks — NOTE
-      `plans/usage-meter-and-message-queue.md` (similar name!) belongs to another
-      thread, do not stage; same for desktop files, pnpm-lock, lefthook.yml,
-      scripts/slow-spans.py, other plans/\*)
+- [x] Lint: only 2 findings in my files (both fixed); remaining lint errors live in
+      desktop files owned by another thread. `vp fmt` run.
+- [x] Live poller confirmed end-to-end: smoke server first got HTTP 429 from the
+      usage endpoint (account throttled — poller backed off with the 5-min floor
+      as designed), then on retry fetched and persisted real samples:
+      session:all 25%, weekly:all 19%, **weekly:model:Fable 35%**.
+- [x] Committed as `9512c06b1` on `debug/crash-investigation` (32 files, staged
+      only feature files; desktop files / pnpm-lock / lefthook.yml / other
+      plans/* left untouched for their threads).
+
+## Status: DONE (v1)
+
+Not yet visually verified in the running desktop app (didn't want to fight the
+user's live instance); typecheck/lint/unit tests/live server smoke all green.
+
+## Open questions for the user
+
+1. The commit sits on `debug/crash-investigation` (branch switching in the shared
+   tree would disrupt other threads). Say the word and it can be cherry-picked to
+   a proper feature branch.
+2. Headroom trigger semantics were interpreted as "burn capacity that would
+   otherwise expire": fire when ≥N% remains AND the reset is within `leadMinutes`
+   (default 60). Both knobs are editable in the trigger picker — adjust if you
+   meant something different.
 
 ## Open questions for the user
 
