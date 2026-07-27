@@ -28,7 +28,13 @@ function WindowMeter(props: { window: UsageWindow; emphasized: boolean; nowMs: n
   const resetEta = formatResetEta(window.resetsAt, nowMs);
   return (
     <span
-      className={cn("flex min-w-0 items-center gap-1.5", emphasized ? "opacity-100" : "opacity-65")}
+      className={cn(
+        // Meters split the row proportionally so each track gets as much
+        // resolution as the width allows; the emphasized window takes a
+        // double share.
+        "flex min-w-0 items-center gap-1.5",
+        emphasized ? "flex-[2] opacity-100" : "flex-1 opacity-65",
+      )}
     >
       <span
         className={cn(
@@ -39,10 +45,7 @@ function WindowMeter(props: { window: UsageWindow; emphasized: boolean; nowMs: n
         {windowShortLabel(window)}
       </span>
       <span
-        className={cn(
-          "relative h-1.5 overflow-hidden rounded-full bg-muted/70",
-          emphasized ? "w-24" : "w-12",
-        )}
+        className="relative h-1.5 min-w-6 flex-1 overflow-hidden rounded-full bg-muted/70"
         role="progressbar"
         aria-valuemin={0}
         aria-valuemax={100}
@@ -91,7 +94,7 @@ function AccountMeters(props: {
   return (
     <span
       className={cn(
-        "flex min-w-0 items-center gap-3",
+        "flex min-w-0 flex-1 items-center gap-3",
         account.unavailableReason !== null && "opacity-50",
       )}
     >
@@ -211,31 +214,32 @@ export function UsageStatusBar() {
   }
 
   return (
-    // Constrained to the composer's max-width column so the meters line up
-    // with the input box; expanding grows the stack upward rather than
-    // covering it.
-    <div className="mx-auto flex w-full max-w-3xl shrink-0 flex-col gap-1 pt-1">
-      {expanded ? <ExpandedPanel accounts={accounts} nowMs={nowMs} /> : null}
-      <button
-        type="button"
-        onClick={() => setExpanded((value) => !value)}
-        aria-expanded={expanded}
-        aria-label={expanded ? "Collapse usage details" : "Expand usage details"}
-        className={cn(
-          "flex w-full cursor-pointer items-center gap-4 overflow-x-auto rounded-lg px-2 text-left outline-none",
-          "hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
-        )}
-        style={{ height: USAGE_STATUS_BAR_HEIGHT_PX }}
-      >
-        {accounts.map((account) => (
-          <AccountMeters
-            key={account.snapshot.accountKey}
-            account={account}
-            nowMs={nowMs}
-            showAccountLabel={accounts.length > 1}
-          />
-        ))}
-      </button>
+    // Same horizontal inset + max-width as the composer, so the meters line
+    // up with the input box no matter how wide the window gets.
+    <div className="chat-composer-horizontal-inset w-full shrink-0 pb-1">
+      <div className="mx-auto flex w-full max-w-3xl flex-col gap-1">
+        {expanded ? <ExpandedPanel accounts={accounts} nowMs={nowMs} /> : null}
+        <button
+          type="button"
+          onClick={() => setExpanded((value) => !value)}
+          aria-expanded={expanded}
+          aria-label={expanded ? "Collapse usage details" : "Expand usage details"}
+          className={cn(
+            "flex w-full cursor-pointer items-center gap-4 rounded-lg px-2 text-left outline-none",
+            "hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+          )}
+          style={{ height: USAGE_STATUS_BAR_HEIGHT_PX }}
+        >
+          {accounts.map((account) => (
+            <AccountMeters
+              key={account.snapshot.accountKey}
+              account={account}
+              nowMs={nowMs}
+              showAccountLabel={accounts.length > 1}
+            />
+          ))}
+        </button>
+      </div>
     </div>
   );
 }
