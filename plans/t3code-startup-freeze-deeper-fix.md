@@ -56,12 +56,55 @@ use. Any startup evidence is destroyed within minutes, which is a large part of 
 undiagnosed. Trace volume is dominated by `sql.execute` (4131 spans / 20k lines), `sql.transaction`,
 `runProjectorForEvent`, `runAttachmentSideEffects`.
 
-### Next step (do exactly this, do not skip to a fix)
+## 2026-07-27 — FIRST ACTUAL MEASUREMENT OF THE FREEZE
 
-1. Restart the desktop app (server bundle already rebuilt with the monitor).
-2. `grep -A5 "Event loop" ~/.t3/userdata/logs/server-child.log`
-3. Read `sinceStartupMs` + `lagMs` to see **when** during startup the loop blocks and **for how
-   long**. Only then choose the lever.
+Restarted the app with the monitor. The freeze is real and now quantified:
+
+- **34.9 s of the first 61.7 s blocked = 57% of startup**, 40 stalls, worst single stall **3745 ms**.
+- Timeline shape (t+seconds → stall ms):
+  - `0 – 9.1` clean — **the 10 s `STATUS_REFRESH_STARTUP_GRACE` is working**; readiness is served.
+  - `9.2 – 19.4` ramp: 300–1500 ms stalls.
+  - `23.2 – 32.3` **peak: 3554, 3745, 2314, 2326 ms** — this is what fails a client probe.
+  - `33 – 62` long tail of 300–1000 ms stalls.
+
+So the grace fixed _bootstrap readiness_ but the deferred burst still blocks hard once released.
+
+### What is in flight during the stalls
+
+Spans enclosing the stall instants (150 ms–8 s, so long-lived subscriptions excluded), by frequency:
+`runGitCommand` (avg 5.3 s), `VcsDriverRegistry.detect` / `detectRepository` (avg ~5.4 s),
+`GitVcsDriver.statusDetails.unstagedNumstat` / `stagedNumstat` (avg ~6 s),
+`ProjectFaviconResolver.walkForFavicon` (avg 5.2 s), `GitVcsDriver.originRemoteExists`,
+`resolveHostingProvider`, `readBranchRecency`.
+
+It is the initial git-status pass, as long suspected. **But in-flight ≠ blocking:** a
+`runGitCommand` span is mostly async subprocess wait, which does not stall the loop.
+
+### Ruled out BY MEASUREMENT this time (not by code-read)
+
+| Hypothesis                                                                                          | Measurement                                                                              | Verdict                                                   |
+| --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| Synchronous PATH walk in `resolveSpawnExecutableWithNode` (the plan's "single most likely culprit") | Full 77-entry PATH walk for one command = **27.7 ms**, **zero** entries slower than 5 ms | **NOT the cause**                                         |
+| Database size / slow queries                                                                        | Real query shapes 0.16–15 ms, all indexed                                                | **NOT the cause**                                         |
+| Process-spawn cost                                                                                  | 35 concurrent `git status` spawns → **200 ms** total stall                               | Real but ~2 s at startup scale, **cannot explain 34.9 s** |
+
+So the synchronous work is somewhere not yet identified. Stop guessing — profile it.
+
+### Next step: CPU profile (setup verified, ready to run)
+
+`--cpu-prof` via `NODE_OPTIONS` is confirmed working on this machine, and
+`DesktopBackendConfiguration.ts` passes a copy of `process.env` to the backend child, so the flag
+propagates. Profiles are written **on process exit**, so the app must be quit normally.
+
+```powershell
+$env:NODE_OPTIONS = "--cpu-prof --cpu-prof-dir=C:\temp\t3prof --cpu-prof-interval=200"
+# launch the desktop app, let it finish starting (~60s), then QUIT it normally
+Remove-Item Env:\NODE_OPTIONS
+```
+
+Then analyse the largest `.cpuprofile` in `C:\temp\t3prof` (several are written — Electron main and
+the backend child; the backend is the one with the git/vcs frames). The self-time hot path is the
+answer. Only then pick the lever.
 
 --- pre-2026-07-27 history below ---
 
