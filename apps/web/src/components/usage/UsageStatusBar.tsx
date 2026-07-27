@@ -218,9 +218,10 @@ export function UsageStatusBar() {
   }
 
   return (
-    // Same horizontal inset + max-width as the composer, so the meters line
-    // up with the input box no matter how wide the window gets.
-    <div className="chat-composer-horizontal-inset w-full shrink-0 pb-1">
+    // Rendered inside the composer's column, which already supplies the
+    // horizontal inset; matching its max-width keeps the meters exactly as
+    // wide as the input box.
+    <div className="w-full shrink-0 pt-1">
       <div className="mx-auto flex w-full max-w-3xl flex-col gap-1">
         {expanded ? <ExpandedPanel accounts={accounts} nowMs={nowMs} /> : null}
         <button

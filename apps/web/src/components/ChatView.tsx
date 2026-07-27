@@ -6038,6 +6038,10 @@ function ChatViewContent(props: ChatViewProps) {
                         </div>
                       </div>
                     </div>
+                    {/* Usage meters live in the composer's own column, below
+                        the glass shell and above the safe-area padding, so
+                        they share the input's inset and max-width. */}
+                    <UsageStatusBar />
                     <div
                       aria-hidden
                       className="h-[calc(env(safe-area-inset-bottom)+1rem)] sm:h-[calc(env(safe-area-inset-bottom)+1.25rem)]"
@@ -6116,10 +6120,6 @@ function ChatViewContent(props: ChatViewProps) {
             onAddTerminalContext={addTerminalContextToDraft}
           />
         ))}
-        {/* Usage meters sit at the foot of the chat column but wear the
-            composer's horizontal inset and max-width, so they stay aligned
-            with the input box instead of spanning the whole pane. */}
-        <UsageStatusBar />
       </div>
 
       {!shouldUsePlanSidebarSheet && rightPanelOpen && activeThreadRef ? (
