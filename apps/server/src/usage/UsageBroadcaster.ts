@@ -8,7 +8,7 @@
  * (exponential, capped) and a hard floor on 429 so a broken endpoint is
  * never hammered. The last good snapshot is retained through failures.
  *
- * Samples from every successful poll land in `usage_samples` (SQLite) to
+ * Samples from every successful poll land in `fork_usage_samples` (SQLite) to
  * feed the expanded history chart.
  */
 import * as Cause from "effect/Cause";
@@ -187,7 +187,7 @@ export const make = Effect.gen(function* () {
   ) {
     for (const window of snapshot.windows) {
       yield* sql`
-        INSERT OR REPLACE INTO usage_samples (account_key, window_id, captured_at, percent, resets_at)
+        INSERT OR REPLACE INTO fork_usage_samples (account_key, window_id, captured_at, percent, resets_at)
         VALUES (${snapshot.accountKey}, ${window.id}, ${snapshot.capturedAt}, ${window.percent}, ${window.resetsAt})
       `;
     }
@@ -195,7 +195,7 @@ export const make = Effect.gen(function* () {
     const retentionCutoff = DateTime.formatIso(
       DateTime.add(now, { days: -HISTORY_RETENTION_DAYS }),
     );
-    yield* sql`DELETE FROM usage_samples WHERE captured_at < ${retentionCutoff}`;
+    yield* sql`DELETE FROM fork_usage_samples WHERE captured_at < ${retentionCutoff}`;
   });
 
   const publishSnapshot = Effect.fn("UsageBroadcaster.publishSnapshot")(function* (
@@ -387,7 +387,7 @@ export const make = Effect.gen(function* () {
     const since = input.since ?? "1970-01-01T00:00:00.000Z";
     const rows = yield* sql`
       SELECT captured_at AS "capturedAt", percent, resets_at AS "resetsAt"
-      FROM usage_samples
+      FROM fork_usage_samples
       WHERE account_key = ${input.accountKey}
         AND window_id = ${input.windowId}
         AND captured_at >= ${since}

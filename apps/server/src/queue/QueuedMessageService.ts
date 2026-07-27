@@ -1,7 +1,7 @@
 /**
  * QueuedMessageService — durable "send later" for chat messages.
  *
- * Messages live in the `queued_messages` table (outside the orchestration
+ * Messages live in the `fork_queued_messages` table (outside the orchestration
  * event log — a cancelled queued message leaves no trace in the thread).
  * A reactor loop evaluates triggers against the clock and the latest
  * account usage snapshots; when a trigger fires the stored send context is
@@ -197,7 +197,7 @@ export const make = Effect.gen(function* () {
         updated_at AS "updatedAt",
         sent_at AS "sentAt",
         failure_detail AS "failureDetail"
-      FROM queued_messages
+      FROM fork_queued_messages
       WHERE id = ${id}
     `.pipe(Effect.mapError(toQueuedError("Failed to load queued message")));
     if (rows.length === 0) {
@@ -214,7 +214,7 @@ export const make = Effect.gen(function* () {
   )(function* (input) {
     const now = yield* nowIso;
     yield* sql`
-      INSERT INTO queued_messages (
+      INSERT INTO fork_queued_messages (
         id, thread_id, message_id, text, trigger_json, send_context_json,
         status, origin, created_at, updated_at, sent_at, failure_detail
       ) VALUES (
@@ -241,7 +241,7 @@ export const make = Effect.gen(function* () {
     const nextTrigger = input.trigger ?? existing.trigger;
     const nextText = input.text ?? existing.text;
     yield* sql`
-      UPDATE queued_messages
+      UPDATE fork_queued_messages
       SET trigger_json = ${encodeTrigger(nextTrigger)}, text = ${nextText}, updated_at = ${now}
       WHERE id = ${input.id} AND status = 'pending'
     `.pipe(Effect.mapError(toQueuedError("Failed to update queued message")));
@@ -255,7 +255,7 @@ export const make = Effect.gen(function* () {
   )(function* (input) {
     const now = yield* nowIso;
     yield* sql`
-      UPDATE queued_messages
+      UPDATE fork_queued_messages
       SET status = 'cancelled', updated_at = ${now}
       WHERE id = ${input.id} AND status = 'pending'
     `.pipe(Effect.mapError(toQueuedError("Failed to cancel queued message")));
@@ -282,7 +282,7 @@ export const make = Effect.gen(function* () {
               updated_at AS "updatedAt",
               sent_at AS "sentAt",
               failure_detail AS "failureDetail"
-            FROM queued_messages
+            FROM fork_queued_messages
             WHERE thread_id = ${input.threadId}
             ORDER BY created_at ASC
           `
@@ -300,7 +300,7 @@ export const make = Effect.gen(function* () {
               updated_at AS "updatedAt",
               sent_at AS "sentAt",
               failure_detail AS "failureDetail"
-            FROM queued_messages
+            FROM fork_queued_messages
             ORDER BY created_at ASC
           `
       ).pipe(Effect.mapError(toQueuedError("Failed to list queued messages")));
@@ -331,7 +331,7 @@ export const make = Effect.gen(function* () {
   const markSent = Effect.fn("QueuedMessageService.markSent")(function* (id: string) {
     const now = yield* nowIso;
     yield* sql`
-      UPDATE queued_messages
+      UPDATE fork_queued_messages
       SET status = 'sent', sent_at = ${now}, updated_at = ${now}
       WHERE id = ${id} AND status = 'pending'
     `.pipe(Effect.mapError(toQueuedError("Failed to mark queued message sent")));
@@ -345,7 +345,7 @@ export const make = Effect.gen(function* () {
   ) {
     const now = yield* nowIso;
     yield* sql`
-      UPDATE queued_messages
+      UPDATE fork_queued_messages
       SET status = 'failed', failure_detail = ${detail}, updated_at = ${now}
       WHERE id = ${id} AND status = 'pending'
     `.pipe(Effect.mapError(toQueuedError("Failed to mark queued message failed")));
