@@ -237,6 +237,7 @@ import {
   shouldShowProviderStatusBanner,
 } from "./chat/ProviderStatusBanner";
 import { QueuedMessagesPanel } from "./chat/QueuedMessagesPanel";
+import { UsageStatusBar } from "./usage/UsageStatusBar";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import { resolveThreadPr } from "./ThreadStatusIndicators";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";
@@ -6115,6 +6116,10 @@ function ChatViewContent(props: ChatViewProps) {
             onAddTerminalContext={addTerminalContextToDraft}
           />
         ))}
+        {/* Usage meters sit at the foot of the chat column, directly under the
+            composer — not pinned to the window — so they track the content
+            container's width and stay next to the input. */}
+        <UsageStatusBar />
       </div>
 
       {!shouldUsePlanSidebarSheet && rightPanelOpen && activeThreadRef ? (

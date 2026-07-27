@@ -191,7 +191,7 @@ decimal_places }` — amounts in integer minor units. Visibility must derive fro
       session:all 25%, weekly:all 19%, **weekly:model:Fable 35%**.
 - [x] Committed as `9512c06b1` on `debug/crash-investigation` (32 files, staged
       only feature files; desktop files / pnpm-lock / lefthook.yml / other
-      plans/* left untouched for their threads).
+      plans/\* left untouched for their threads).
 
 ## Status: DONE (v1)
 

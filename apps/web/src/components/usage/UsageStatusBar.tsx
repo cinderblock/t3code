@@ -19,8 +19,8 @@ import {
   windowShortLabel,
 } from "./usagePresentation";
 
-/** Height reserved for the bar; the app shell reads the same value. */
-export const USAGE_STATUS_BAR_HEIGHT_PX = 24;
+/** Height of the meter strip itself (the expanded panel stacks above it). */
+const USAGE_STATUS_BAR_HEIGHT_PX = 24;
 
 function WindowMeter(props: { window: UsageWindow; emphasized: boolean; nowMs: number }) {
   const { window, emphasized, nowMs } = props;
@@ -125,10 +125,7 @@ function ExpandedPanel(props: { accounts: ReadonlyArray<AccountUsageState>; nowM
   if (environmentId === null) return null;
 
   return (
-    <div
-      className="fixed inset-x-0 z-40 max-h-[45dvh] overflow-y-auto border-border border-t bg-popover px-4 py-3 shadow-lg"
-      style={{ bottom: USAGE_STATUS_BAR_HEIGHT_PX }}
-    >
+    <div className="max-h-[45dvh] overflow-y-auto border-border border-t bg-popover px-4 py-3">
       <div className="mx-auto flex max-w-3xl flex-col gap-4">
         {accounts.map((account) => {
           const windows = sortWindowsForDisplay(account.snapshot.windows);
@@ -214,7 +211,9 @@ export function UsageStatusBar() {
   }
 
   return (
-    <>
+    // In flow at the foot of the chat column: expanding pushes the composer
+    // up instead of covering the input.
+    <div className="z-20 flex shrink-0 flex-col">
       {expanded ? <ExpandedPanel accounts={accounts} nowMs={nowMs} /> : null}
       <button
         type="button"
@@ -222,8 +221,8 @@ export function UsageStatusBar() {
         aria-expanded={expanded}
         aria-label={expanded ? "Collapse usage details" : "Expand usage details"}
         className={cn(
-          "fixed inset-x-0 bottom-0 z-40 flex cursor-pointer items-center gap-4 overflow-x-auto border-border border-t bg-card px-3 text-left outline-none",
-          "hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring",
+          "flex w-full cursor-pointer items-center gap-4 overflow-x-auto border-border border-t bg-card px-3 text-left outline-none",
+          "hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
         )}
         style={{ height: USAGE_STATUS_BAR_HEIGHT_PX }}
       >
@@ -236,6 +235,6 @@ export function UsageStatusBar() {
           />
         ))}
       </button>
-    </>
+    </div>
   );
 }

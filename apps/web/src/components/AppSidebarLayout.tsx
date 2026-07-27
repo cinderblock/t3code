@@ -9,7 +9,6 @@ import { resolveShortcutCommand, shortcutLabelForCommand } from "../keybindings"
 import { cn, isMacPlatform } from "../lib/utils";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { useClientSettings } from "../hooks/useSettings";
-import { primaryAccountUsageAtom } from "../state/usage";
 import ThreadSidebar from "./Sidebar";
 import ThreadSidebarV2 from "./SidebarV2";
 import { useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
@@ -20,7 +19,6 @@ import {
   THREAD_SIDEBAR_MIN_WIDTH,
   THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
 } from "./threadSidebarWidth";
-import { USAGE_STATUS_BAR_HEIGHT_PX, UsageStatusBar } from "./usage/UsageStatusBar";
 import {
   Sidebar,
   SidebarProvider,
@@ -102,8 +100,6 @@ function SidebarControl() {
 
 export function AppSidebarLayout({ children }: { children: ReactNode }) {
   const navigate = useNavigate();
-  const usageAccounts = useAtomValue(primaryAccountUsageAtom);
-  const hasUsageBar = usageAccounts.length > 0;
   const sidebarV2Enabled = useClientSettings((settings) => settings.sidebarV2Enabled);
   // Settings routes render the settings nav, which lives in the v1 component
   // and is identical for both sidebars — so v1 stays mounted there.
@@ -125,9 +121,6 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
     ...(isMacosDesktop && !isWindowFullscreen
       ? { "--workspace-controls-left": MACOS_TRAFFIC_LIGHTS_LEFT_INSET }
       : {}),
-    // Reserves a strip at the bottom of the window for the usage meter bar;
-    // the sidebar's fixed container subtracts the same variable.
-    "--app-statusbar-height": hasUsageBar ? `${USAGE_STATUS_BAR_HEIGHT_PX}px` : "0px",
   } as CSSProperties;
 
   useEffect(() => {
@@ -168,11 +161,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
   }, [navigate, pathname]);
 
   return (
-    <SidebarProvider
-      className="h-dvh! min-h-0! pb-[var(--app-statusbar-height,0px)]"
-      defaultOpen
-      style={sidebarProviderStyle}
-    >
+    <SidebarProvider className="h-dvh! min-h-0!" defaultOpen style={sidebarProviderStyle}>
       <Sidebar
         side="left"
         collapsible="offcanvas"
@@ -194,7 +183,6 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
       </Sidebar>
       {children}
       <SidebarControl />
-      <UsageStatusBar />
     </SidebarProvider>
   );
 }
