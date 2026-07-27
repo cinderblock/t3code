@@ -66,6 +66,7 @@ import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as UsageBroadcaster from "./usage/UsageBroadcaster.ts";
+import * as EventLoopLagMonitor from "./observability/EventLoopLagMonitor.ts";
 import * as QueuedMessageService from "./queue/QueuedMessageService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
@@ -491,6 +492,9 @@ export const makeServerLayer = Layer.unwrap(
       runtimeStateLayer,
       tailscaleServeLayer,
       cloudDesiredLinkReconcileLayer,
+      // Measures how long the loop is blocked, so "backend became unresponsive"
+      // is observed rather than inferred from the reconnects it causes.
+      EventLoopLagMonitor.layer,
     );
 
     return serverApplicationLayer.pipe(

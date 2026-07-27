@@ -123,16 +123,16 @@ publish/point the spec at a fork build.
 Checked `upstream/main` directly. This confirms the problem class is **real and machine-independent**
 — upstream hit it too — and tells us what we no longer need to carry:
 
-| Fix                                                                                     | In upstream/main?                                               |
-| --------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| Exponential backoff on failing status refresh (`VCS_STATUS_REFRESH_FAILURE_BASE_DELAY`) | **yes**                                                         |
-| Remote-fetch concurrency cap (Semaphore, `GitVcsDriverCore`)                            | **yes**                                                         |
-| Favicon resolution cache + timeout                                                      | no                                                              |
-| `isInsideWorkTree` timeout handling (defect fix)                                        | no                                                              |
-| Editor-detection timeout                                                                | no                                                              |
-| Exec-resolution memoization (`shell.ts`)                                                | no                                                              |
-| Startup grace + local status concurrency cap                                            | no                                                              |
-| Supervisor probe retry / establishment tolerance                                        | no — still `RETRY_DELAYS_MS` capped at 16s, 15s probe, no retry |
+| Fix                                                                                     | In upstream/main?                                                                                                                  |
+| --------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| Exponential backoff on failing status refresh (`VCS_STATUS_REFRESH_FAILURE_BASE_DELAY`) | **yes**                                                                                                                            |
+| Remote-fetch concurrency cap (`STATUS_UPSTREAM_REFRESH_CONCURRENCY`)                    | **no — corrected 2026-07-27** (earlier "yes" was a false positive: `grep -c "X\|Semaphore"` matched unrelated `Semaphore.make(1)`) |
+| Favicon resolution cache + timeout                                                      | no                                                                                                                                 |
+| `isInsideWorkTree` timeout handling (defect fix)                                        | no                                                                                                                                 |
+| Editor-detection timeout                                                                | no                                                                                                                                 |
+| Exec-resolution memoization (`shell.ts`)                                                | no                                                                                                                                 |
+| Startup grace + local status concurrency cap                                            | no                                                                                                                                 |
+| Supervisor probe retry / establishment tolerance                                        | no — still `RETRY_DELAYS_MS` capped at 16s, 15s probe, no retry                                                                    |
 
 ## What is NOT established (be honest about this)
 
