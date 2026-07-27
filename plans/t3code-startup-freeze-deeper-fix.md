@@ -90,21 +90,45 @@ It is the initial git-status pass, as long suspected. **But in-flight ≠ blocki
 
 So the synchronous work is somewhere not yet identified. Stop guessing — profile it.
 
-### Next step: CPU profile (setup verified, ready to run)
+### Next step: CPU profile — use the launcher
 
-`--cpu-prof` via `NODE_OPTIONS` is confirmed working on this machine, and
-`DesktopBackendConfiguration.ts` passes a copy of `process.env` to the backend child, so the flag
-propagates. Profiles are written **on process exit**, so the app must be quit normally.
+`scripts/start-t3.ps1` exists so a diagnostic run is reproducible instead of hand-typed. It
+self-elevates, cd's to the repo root, **rebuilds when any source file is newer than the bundles**,
+and sets the diagnostic env/args.
 
 ```powershell
-$env:NODE_OPTIONS = "--cpu-prof --cpu-prof-dir=C:\temp\t3prof --cpu-prof-interval=200"
-# launch the desktop app, let it finish starting (~60s), then QUIT it normally
-Remove-Item Env:\NODE_OPTIONS
+pwsh -File scripts\start-t3.ps1 -CpuProf
+# let it finish starting (~60s), then QUIT THE APP NORMALLY
 ```
 
-Then analyse the largest `.cpuprofile` in `C:\temp\t3prof` (several are written — Electron main and
-the backend child; the backend is the one with the git/vcs frames). The self-time hot path is the
-answer. Only then pick the lever.
+Then analyse the largest `.cpuprofile` in `C:\temp\t3prof`. The self-time hot path is the answer.
+Only then pick the lever.
+
+Verified mechanics (don't re-derive):
+
+- `--cpu-prof` via `NODE_OPTIONS` is accepted by both Node and Electron 41.5 on this machine, and
+  `DesktopBackendConfiguration.ts` passes a copy of `process.env` to the backend child, so it
+  propagates. A test run did write a `.cpuprofile`.
+- Profiles flush **only on clean exit** — killing the app yields nothing. The launcher warns about
+  this and reports afterwards whether any profile was actually written.
+- Every node process in the tree gets profiled (pnpm/vp too), so expect several files; the backend
+  is the largest and the one containing git/vcs frames.
+
+### The staleness check is the point
+
+The desktop runs **bundles, not source** (`apps/server/dist/bin.mjs`,
+`apps/desktop/dist-electron/main.cjs`). A stale bundle silently runs old code. This already cost a
+session: a database repair looked like it had failed, when in fact a month-old server bundle was
+re-applying the migrations the repair had just removed. The launcher compares the newest source
+mtime against the oldest artifact and rebuilds, so "am I running the code we just changed?" stops
+being a question.
+
+### Repo gotcha: committing a lone `.ps1` fails
+
+The pre-commit hook is `vp staged` (`.vite-hooks/pre-commit`, `core.hooksPath=.vite-hooks/_`).
+`vp fmt` has no formatter for `.ps1`, and errors with _"Expected at least one target file"_ when
+**no** staged file is formattable. Commit PowerShell alongside a `.ts`/`.md` file (which is how
+`scripts/crash-snapshot.ps1` originally landed), rather than reaching for `--no-verify`.
 
 --- pre-2026-07-27 history below ---
 
