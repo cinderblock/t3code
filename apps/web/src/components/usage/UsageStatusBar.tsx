@@ -45,7 +45,11 @@ function WindowMeter(props: { window: UsageWindow; emphasized: boolean; nowMs: n
         {windowShortLabel(window)}
       </span>
       <span
-        className="relative h-1.5 min-w-6 flex-1 overflow-hidden rounded-full bg-muted/70"
+        // The track has to read as the full 0–100% domain, otherwise on dark
+        // backgrounds the unfilled remainder disappears and you can't tell
+        // where one meter ends and the next begins. A solid track plus an
+        // inset ring gives it a definite end.
+        className="relative h-2 min-w-6 flex-1 overflow-hidden rounded-full bg-foreground/10 ring-1 ring-border ring-inset dark:bg-foreground/20"
         role="progressbar"
         aria-valuemin={0}
         aria-valuemax={100}
@@ -59,11 +63,11 @@ function WindowMeter(props: { window: UsageWindow; emphasized: boolean; nowMs: n
           )}
           style={{ width: `${percent}%` }}
         />
-        {/* Quartile ticks. */}
+        {/* Quartile ticks, drawn over the fill so they stay legible. */}
         {[25, 50, 75].map((tick) => (
           <span
             key={tick}
-            className="absolute inset-y-0 w-px bg-background/70"
+            className="absolute inset-y-0 w-px bg-background/60"
             style={{ left: `${tick}%` }}
           />
         ))}
