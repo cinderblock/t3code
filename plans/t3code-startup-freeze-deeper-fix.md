@@ -96,10 +96,22 @@ So the synchronous work is somewhere not yet identified. Stop guessing — profi
 self-elevates, cd's to the repo root, **rebuilds when any source file is newer than the bundles**,
 and sets the diagnostic env/args.
 
-```powershell
-pwsh -File scripts\start-t3.ps1 -CpuProf
-# let it finish starting (~60s), then QUIT THE APP NORMALLY
+Paste into **Win+R** (full path; it stays in Run history afterwards), or run from a terminal:
+
 ```
+C:\Users\camer\git\t3code\scripts\t3.cmd -CpuProf
+```
+
+Then let it finish starting (~60 s) and **quit the app normally**. Other forms:
+
+```
+C:\Users\camer\git\t3code\scripts\t3.cmd                    plain run, lag monitor on
+C:\Users\camer\git\t3code\scripts\t3.cmd -NetLog -LagMs 100 netlog + finer stall reporting
+C:\Users\camer\git\t3code\scripts\t3.cmd -DryRun -NoElevate show what it would do, launch nothing
+```
+
+`t3.cmd` exists only because Win+R cannot execute a `.ps1` (Windows opens it in an editor); it
+forwards all arguments to `start-t3.ps1`, which does the elevation, the `cd`, and the rebuild.
 
 Then analyse the largest `.cpuprofile` in `C:\temp\t3prof`. The self-time hot path is the answer.
 Only then pick the lever.
