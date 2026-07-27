@@ -125,8 +125,8 @@ function ExpandedPanel(props: { accounts: ReadonlyArray<AccountUsageState>; nowM
   if (environmentId === null) return null;
 
   return (
-    <div className="max-h-[45dvh] overflow-y-auto border-border border-t bg-popover px-4 py-3">
-      <div className="mx-auto flex max-w-3xl flex-col gap-4">
+    <div className="max-h-[45dvh] overflow-y-auto rounded-xl border border-border bg-popover px-3 py-2.5">
+      <div className="flex flex-col gap-4">
         {accounts.map((account) => {
           const windows = sortWindowsForDisplay(account.snapshot.windows);
           const sessionWindows = windows.filter((window) => window.kind === "session");
@@ -211,9 +211,10 @@ export function UsageStatusBar() {
   }
 
   return (
-    // In flow at the foot of the chat column: expanding pushes the composer
-    // up instead of covering the input.
-    <div className="z-20 flex shrink-0 flex-col">
+    // Constrained to the composer's max-width column so the meters line up
+    // with the input box; expanding grows the stack upward rather than
+    // covering it.
+    <div className="mx-auto flex w-full max-w-3xl shrink-0 flex-col gap-1 pt-1">
       {expanded ? <ExpandedPanel accounts={accounts} nowMs={nowMs} /> : null}
       <button
         type="button"
@@ -221,7 +222,7 @@ export function UsageStatusBar() {
         aria-expanded={expanded}
         aria-label={expanded ? "Collapse usage details" : "Expand usage details"}
         className={cn(
-          "flex w-full cursor-pointer items-center gap-4 overflow-x-auto border-border border-t bg-card px-3 text-left outline-none",
+          "flex w-full cursor-pointer items-center gap-4 overflow-x-auto rounded-lg px-2 text-left outline-none",
           "hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
         )}
         style={{ height: USAGE_STATUS_BAR_HEIGHT_PX }}
