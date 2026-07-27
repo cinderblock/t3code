@@ -96,22 +96,35 @@ So the synchronous work is somewhere not yet identified. Stop guessing — profi
 self-elevates, cd's to the repo root, **rebuilds when any source file is newer than the bundles**,
 and sets the diagnostic env/args.
 
-Paste into **Win+R** (full path; it stays in Run history afterwards), or run from a terminal:
+**The only command Cameron runs, with no arguments, ever:**
 
 ```
-C:\Users\camer\git\t3code\scripts\t3.cmd -CpuProf
+C:\Users\camer\git\t3code\scripts\t3.cmd
 ```
 
-Then let it finish starting (~60 s) and **quit the app normally**. Other forms:
+Then let it finish starting (~60 s) and **quit the app normally** (CPU profiles flush only on clean
+exit).
 
-```
-C:\Users\camer\git\t3code\scripts\t3.cmd                    plain run, lag monitor on
-C:\Users\camer\git\t3code\scripts\t3.cmd -NetLog -LagMs 100 netlog + finer stall reporting
-C:\Users\camer\git\t3code\scripts\t3.cmd -DryRun -NoElevate show what it would do, launch nothing
-```
+**Claude configures the run by editing the `$Config` block in `scripts/start-t3.ps1` and committing
+it** — `CpuProf`, `NetLog`, `LagMs`, `Build`. Never ask for a flag at the call site; if a session
+needs different diagnostics, edit that block. `t3.cmd` takes no arguments and exists only because
+Win+R cannot execute a `.ps1` (Windows opens it in an editor).
 
-`t3.cmd` exists only because Win+R cannot execute a `.ps1` (Windows opens it in an editor); it
-forwards all arguments to `start-t3.ps1`, which does the elevation, the `cd`, and the rebuild.
+### Run markers — how to find a run's data
+
+Every run creates `C:\temp\t3runs\<yyyyMMdd-HHmmss>\`, and `C:\temp\t3runs\latest.txt` holds the
+newest run's path. Inside:
+
+- `run.json` — start/end UTC, duration, exit code, branch/commit/dirty, whether it rebuilt and why,
+  the effective config, and **`logStartOffset` / `logEndOffset` / `logBytesAppended`** for
+  `server-child.log`. Those byte offsets are the marker: read exactly the slice this run appended
+  instead of guessing timestamps.
+- `launcher.log` — full transcript of the launcher.
+- `cpuprof/` — this run's V8 profiles (per-run, so profiles never pile up ambiguously).
+- `netlog.json` — only when `NetLog` is enabled.
+
+Oldest run directories are pruned beyond `KeepRuns` (10). The launcher also warns if electron is
+already running, since a second instance contends for the database and port.
 
 Then analyse the largest `.cpuprofile` in `C:\temp\t3prof`. The self-time hot path is the answer.
 Only then pick the lever.
