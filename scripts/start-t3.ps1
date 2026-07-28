@@ -63,6 +63,11 @@ $Config = @{
 
   # Keep this many run directories before pruning the oldest.
   KeepRuns = 10
+
+  # Hide this console once the app's own window appears, so a run leaves one
+  # window on screen instead of two. Everything printed is still captured in
+  # the run's launcher.log, and the console is re-shown if the run fails.
+  HideConsoleWhenAppStarts = $true
 }
 # =====================================================================
 
@@ -70,6 +75,41 @@ function Test-Admin {
   $id = [Security.Principal.WindowsIdentity]::GetCurrent()
   (New-Object Security.Principal.WindowsPrincipal $id).IsInRole(
     [Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+if (-not ('T3.Win32' -as [type])) {
+  Add-Type -Namespace T3 -Name Win32 -MemberDefinition @'
+[DllImport("kernel32.dll")] public static extern System.IntPtr GetConsoleWindow();
+[DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr hWnd, int nCmdShow);
+'@
+}
+$SW_HIDE = 0
+$SW_SHOW = 5
+
+function Set-ConsoleVisible {
+  param([bool]$Visible)
+  $h = [T3.Win32]::GetConsoleWindow()
+  if ($h -ne [IntPtr]::Zero) {
+    [void][T3.Win32]::ShowWindow($h, $(if ($Visible) { $SW_SHOW } else { $SW_HIDE }))
+  }
+}
+
+# Identity of the bytes that will actually execute. The commit at launch time
+# describes the SOURCE tree; it does not prove which build is running, which is
+# precisely how a month-old bundle once silently undid a database repair. The
+# hash is the authoritative answer -- identical hash means identical bytes.
+function Get-ArtifactFacts {
+  param([string[]]$Paths, [string]$Root)
+  foreach ($p in $Paths) {
+    if (-not (Test-Path $p)) { continue }
+    $item = Get-Item $p
+    [ordered]@{
+      path     = $item.FullName.Replace("$Root\", '')
+      sizeBytes = $item.Length
+      mtimeUtc = $item.LastWriteTimeUtc.ToString('o')
+      sha256   = (Get-FileHash -Path $p -Algorithm SHA256).Hash.Substring(0, 12).ToLower()
+    }
+  }
 }
 
 # --- elevate -------------------------------------------------------------
@@ -92,7 +132,11 @@ $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $RunsRoot = 'C:\temp\t3runs'
 $RunDir = Join-Path $RunsRoot $stamp
 New-Item -ItemType Directory -Force -Path $RunDir | Out-Null
-Set-Content -Path (Join-Path $RunsRoot 'latest.txt') -Value $RunDir -Encoding utf8
+# A dry run must not claim to be the latest real run -- that pointer is how the
+# most recent profile/log slice gets found.
+if (-not $DryRun) {
+  Set-Content -Path (Join-Path $RunsRoot 'latest.txt') -Value $RunDir -Encoding utf8
+}
 
 $serverChildLog = Join-Path $env:USERPROFILE '.t3\userdata\logs\server-child.log'
 $startOffset = if (Test-Path $serverChildLog) { (Get-Item $serverChildLog).Length } else { 0 }
@@ -115,8 +159,15 @@ if ($already.Count -gt 0) {
 }
 
 # --- staleness check -----------------------------------------------------
-# Compare the newest source mtime against the OLDEST artifact: if any one
-# bundle predates a source edit, that bundle is the stale one that will run.
+# Written next to the artifacts (dist-electron is gitignored) so the bundles
+# carry the commit they were produced from, and so staleness has a reference
+# point that is written strictly LAST.
+$stampPath = Join-Path $RepoRoot 'apps\desktop\dist-electron\.t3-build-stamp.json'
+$buildStamp = $null
+if (Test-Path $stampPath) {
+  try { $buildStamp = Get-Content $stampPath -Raw | ConvertFrom-Json } catch {}
+}
+
 $artifacts = @(
   'apps\desktop\dist-electron\main.cjs'
   'apps\desktop\dist-electron\preload.cjs'
@@ -133,17 +184,35 @@ if ($Config.Build -eq 'always') {
 } elseif ($missing.Count -gt 0) {
   $needsBuild = $true; $reason = "missing $(($missing | Split-Path -Leaf) -join ', ')"
 } else {
-  $oldestArtifact = ($artifacts | ForEach-Object { (Get-Item $_).LastWriteTime } |
-    Sort-Object | Select-Object -First 1)
+  # Compare against the build STAMP, not artifact mtimes. The build writes its
+  # own outputs at different times AND regenerates sources mid-build (e.g.
+  # apps/desktop/src/preview/AnnotationStyles.generated.ts, written after
+  # apps/web/dist/index.html). Comparing "newest source" to "oldest artifact"
+  # therefore reported stale on every run, forever, and rebuilt every launch.
+  # The stamp is written after the build completes, so nothing the build itself
+  # touches can post-date it.
+  $reference = $null
+  if ($buildStamp -and $buildStamp.builtAtUtc) {
+    try { $reference = [datetime]::Parse($buildStamp.builtAtUtc).ToLocalTime() } catch {}
+  }
+  if (-not $reference) {
+    $reference = ($artifacts | ForEach-Object { (Get-Item $_).LastWriteTime } |
+      Sort-Object | Select-Object -First 1)
+  }
+
   $srcRoots = @('apps\server\src', 'apps\desktop\src', 'apps\desktop\scripts',
     'apps\web\src', 'packages') | ForEach-Object { Join-Path $RepoRoot $_ } |
     Where-Object { Test-Path $_ }
   $newestSrc = Get-ChildItem -Path $srcRoots -Recurse -File -Include *.ts, *.tsx, *.mjs, *.css 2>$null |
-    Where-Object { $_.FullName -notmatch '\\(node_modules|dist|dist-electron)\\' } |
+    Where-Object {
+      $_.FullName -notmatch '\\(node_modules|dist|dist-electron)\\' -and
+      # Build-generated sources would otherwise re-trigger staleness forever.
+      $_.Name -notlike '*.generated.*'
+    } |
     Sort-Object LastWriteTime -Descending | Select-Object -First 1
-  if ($newestSrc -and $newestSrc.LastWriteTime -gt $oldestArtifact) {
+  if ($newestSrc -and $newestSrc.LastWriteTime -gt $reference) {
     $needsBuild = $true
-    $reason = "$($newestSrc.Name) is newer than the bundles"
+    $reason = "$($newestSrc.Name) is newer than the last build"
   }
 }
 
@@ -155,9 +224,38 @@ if ($needsBuild -and $Config.Build -eq 'never') {
   & pnpm build:desktop
   if ($LASTEXITCODE -ne 0) { throw "build:desktop failed ($LASTEXITCODE)" }
   $didBuild = $true
+  # After the build, so a wiped dist-electron can't take the stamp with it.
+  [ordered]@{
+    builtAtUtc = (Get-Date).ToUniversalTime().ToString('o')
+    commit     = $sha
+    branch     = $branch
+    dirty      = [bool]$dirty
+    builtBy    = 'start-t3.ps1'
+  } | ConvertTo-Json | Set-Content -Path $stampPath -Encoding utf8
   Write-Host "  build   : done" -ForegroundColor Green
 } else {
   Write-Host "  build   : up to date" -ForegroundColor Green
+}
+
+# --- bundle identity -----------------------------------------------------
+if ($didBuild -and (Test-Path $stampPath)) {
+  try { $buildStamp = Get-Content $stampPath -Raw | ConvertFrom-Json } catch {}
+}
+$artifactFacts = @(Get-ArtifactFacts -Paths $artifacts -Root $RepoRoot)
+
+if ($buildStamp) {
+  $stampDirty = if ($buildStamp.dirty) { ' (dirty)' } else { '' }
+  if ($buildStamp.commit -ne $sha) {
+    Write-Host "  bundles : built from $($buildStamp.commit)$stampDirty at $($buildStamp.builtAtUtc)" -ForegroundColor Yellow
+    Write-Host "            HEAD is $sha - RUNNING A DIFFERENT COMMIT THAN THE WORKING TREE" -ForegroundColor Red
+  } else {
+    Write-Host "  bundles : built from $($buildStamp.commit)$stampDirty at $($buildStamp.builtAtUtc)" -ForegroundColor Green
+  }
+} else {
+  Write-Host '  bundles : no build stamp - built outside this launcher, commit unknown' -ForegroundColor Yellow
+}
+foreach ($a in $artifactFacts) {
+  Write-Host "            $($a.sha256)  $($a.path)"
 }
 
 # --- diagnostics ---------------------------------------------------------
@@ -199,16 +297,47 @@ if ($DryRun) {
   Write-Host "  pnpm start:desktop -- $($electronArgs -join ' ')"
   Write-Host "  NODE_OPTIONS=$($env:NODE_OPTIONS)"
   try { Stop-Transcript | Out-Null } catch {}
+  Remove-Item $RunDir -Recurse -Force -ErrorAction SilentlyContinue
   exit 0
 }
 
 # --- run -----------------------------------------------------------------
 Write-Host 'App starting. Quit it normally when done.' -ForegroundColor Green
 Write-Host ''
+
+# Hide this console once the app has a window of its own, so a run ends up with
+# one window on screen rather than two. Done from a background job because the
+# launch below blocks until the app exits; the job is handed this console's
+# HWND explicitly, since GetConsoleWindow() inside the job would return the
+# job's own console.
+$hideJob = $null
+if ($Config.HideConsoleWhenAppStarts) {
+  $hwnd = [T3.Win32]::GetConsoleWindow()
+  $hideJob = Start-Job -ArgumentList $hwnd -ScriptBlock {
+    param($TargetHwnd)
+    Add-Type -Namespace T3J -Name Win32 -MemberDefinition @'
+[DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr hWnd, int nCmdShow);
+'@
+    # Wait for an electron process to actually present a window; give up after
+    # 120s so a failed launch still leaves the console visible.
+    $deadline = (Get-Date).AddSeconds(120)
+    while ((Get-Date) -lt $deadline) {
+      $win = Get-Process -Name electron -ErrorAction SilentlyContinue |
+        Where-Object { $_.MainWindowHandle -ne 0 }
+      if ($win) { Start-Sleep -Milliseconds 700; [void][T3J.Win32]::ShowWindow($TargetHwnd, 0); return }
+      Start-Sleep -Milliseconds 500
+    }
+  }
+}
+
 $started = Get-Date
 & pnpm start:desktop -- @electronArgs
 $code = $LASTEXITCODE
 $ended = Get-Date
+
+if ($hideJob) { Stop-Job $hideJob -ErrorAction SilentlyContinue; Remove-Job $hideJob -Force -ErrorAction SilentlyContinue }
+# A failed run must not disappear silently.
+if ($code -ne 0) { Set-ConsoleVisible $true }
 $endOffset = if (Test-Path $serverChildLog) { (Get-Item $serverChildLog).Length } else { 0 }
 
 # --- markers + summary ---------------------------------------------------
@@ -229,6 +358,13 @@ if ($Config.CpuProf) {
   dirty             = [bool]$dirty
   rebuilt           = $didBuild
   buildReason       = $reason
+  # Which bytes actually ran. buildStamp.commit is the commit the bundles were
+  # produced from, which is the answer to "which version is running" -- the
+  # top-level `commit` above is only the source tree at launch.
+  buildStamp        = $buildStamp
+  bundleCommit      = if ($buildStamp) { $buildStamp.commit } else { $null }
+  bundleMatchesHead = if ($buildStamp) { $buildStamp.commit -eq $sha } else { $null }
+  artifacts         = $artifactFacts
   config            = $Config
   serverChildLog    = $serverChildLog
   # Byte range this run appended -- lets the exact slice be read back without
@@ -262,5 +398,11 @@ Get-ChildItem -Path $RunsRoot -Directory -ErrorAction SilentlyContinue |
   ForEach-Object { Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue }
 
 try { Stop-Transcript | Out-Null } catch {}
-if ($KeepOpen) { Write-Host ''; Read-Host 'press Enter to close' | Out-Null }
+# Only pause on failure; a clean run should close without asking, since the
+# whole point is to leave one window on screen.
+if ($KeepOpen -and $code -ne 0) {
+  Set-ConsoleVisible $true
+  Write-Host ''
+  Read-Host 'run failed - press Enter to close' | Out-Null
+}
 exit $code

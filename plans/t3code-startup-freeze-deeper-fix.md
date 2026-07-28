@@ -139,6 +139,29 @@ Verified mechanics (don't re-derive):
 - Every node process in the tree gets profiled (pnpm/vp too), so expect several files; the backend
   is the largest and the one containing git/vcs frames.
 
+### Launcher gotcha already hit and fixed (2026-07-27)
+
+The first version compared the newest source mtime against the **oldest build
+artifact**, and so rebuilt on _every single launch_ (~2 min each). Cause: the build writes its
+outputs at different times **and regenerates a source file mid-build** —
+`apps/desktop/src/preview/AnnotationStyles.generated.ts` is written at 17:21:20 while
+`apps/web/dist/index.html` from the same build is 17:21:14. A generated source therefore always
+post-dated an artifact.
+
+Fix: compare against `.t3-build-stamp.json`'s `builtAtUtc`, which is written **after** the build
+finishes, so nothing the build touches can post-date it; and skip `*.generated.*` when scanning.
+Verified: stamp 17:21:30 vs newest real source 15:19:45 → correctly reports "up to date".
+
+**Rule for anything like this: never use an artifact mtime as the freshness reference when the
+build mutates its own inputs. Use a marker written last.**
+
+### Window behaviour
+
+`t3.cmd` launches the pre-elevation process hidden (it exists only to raise the UAC prompt). The
+elevated console stays visible through build and startup, then hides itself once an electron window
+actually appears — done from a background job, since the launch call blocks until the app exits. It
+is re-shown on a non-zero exit so a failure never disappears silently.
+
 ### The staleness check is the point
 
 The desktop runs **bundles, not source** (`apps/server/dist/bin.mjs`,
