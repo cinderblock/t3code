@@ -33,7 +33,11 @@ param(
   # Cameron never passes these.
   [switch]$NoElevate,
   [switch]$DryRun,
-  [switch]$KeepOpen
+  [switch]$KeepOpen,
+  # Build and write the stamp, then stop without launching. Used to pre-warm
+  # the bundles so the next real run starts immediately. Building by hand
+  # instead would leave no stamp, and the next launch would rebuild.
+  [switch]$BuildOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -134,7 +138,7 @@ $RunDir = Join-Path $RunsRoot $stamp
 New-Item -ItemType Directory -Force -Path $RunDir | Out-Null
 # A dry run must not claim to be the latest real run -- that pointer is how the
 # most recent profile/log slice gets found.
-if (-not $DryRun) {
+if (-not $DryRun -and -not $BuildOnly) {
   Set-Content -Path (Join-Path $RunsRoot 'latest.txt') -Value $RunDir -Encoding utf8
 }
 
@@ -256,6 +260,14 @@ if ($buildStamp) {
 }
 foreach ($a in $artifactFacts) {
   Write-Host "            $($a.sha256)  $($a.path)"
+}
+
+if ($BuildOnly) {
+  Write-Host ''
+  Write-Host 'BUILD ONLY - bundles are warm; next run will skip the build.' -ForegroundColor Green
+  try { Stop-Transcript | Out-Null } catch {}
+  Remove-Item $RunDir -Recurse -Force -ErrorAction SilentlyContinue
+  exit 0
 }
 
 # --- diagnostics ---------------------------------------------------------
