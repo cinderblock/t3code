@@ -3,6 +3,67 @@
 Status: **INSTRUMENTED 2026-07-27** — the lag monitor that was deferred three times now exists.
 Awaiting one app restart to capture a startup profile. Do not attempt another blind fix.
 
+## ROOT CAUSE FOUND (2026-07-28) — spawn flood driven by a reconnect feedback loop
+
+First real backend CPU profile: `C:\temp\t3runs\20260728-010854\cpuprof\server-11212-startup.cpuprofile`
+(90 s from server start, 52,397 samples).
+
+| Self time   | %CPU      | Frame                  |
+| ----------- | --------- | ---------------------- |
+| 40.03 s     | 44.3%     | `(idle)`               |
+| **24.00 s** | **26.6%** | **`spawn` (native)**   |
+| 2.13 s      | 2.4%      | `all` (native)         |
+| 1.69 s      | 1.9%      | anonymous, `effect.js` |
+
+Everything below `spawn` is noise. Ancestry confirms the caller:
+`spawn (native)` ← `node:child_process` ← `NodeChildProcessSpawner.js` ← Effect runtime.
+
+**`child_process.spawn` is synchronous**, so those 24 s are 24 s the event loop could not run —
+matching the independently-measured 34.9 s of stalls.
+
+### It is spawn COUNT, not spawn cost
+
+Measured the synchronous portion of `spawn()` directly against a real repo:
+**9.2 ms/spawn** (40 spawns, 368 ms). Normal for Windows — no antivirus pathology.
+
+So 24 s ÷ 9.2 ms ≈ **2,600 spawns in 90 seconds (~29/sec)** with 14 repos. That is the bug.
+
+### Why so many: the backoff never escalates
+
+In the same window the backend logged **386 `GitWorkflowService.remoteStatus` failures**
+(`GitManagerError`) and **138 failed `gh` PR lookups** (`SourceControlProviderError`). Every failure
+reported `consecutiveFailures: 1, nextDelayMs: 30000` — the exponential backoff **never grows past
+the first step**.
+
+The backoff code itself is correct. The state is what is lost: `consecutiveFailuresRef` is created
+by `Ref.make(0)` _inside_ `makeRemoteRefreshLoop` (line ~405), and that fiber is forked when a repo
+gains its first subscriber (~485) and **interrupted when its last subscriber leaves** (~508-523).
+
+That closes a self-reinforcing loop:
+
+1. Spawn flood blocks the event loop.
+2. The client's health probe times out → it reconnects.
+3. Reconnecting drops every `subscribeVcsStatus` → subscriber counts hit 0 → **all 14 pollers are
+   interrupted**.
+4. Re-subscribing re-forks all 14 pollers, each with `refreshImmediately` and a **fresh failure
+   counter of 0**.
+5. Failures restart at a 30 s delay instead of escalating → more spawns → back to 1.
+
+This is precisely the "disconnect spiral" earlier plans described from its symptoms; it is now
+evidence-backed from the inside.
+
+### Fix direction (do not start until reviewed)
+
+- **Move the failure counter out of the poller fiber.** Key it by `cwd` in broadcaster-level state
+  so backoff survives resubscription. Highest-value single change.
+- **Do not honour `refreshImmediately` when that cwd failed recently** — a reconnect should not
+  re-trigger an immediate fetch for a repo that is known to be failing.
+- **Cache/back off failed PR lookups** — 138 failed `gh` spawns is pure waste.
+- Longer term: batch per-repo git invocations (currently ~10+ spawns per repo per pass).
+
+Note this is upstream code, so the same loop should affect any user with several repos where remote
+status fails (offline remote, auth prompt, slow SSH) — not just this machine.
+
 ## 2026-07-27 measurement session — what was ruled IN and OUT
 
 **Event-loop lag monitor built and verified.** `apps/server/src/observability/EventLoopLagMonitor.ts`,
