@@ -24,24 +24,31 @@ import {
 /** Height of the meter strip itself (the expanded panel stacks above it). */
 const USAGE_STATUS_BAR_HEIGHT_PX = 24;
 
+const EXPAND_DURATION_MS = 260;
+const EXPAND_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
+
 /**
- * Track an element's laid-out height so a collapsed wrapper can animate to a
- * concrete pixel value. `offsetHeight` (not `scrollHeight`) so a section that
- * caps itself with `max-h` reports the capped height.
+ * Animate a clipped wrapper to a target height.
+ *
+ * Driven with the Web Animations API rather than a CSS transition: CSS
+ * transitions on `height`/`grid-template-rows` did not run in this app's
+ * renderer, and WAAPI does not depend on the transition property resolving
+ * or on a measurement having landed before the toggle.
  */
-function useMeasuredHeight<T extends HTMLElement>() {
-  const ref = useRef<T | null>(null);
-  const [height, setHeight] = useState(0);
-  useEffect(() => {
-    const element = ref.current;
-    if (element === null) return;
-    const measure = () => setHeight(element.offsetHeight);
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
-  return [ref, height] as const;
+function applyHeight(wrapper: HTMLElement, target: number, animate: boolean): void {
+  const from = wrapper.getBoundingClientRect().height;
+  wrapper.style.height = `${target}px`;
+  if (!animate || Math.abs(from - target) < 1) {
+    return;
+  }
+  wrapper.animate([{ height: `${from}px` }, { height: `${target}px` }], {
+    duration: EXPAND_DURATION_MS,
+    easing: EXPAND_EASING,
+  });
+}
+
+function prefersReducedMotion(): boolean {
+  return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
 }
 
 function WindowMeter(props: { window: UsageWindow; emphasized: boolean; nowMs: number }) {
@@ -245,18 +252,47 @@ export function UsageStatusBar() {
   const queuedMessages = useAtomValue(primaryQueuedMessagesAtom);
   const [expanded, setExpanded] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
-  // `grid-template-rows: 0fr -> 1fr` did not animate here, so both sections
-  // animate an explicit pixel height instead. The content keeps laying out at
-  // its natural size inside a clipped wrapper; a ResizeObserver feeds that
-  // size back so the height target stays correct as charts load.
-  const [chartsRef, chartsHeight] = useMeasuredHeight<HTMLDivElement>();
-  const [metersRef, metersHeight] = useMeasuredHeight<HTMLDivElement>();
+  const chartsWrapRef = useRef<HTMLDivElement | null>(null);
+  const chartsInnerRef = useRef<HTMLDivElement | null>(null);
+  const metersWrapRef = useRef<HTMLDivElement | null>(null);
+  const metersInnerRef = useRef<HTMLDivElement | null>(null);
+  // First pass sizes the sections without animating; only later toggles do.
+  const hasSizedRef = useRef(false);
 
   // Keep reset countdowns fresh while visible.
   useEffect(() => {
     const interval = window.setInterval(() => setNowMs(Date.now()), 30_000);
     return () => window.clearInterval(interval);
   }, []);
+
+  // Drive the open/close. The inner content always lays out at its natural
+  // height inside the clipped wrapper, so it can be measured whether the
+  // section is currently open or closed.
+  useEffect(() => {
+    const chartsWrap = chartsWrapRef.current;
+    const chartsInner = chartsInnerRef.current;
+    const metersWrap = metersWrapRef.current;
+    const metersInner = metersInnerRef.current;
+    if (!chartsWrap || !chartsInner || !metersWrap || !metersInner) return;
+
+    const animate = hasSizedRef.current && !prefersReducedMotion();
+    hasSizedRef.current = true;
+    applyHeight(chartsWrap, expanded ? chartsInner.offsetHeight : 0, animate);
+    applyHeight(metersWrap, expanded ? 0 : metersInner.offsetHeight, animate);
+  }, [expanded, accounts.length]);
+
+  // Charts arrive asynchronously and reflow; keep the open section sized to
+  // its content so it never clips what it is showing.
+  useEffect(() => {
+    const chartsWrap = chartsWrapRef.current;
+    const chartsInner = chartsInnerRef.current;
+    if (!chartsWrap || !chartsInner) return;
+    const observer = new ResizeObserver(() => {
+      if (expanded) chartsWrap.style.height = `${chartsInner.offsetHeight}px`;
+    });
+    observer.observe(chartsInner);
+    return () => observer.disconnect();
+  }, [expanded]);
 
   if (accounts.length === 0) {
     return null;
@@ -291,7 +327,9 @@ export function UsageStatusBar() {
     // Rendered inside the composer's column, which already supplies the
     // horizontal inset; matching its max-width keeps the bubble exactly as
     // wide as the input box.
-    <div className="w-full shrink-0 pt-1.5">
+    // Negative top margin trims the composer's safe-area spacer above, which
+    // otherwise leaves a wide gap between the input and this bubble.
+    <div className="-mt-2 w-full shrink-0">
       <div className="mx-auto w-full max-w-3xl">
         {/*
          * One bubble sitting flush against the bottom edge of the window, so
@@ -300,12 +338,8 @@ export function UsageStatusBar() {
          * meter row animates to 0, so the bars give way to the charts.
          */}
         <div className="alert-glass overflow-hidden rounded-t-2xl border border-b-0 border-border/60 shadow-sm">
-          <div
-            className="overflow-hidden transition-[height] duration-300 ease-out motion-reduce:transition-none"
-            style={{ height: expanded ? chartsHeight : 0 }}
-            aria-hidden={!expanded}
-          >
-            <div ref={chartsRef}>
+          <div ref={chartsWrapRef} className="overflow-hidden" aria-hidden={!expanded}>
+            <div ref={chartsInnerRef}>
               <div className="flex items-center justify-between gap-2 px-3 pt-2">
                 <span className="min-w-0 truncate font-medium text-foreground/80 text-xs">
                   {headline}
@@ -334,12 +368,8 @@ export function UsageStatusBar() {
             </div>
           </div>
 
-          <div
-            className="overflow-hidden transition-[height] duration-300 ease-out motion-reduce:transition-none"
-            style={{ height: expanded ? 0 : metersHeight }}
-            aria-hidden={expanded}
-          >
-            <div ref={metersRef}>
+          <div ref={metersWrapRef} className="overflow-hidden" aria-hidden={expanded}>
+            <div ref={metersInnerRef}>
               <button
                 type="button"
                 onClick={() => setExpanded(true)}
