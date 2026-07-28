@@ -129,15 +129,32 @@ already running, since a second instance contends for the database and port.
 Then analyse the largest `.cpuprofile` in `C:\temp\t3prof`. The self-time hot path is the answer.
 Only then pick the lever.
 
-Verified mechanics (don't re-derive):
+### NODE_OPTIONS=--cpu-prof DOES NOT WORK HERE — superseded 2026-07-27
 
-- `--cpu-prof` via `NODE_OPTIONS` is accepted by both Node and Electron 41.5 on this machine, and
-  `DesktopBackendConfiguration.ts` passes a copy of `process.env` to the backend child, so it
-  propagates. A test run did write a `.cpuprofile`.
-- Profiles flush **only on clean exit** — killing the app yields nothing. The launcher warns about
-  this and reports afterwards whether any profile was actually written.
-- Every node process in the tree gets profiled (pnpm/vp too), so expect several files; the backend
-  is the largest and the one containing git/vcs frames.
+The first attempt set `NODE_OPTIONS=--cpu-prof` before launching. It produced four profiles and
+**none of them was the backend**: pnpm (22 MB), vite-plus (25 MB), a tiny helper, and the Electron
+main process (20 MB, identified by `dist-electron/main.cjs` + `node:electron/js2c/node_init`
+frames). `DesktopBackendConfiguration.ts` copies `process.env` into the child and strips only
+`T3CODE_*`, so Electron appears to sanitise `NODE_OPTIONS` for spawned children.
+
+It was also the wrong shape: those profiles covered the entire 36-minute session at 20–200 MB each,
+so the ~62 s of startup we care about was a rounding error inside them.
+
+**Replaced by in-process profiling:** `apps/server/src/observability/CpuProfiler.ts` drives V8
+through `node:inspector` from inside the server, gated on `T3_CPU_PROF_DIR`, and stops on a timer
+(`T3_CPU_PROF_SECONDS`, default 90). Guaranteed to be the right process, scoped to startup, and
+**written on a timer rather than at exit** — so killing the app no longer loses the profile.
+Verified end to end: a scratch-home run logged "CPU profiler started" → "CPU profile written" 12 s
+later and produced a valid 220 KB profile (606 nodes, 8540 samples).
+
+Two Effect-4 gotchas hit while writing it, both worth remembering:
+
+- **`Effect.async` does not exist in Effect 4** — it is `Effect.callback`. Using the wrong name
+  types the result as `unknown`, which then poisons the requirements channel of every layer
+  downstream. It surfaced as ~60 errors in `bin.test.ts` and **zero** in the offending file, which
+  is a very misleading failure mode. Bisect by disabling the new layer if this shape appears again.
+- An `@effect-diagnostics-next-line` directive that suppresses nothing is itself a **warning**
+  (`TS377000`) and fails typecheck. `node:inspector` needs no suppression; `node:fs`/`node:path` do.
 
 ### Launcher gotcha already hit and fixed (2026-07-27)
 

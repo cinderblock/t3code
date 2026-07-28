@@ -67,6 +67,7 @@ import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as UsageBroadcaster from "./usage/UsageBroadcaster.ts";
 import * as EventLoopLagMonitor from "./observability/EventLoopLagMonitor.ts";
+import * as CpuProfiler from "./observability/CpuProfiler.ts";
 import * as QueuedMessageService from "./queue/QueuedMessageService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
@@ -495,6 +496,9 @@ export const makeServerLayer = Layer.unwrap(
       // Measures how long the loop is blocked, so "backend became unresponsive"
       // is observed rather than inferred from the reconnects it causes.
       EventLoopLagMonitor.layer,
+      // Profiles this process during startup when T3_CPU_PROF_DIR is set.
+      // NODE_OPTIONS=--cpu-prof does not reach the backend; see CpuProfiler.ts.
+      CpuProfiler.layer,
     );
 
     return serverApplicationLayer.pipe(

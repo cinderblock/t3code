@@ -50,9 +50,13 @@ $ErrorActionPreference = 'Stop'
 # freeze (34.9s of the first 61.7s is event-loop blocked). CPU profiling is
 # the decisive measurement, so it is ON.
 $Config = @{
-  # V8 CPU profiles. Flushed ONLY on clean exit -- quitting the app normally
-  # is required or the profile is never written.
+  # Profile the backend's startup. Written on a timer by the server itself, so
+  # unlike --cpu-prof it does not depend on a clean exit.
   CpuProf = $true
+
+  # How long to profile from server start. The startup burst under
+  # investigation runs ~62s, so 90 covers it with margin.
+  CpuProfSeconds = 90
 
   # Chromium netlog. Off: the netlog questions (dead saved environments,
   # the homeassistant 404 loop) are already answered and it is just noise now.
@@ -220,6 +224,24 @@ if ($Config.Build -eq 'always') {
   }
 }
 
+# A rebuild regenerates content-hashed web chunks (PreviewPanel-<hash>.js and
+# friends). A RUNNING instance already holds the old names in its loaded entry
+# chunk, so any lazy route it has not visited yet fails with "Failed to fetch
+# dynamically imported module" until the window is reloaded. Harmless but
+# confusing, and entirely avoidable.
+if ($needsBuild -and $already.Count -gt 0 -and $Config.Build -ne 'never') {
+  if ($BuildOnly) {
+    Write-Host '  build   : REFUSED - app is running' -ForegroundColor Red
+    Write-Host '            Pre-warming now would swap the web chunks out from under it' -ForegroundColor Red
+    Write-Host '            and break its lazy routes. Quit the app, then re-run.' -ForegroundColor Red
+    try { Stop-Transcript | Out-Null } catch {}
+    Remove-Item $RunDir -Recurse -Force -ErrorAction SilentlyContinue
+    exit 1
+  }
+  Write-Host '  WARNING : rebuilding while an instance is running will break that' -ForegroundColor Yellow
+  Write-Host '            instance lazy routes until it is reloaded.' -ForegroundColor Yellow
+}
+
 $didBuild = $false
 if ($needsBuild -and $Config.Build -eq 'never') {
   Write-Host "  build   : STALE ($reason) - running anyway (Build=never)" -ForegroundColor Yellow
@@ -285,13 +307,17 @@ if ($Config.LagMs -gt 0) {
 $profDir = Join-Path $RunDir 'cpuprof'
 if ($Config.CpuProf) {
   New-Item -ItemType Directory -Force -Path $profDir | Out-Null
-  # Applies to the backend child, which inherits a copy of this env
-  # (DesktopBackendConfiguration.ts). 200us interval keeps a ~60s startup
-  # profile manageable.
-  $env:NODE_OPTIONS = "--cpu-prof --cpu-prof-dir=$profDir --cpu-prof-interval=200"
-  Write-Host "  cpuprof : on -> $profDir" -ForegroundColor Yellow
-  Write-Host "            QUIT THE APP NORMALLY or no profile is written." -ForegroundColor Yellow
+  # NOT NODE_OPTIONS=--cpu-prof. That never reached the backend -- it profiled
+  # pnpm, vite-plus and the Electron main process instead (four profiles, none
+  # of them the server), and covered the whole session at 20-200MB each. The
+  # server profiles itself instead; see apps/server/src/observability/CpuProfiler.ts.
+  $env:T3_CPU_PROF_DIR = $profDir
+  $env:T3_CPU_PROF_SECONDS = "$($Config.CpuProfSeconds)"
+  Remove-Item Env:\NODE_OPTIONS -ErrorAction SilentlyContinue
+  Write-Host "  cpuprof : backend, first $($Config.CpuProfSeconds)s -> $profDir" -ForegroundColor Yellow
+  Write-Host "            Written on a timer, so quitting early is fine." -ForegroundColor Yellow
 } else {
+  Remove-Item Env:\T3_CPU_PROF_DIR -ErrorAction SilentlyContinue
   Remove-Item Env:\NODE_OPTIONS -ErrorAction SilentlyContinue
 }
 
