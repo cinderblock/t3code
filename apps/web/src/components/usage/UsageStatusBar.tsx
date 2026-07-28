@@ -24,33 +24,6 @@ import {
 /** Height of the meter strip itself (the expanded panel stacks above it). */
 const USAGE_STATUS_BAR_HEIGHT_PX = 24;
 
-const EXPAND_DURATION_MS = 260;
-const EXPAND_EASING = "cubic-bezier(0.32, 0.72, 0, 1)";
-
-/**
- * Animate a clipped wrapper to a target height.
- *
- * Driven with the Web Animations API rather than a CSS transition: CSS
- * transitions on `height`/`grid-template-rows` did not run in this app's
- * renderer, and WAAPI does not depend on the transition property resolving
- * or on a measurement having landed before the toggle.
- */
-function applyHeight(wrapper: HTMLElement, target: number, animate: boolean): void {
-  const from = wrapper.getBoundingClientRect().height;
-  wrapper.style.height = `${target}px`;
-  if (!animate || Math.abs(from - target) < 1) {
-    return;
-  }
-  wrapper.animate([{ height: `${from}px` }, { height: `${target}px` }], {
-    duration: EXPAND_DURATION_MS,
-    easing: EXPAND_EASING,
-  });
-}
-
-function prefersReducedMotion(): boolean {
-  return window.matchMedia?.("(prefers-reduced-motion: reduce)").matches === true;
-}
-
 function WindowMeter(props: { window: UsageWindow; emphasized: boolean; nowMs: number }) {
   const { window, emphasized, nowMs } = props;
   const percent = Math.max(0, Math.min(100, window.percent));
@@ -252,12 +225,10 @@ export function UsageStatusBar() {
   const queuedMessages = useAtomValue(primaryQueuedMessagesAtom);
   const [expanded, setExpanded] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
-  const chartsWrapRef = useRef<HTMLDivElement | null>(null);
   const chartsInnerRef = useRef<HTMLDivElement | null>(null);
-  const metersWrapRef = useRef<HTMLDivElement | null>(null);
   const metersInnerRef = useRef<HTMLDivElement | null>(null);
-  // First pass sizes the sections without animating; only later toggles do.
-  const hasSizedRef = useRef(false);
+  const [chartsHeight, setChartsHeight] = useState(0);
+  const [metersHeight, setMetersHeight] = useState(0);
 
   // Keep reset countdowns fresh while visible.
   useEffect(() => {
@@ -265,34 +236,30 @@ export function UsageStatusBar() {
     return () => window.clearInterval(interval);
   }, []);
 
-  // Drive the open/close. The inner content always lays out at its natural
-  // height inside the clipped wrapper, so it can be measured whether the
-  // section is currently open or closed.
+  /*
+   * Each section is a clipped wrapper whose height is animated by CSS between
+   * 0 and its content's natural height. The content always lays out at full
+   * size inside the wrapper, so it can be measured whether the section is
+   * open or closed; the observer keeps the target honest as charts load.
+   *
+   * `accounts.length` is a dependency because the bubble renders nothing
+   * until usage data arrives — without it the refs can still be null when
+   * this first runs and the heights would stay 0 forever.
+   */
   useEffect(() => {
-    const chartsWrap = chartsWrapRef.current;
     const chartsInner = chartsInnerRef.current;
-    const metersWrap = metersWrapRef.current;
     const metersInner = metersInnerRef.current;
-    if (!chartsWrap || !chartsInner || !metersWrap || !metersInner) return;
-
-    const animate = hasSizedRef.current && !prefersReducedMotion();
-    hasSizedRef.current = true;
-    applyHeight(chartsWrap, expanded ? chartsInner.offsetHeight : 0, animate);
-    applyHeight(metersWrap, expanded ? 0 : metersInner.offsetHeight, animate);
-  }, [expanded, accounts.length]);
-
-  // Charts arrive asynchronously and reflow; keep the open section sized to
-  // its content so it never clips what it is showing.
-  useEffect(() => {
-    const chartsWrap = chartsWrapRef.current;
-    const chartsInner = chartsInnerRef.current;
-    if (!chartsWrap || !chartsInner) return;
-    const observer = new ResizeObserver(() => {
-      if (expanded) chartsWrap.style.height = `${chartsInner.offsetHeight}px`;
-    });
+    if (!chartsInner || !metersInner) return;
+    const measure = () => {
+      setChartsHeight(chartsInner.offsetHeight);
+      setMetersHeight(metersInner.offsetHeight);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
     observer.observe(chartsInner);
+    observer.observe(metersInner);
     return () => observer.disconnect();
-  }, [expanded]);
+  }, [accounts.length]);
 
   if (accounts.length === 0) {
     return null;
@@ -337,8 +304,16 @@ export function UsageStatusBar() {
          * chart section animates from 0 to its measured height while the
          * meter row animates to 0, so the bars give way to the charts.
          */}
-        <div className="alert-glass overflow-hidden rounded-t-2xl border border-b-0 border-border/60 shadow-sm">
-          <div ref={chartsWrapRef} className="overflow-hidden" aria-hidden={!expanded}>
+        <div
+          data-usage-bubble="true"
+          className="alert-glass overflow-hidden rounded-t-2xl border border-b-0 border-border/60 shadow-sm"
+        >
+          <div
+            data-usage-charts-wrap="true"
+            className="overflow-hidden transition-[height] duration-300 ease-out motion-reduce:transition-none"
+            style={{ height: expanded ? chartsHeight : 0 }}
+            aria-hidden={!expanded}
+          >
             <div ref={chartsInnerRef}>
               <div className="flex items-center justify-between gap-2 px-3 pt-2">
                 <span className="min-w-0 truncate font-medium text-foreground/80 text-xs">
@@ -368,11 +343,16 @@ export function UsageStatusBar() {
             </div>
           </div>
 
-          <div ref={metersWrapRef} className="overflow-hidden" aria-hidden={expanded}>
+          <div
+            className="overflow-hidden transition-[height] duration-300 ease-out motion-reduce:transition-none"
+            style={{ height: expanded ? 0 : metersHeight }}
+            aria-hidden={expanded}
+          >
             <div ref={metersInnerRef}>
               <button
                 type="button"
                 onClick={() => setExpanded(true)}
+                data-usage-toggle="true"
                 aria-expanded={expanded}
                 aria-label="Expand usage details"
                 tabIndex={expanded ? -1 : undefined}
