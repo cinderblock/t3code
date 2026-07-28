@@ -72,10 +72,10 @@ $Config = @{
   # Keep this many run directories before pruning the oldest.
   KeepRuns = 10
 
-  # Hide this console once the app's own window appears, so a run leaves one
-  # window on screen instead of two. Everything printed is still captured in
-  # the run's launcher.log, and the console is re-shown if the run fails.
-  HideConsoleWhenAppStarts = $true
+  # Run with no visible console at all. It is shown only while a build is
+  # running (the one part worth watching) and on failure. Everything printed is
+  # captured in the run's launcher.log either way.
+  HideConsole = $true
 }
 # =====================================================================
 
@@ -150,6 +150,10 @@ $serverChildLog = Join-Path $env:USERPROFILE '.t3\userdata\logs\server-child.log
 $startOffset = if (Test-Path $serverChildLog) { (Get-Item $serverChildLog).Length } else { 0 }
 
 try { Start-Transcript -Path (Join-Path $RunDir 'launcher.log') -Force | Out-Null } catch {}
+
+# Hidden from here on. The elevated console is only interesting while a build
+# runs or when something fails; both re-show it explicitly below.
+if ($Config.HideConsole -and -not $DryRun) { Set-ConsoleVisible $false }
 
 Write-Host ''
 Write-Host "===== T3 RUN BEGIN $stamp =====" -ForegroundColor Cyan
@@ -246,6 +250,9 @@ $didBuild = $false
 if ($needsBuild -and $Config.Build -eq 'never') {
   Write-Host "  build   : STALE ($reason) - running anyway (Build=never)" -ForegroundColor Yellow
 } elseif ($needsBuild) {
+  # A build takes minutes; show the console so it does not look hung, then
+  # hide it again before the app launches.
+  if ($Config.HideConsole -and -not $DryRun) { Set-ConsoleVisible $true }
   Write-Host "  build   : stale ($reason) - rebuilding..." -ForegroundColor Yellow
   & pnpm build:desktop
   if ($LASTEXITCODE -ne 0) { throw "build:desktop failed ($LASTEXITCODE)" }
@@ -343,37 +350,14 @@ if ($DryRun) {
 Write-Host 'App starting. Quit it normally when done.' -ForegroundColor Green
 Write-Host ''
 
-# Hide this console once the app has a window of its own, so a run ends up with
-# one window on screen rather than two. Done from a background job because the
-# launch below blocks until the app exits; the job is handed this console's
-# HWND explicitly, since GetConsoleWindow() inside the job would return the
-# job's own console.
-$hideJob = $null
-if ($Config.HideConsoleWhenAppStarts) {
-  $hwnd = [T3.Win32]::GetConsoleWindow()
-  $hideJob = Start-Job -ArgumentList $hwnd -ScriptBlock {
-    param($TargetHwnd)
-    Add-Type -Namespace T3J -Name Win32 -MemberDefinition @'
-[DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr hWnd, int nCmdShow);
-'@
-    # Wait for an electron process to actually present a window; give up after
-    # 120s so a failed launch still leaves the console visible.
-    $deadline = (Get-Date).AddSeconds(120)
-    while ((Get-Date) -lt $deadline) {
-      $win = Get-Process -Name electron -ErrorAction SilentlyContinue |
-        Where-Object { $_.MainWindowHandle -ne 0 }
-      if ($win) { Start-Sleep -Milliseconds 700; [void][T3J.Win32]::ShowWindow($TargetHwnd, 0); return }
-      Start-Sleep -Milliseconds 500
-    }
-  }
-}
+# Back to hidden for the launch itself (the build, if any, is done).
+if ($Config.HideConsole -and -not $DryRun) { Set-ConsoleVisible $false }
 
 $started = Get-Date
 & pnpm start:desktop -- @electronArgs
 $code = $LASTEXITCODE
 $ended = Get-Date
 
-if ($hideJob) { Stop-Job $hideJob -ErrorAction SilentlyContinue; Remove-Job $hideJob -Force -ErrorAction SilentlyContinue }
 # A failed run must not disappear silently.
 if ($code -ne 0) { Set-ConsoleVisible $true }
 $endOffset = if (Test-Path $serverChildLog) { (Get-Item $serverChildLog).Length } else { 0 }

@@ -52,7 +52,41 @@ That closes a self-reinforcing loop:
 This is precisely the "disconnect spiral" earlier plans described from its symptoms; it is now
 evidence-backed from the inside.
 
-### Fix direction (do not start until reviewed)
+### FIX IMPLEMENTED 2026-07-28 (counter hoist)
+
+`VcsStatusBroadcaster.make` now holds `remoteFailuresRef` — a `Map<cwd, {consecutiveFailures,
+lastFailureAtMs}>` at **broadcaster scope**, replacing the `Ref.make(0)` that lived inside the
+poller fiber. Success clears the entry; failure increments it. Backoff therefore survives the
+poller being interrupted and re-forked on resubscription.
+
+A re-forked poller also **serves out the remaining backoff** before its first attempt, so a
+reconnect no longer re-fires an immediate fetch at a repo that is known to be failing.
+
+**Trap hit while doing this — do not repeat:** the first attempt _cancelled_ the initial refresh
+(cleared `needsInitialRefreshRef`) instead of delaying it. When `automaticGitFetchInterval` is 0
+the initial refresh is the ONLY refresh that ever runs, so that stranded those repos with no remote
+status at all and hung 4 tests. Delay, never cancel.
+
+### PR (`gh`) lookups already have a cache — the epoch bump defeats it
+
+Answering "do we want a local cache for gh calls": there already is one, and it is good.
+`GitManager.prLookupCache` is an Effect `Cache` with **negative caching**:
+`timeToLive: (exit) => Exit.isSuccess(exit) ? PR_LOOKUP_CACHE_TTL (2 min) : PR_LOOKUP_FAILURE_TTL
+(20 s)`, capacity 2048, plus a `lastKnownPrByBranchKey` fallback so a transient failure does not
+clear an existing PR badge.
+
+So failures _are_ cached for 20 s. What defeats it is the cache **key**, which includes
+`prLookupEpoch(cwd)` — and `invalidateStatus` bumps that epoch. The code even says the periodic
+poll deliberately avoids full invalidation to "keep the PR cache warm". But `refreshStatus` (which
+calls `invalidateStatus`) is invoked from ~8 sites in `ws.ts` plus `ProviderCommandReactor`, and
+each bump produces a brand-new cache key — a guaranteed miss and a fresh `gh` spawn.
+
+Under reconnect churn this fires constantly, which is why 138 PR lookups failed in 90 s despite a
+20 s negative TTL. **Adding another cache would not help; the existing one needs its epoch bumped
+less often.** Not changed yet — it is upstream code on the explicit-freshness path, and the counter
+hoist above should be measured first.
+
+### Fix direction (remaining, not started)
 
 - **Move the failure counter out of the poller fiber.** Key it by `cwd` in broadcaster-level state
   so backoff survives resubscription. Highest-value single change.
@@ -63,6 +97,20 @@ evidence-backed from the inside.
 
 Note this is upstream code, so the same loop should affect any user with several repos where remote
 status fails (offline remote, auth prompt, slow SSH) — not just this machine.
+
+### PRE-EXISTING: 5 of 12 `VcsStatusBroadcaster.test.ts` tests already fail
+
+Baselined by restoring HEAD's file and re-running: **5 failed / 7 passed, 480 s, identical with and
+without the counter-hoist change.** Not caused by it, and not caused by the parallel agent.
+
+Cause: the tests drive a `TestClock` (`TestClock.adjust(Duration.seconds(30))` etc.), but the fork
+added `STATUS_REFRESH_STARTUP_GRACE = 10s` as an `Effect.sleep` at the top of every poller loop on
+2026-07-03. The upstream tests were written without that grace in their virtual-time budget, so
+four hang to a 120 s timeout and one asserts `expected 1 to equal 2`.
+
+**This is a fork-introduced test regression that has gone unnoticed since 2026-07-03.** Fix by
+making the grace injectable (a `StreamStatusOptions` field defaulting to 10 s) so tests can set it
+to zero — do not "fix" it by deleting the grace, which is load-bearing for backend readiness.
 
 ## 2026-07-27 measurement session — what was ruled IN and OUT
 

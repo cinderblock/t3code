@@ -1,4 +1,5 @@
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -204,6 +205,37 @@ export const make = Effect.gen(function* () {
   const cacheRef = yield* Ref.make(new Map<string, CachedVcsStatus>());
   const pollersRef = yield* SynchronizedRef.make(new Map<string, ActiveRemotePoller>());
 
+  // Remote-refresh failure state lives HERE, at broadcaster scope, not inside
+  // the poller fiber.
+  //
+  // A poller is interrupted when its repo loses its last subscriber, and a
+  // client reconnect drops every subscription at once. With the counter held in
+  // a fiber-local Ref, every reconnect reset backoff to zero for all repos and
+  // re-fired an immediate refresh — so a blocked event loop caused a reconnect,
+  // which restarted the very git-spawn storm that blocked it. Measured on a
+  // 14-repo machine: 386 remote-status failures in 90s, every one reporting
+  // `consecutiveFailures: 1`, contributing to ~2,600 spawns and 24s of blocked
+  // event loop. Keyed by cwd so it survives resubscription.
+  const remoteFailuresRef = yield* Ref.make(
+    new Map<string, { readonly consecutiveFailures: number; readonly lastFailureAtMs: number }>(),
+  );
+
+  const recordRemoteFailure = (cwd: string, nowMs: number) =>
+    Ref.modify(remoteFailuresRef, (failures) => {
+      const consecutiveFailures = (failures.get(cwd)?.consecutiveFailures ?? 0) + 1;
+      const next = new Map(failures);
+      next.set(cwd, { consecutiveFailures, lastFailureAtMs: nowMs });
+      return [consecutiveFailures, next] as const;
+    });
+
+  const clearRemoteFailures = (cwd: string) =>
+    Ref.update(remoteFailuresRef, (failures) => {
+      if (!failures.has(cwd)) return failures;
+      const next = new Map(failures);
+      next.delete(cwd);
+      return next;
+    });
+
   const getCachedStatus = Effect.fn("VcsStatusBroadcaster.getCachedStatus")(function* (
     cwd: string,
   ) {
@@ -402,7 +434,35 @@ export const make = Effect.gen(function* () {
     return Effect.gen(function* () {
       // Let the backend finish coming up (and serve readiness) before this poller's first refresh.
       yield* Effect.sleep(STATUS_REFRESH_STARTUP_GRACE);
-      const consecutiveFailuresRef = yield* Ref.make(0);
+
+      // Serve out the remaining backoff for a repo that was already failing
+      // before this poller was (re-)forked. Every reconnect re-forks all
+      // pollers, and without this each one immediately re-attempts a fetch that
+      // is known to be failing, so the spawn storm restarts itself on every
+      // reconnect.
+      //
+      // This DELAYS the first attempt; it must not cancel it. When periodic
+      // refreshes are disabled the initial refresh is the only refresh that
+      // ever happens, so clearing `needsInitialRefresh` here would strand the
+      // repo with no remote status at all.
+      const priorFailure = yield* Ref.get(remoteFailuresRef).pipe(
+        Effect.map((failures) => failures.get(cwd) ?? null),
+      );
+      if (priorFailure !== null) {
+        const configuredInterval = yield* automaticRemoteRefreshInterval;
+        const activeInterval = Duration.isZero(configuredInterval)
+          ? DEFAULT_VCS_STATUS_REFRESH_INTERVAL
+          : configuredInterval;
+        const requiredMs = Duration.toMillis(
+          remoteRefreshFailureDelay(priorFailure.consecutiveFailures, activeInterval),
+        );
+        const nowMs = yield* Clock.currentTimeMillis;
+        const remainingMs = requiredMs - (nowMs - priorFailure.lastFailureAtMs);
+        if (remainingMs > 0) {
+          yield* Effect.sleep(Duration.millis(remainingMs));
+        }
+      }
+
       const needsInitialRefreshRef = yield* Ref.make(refreshImmediately);
       const refreshRemoteStatusIfEnabled = Effect.gen(function* () {
         const configuredInterval = yield* automaticRemoteRefreshInterval;
@@ -423,7 +483,7 @@ export const make = Effect.gen(function* () {
           .pipe(Effect.exit);
         if (Exit.isSuccess(exit)) {
           yield* Ref.set(needsInitialRefreshRef, false);
-          yield* Ref.set(consecutiveFailuresRef, 0);
+          yield* clearRemoteFailures(cwd);
           return activeInterval;
         }
 
@@ -432,10 +492,8 @@ export const make = Effect.gen(function* () {
           return yield* Effect.failCause(Cause.fromReasons<never>(interruptionReasons));
         }
 
-        const consecutiveFailures = yield* Ref.updateAndGet(
-          consecutiveFailuresRef,
-          (count) => count + 1,
-        );
+        const failedAtMs = yield* Clock.currentTimeMillis;
+        const consecutiveFailures = yield* recordRemoteFailure(cwd, failedAtMs);
         const nextDelay = remoteRefreshFailureDelay(consecutiveFailures, activeInterval);
         yield* Effect.logWarning("VCS remote status refresh failed", {
           cwdLength: cwd.length,
