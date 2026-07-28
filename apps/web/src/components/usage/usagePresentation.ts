@@ -113,11 +113,31 @@ export function selectedModelSlugForAccount(
   account: AccountUsageState,
   selectionsByInstance: Partial<Record<string, ModelSelection>>,
 ): string | null {
-  for (const instanceId of account.snapshot.instanceIds) {
+  for (const instanceId of account.snapshot?.instanceIds ?? []) {
     const selection = selectionsByInstance[instanceId];
     if (selection !== undefined) return selection.model;
   }
   return null;
+}
+
+/**
+ * What to show when an account has no usage snapshot. Each reason gets its
+ * own wording because the remedies differ — a rate limit clears itself, a
+ * missing login does not.
+ */
+export function unavailableLabel(account: AccountUsageState): string {
+  switch (account.unavailableReason) {
+    case "rate-limited":
+      return "Usage rate limited — retrying";
+    case "no-credentials":
+      return "Usage unavailable — no Claude login";
+    case "token-rejected":
+      return "Usage unavailable — sign in to Claude again";
+    case "fetch-failed":
+      return "Usage unavailable — retrying";
+    case null:
+      return "Checking usage…";
+  }
 }
 
 export function severityMeterClass(window: UsageWindow): string {

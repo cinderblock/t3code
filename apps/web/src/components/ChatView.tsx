@@ -2084,7 +2084,9 @@ function ChatViewContent(props: ChatViewProps) {
     const threadInstanceId = activeThread.modelSelection.instanceId;
     const account =
       usageAccounts.find((candidate) =>
-        candidate.snapshot.instanceIds.some((instanceId) => instanceId === threadInstanceId),
+        (candidate.snapshot?.instanceIds ?? []).some(
+          (instanceId) => instanceId === threadInstanceId,
+        ),
       ) ??
       usageAccounts[0] ??
       null;
@@ -2102,7 +2104,7 @@ function ChatViewContent(props: ChatViewProps) {
         text: failedMessageText,
         trigger: {
           type: "window-reset",
-          accountKey: account.snapshot.accountKey,
+          accountKey: account.accountKey,
           windowId,
         },
         sendContext: {

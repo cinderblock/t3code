@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { ChevronDownIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { AccountUsageState } from "@t3tools/client-runtime/state/usage";
 import type { UsageWindow } from "@t3tools/contracts";
@@ -15,6 +16,7 @@ import {
   selectedModelSlugForAccount,
   severityMeterClass,
   sortWindowsForDisplay,
+  unavailableLabel,
   windowLongLabel,
   windowShortLabel,
 } from "./usagePresentation";
@@ -92,7 +94,20 @@ function AccountMeters(props: {
   const { account, nowMs, showAccountLabel } = props;
   const stickySelections = useComposerDraftStore((state) => state.stickyModelSelectionByProvider);
   const selectedModel = selectedModelSlugForAccount(account, stickySelections);
-  const windows = sortWindowsForDisplay(account.snapshot.windows);
+  const snapshot = account.snapshot;
+
+  // No snapshot yet — say so instead of rendering nothing, which looks
+  // identical to the feature being broken.
+  if (snapshot === null) {
+    return (
+      <span className="flex min-w-0 flex-1 items-center gap-2 text-[10px] text-muted-foreground/70">
+        <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-muted-foreground/50" />
+        <span className="truncate">{unavailableLabel(account)}</span>
+      </span>
+    );
+  }
+
+  const windows = sortWindowsForDisplay(snapshot.windows);
   const emphasizedWeeklyId = emphasizedWeeklyWindowId(windows, selectedModel);
 
   return (
@@ -104,7 +119,7 @@ function AccountMeters(props: {
     >
       {showAccountLabel ? (
         <span className="max-w-32 truncate text-[10px] text-muted-foreground/70">
-          {account.snapshot.accountKey}
+          {account.accountKey}
         </span>
       ) : null}
       {windows.map((window) => (
@@ -132,10 +147,20 @@ function ExpandedPanel(props: { accounts: ReadonlyArray<AccountUsageState>; nowM
   if (environmentId === null) return null;
 
   return (
-    <div className="max-h-[45dvh] overflow-y-auto rounded-xl border border-border bg-popover px-3 py-2.5">
+    // The surrounding bubble supplies the surface and the scroll bounds; this
+    // is just the content.
+    <div>
       <div className="flex flex-col gap-4">
         {accounts.map((account) => {
-          const windows = sortWindowsForDisplay(account.snapshot.windows);
+          const snapshot = account.snapshot;
+          if (snapshot === null) {
+            return (
+              <div key={account.accountKey} className="text-[11px] text-muted-foreground">
+                {unavailableLabel(account)}
+              </div>
+            );
+          }
+          const windows = sortWindowsForDisplay(snapshot.windows);
           const sessionWindows = windows.filter((window) => window.kind === "session");
           const weeklyWindows = windows.filter((window) => window.kind === "weekly");
           const monthlyWindow = windows.find((window) => window.kind === "monthly");
@@ -148,17 +173,17 @@ function ExpandedPanel(props: { accounts: ReadonlyArray<AccountUsageState>; nowM
           );
           const spend = monthlyWindow?.dollars;
           return (
-            <div key={account.snapshot.accountKey} className="flex flex-col gap-3">
+            <div key={account.accountKey} className="flex flex-col gap-3">
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <span className="font-medium text-foreground/90 text-xs">
                   Claude usage
-                  {account.snapshot.planLabel ? ` · ${account.snapshot.planLabel}` : ""}
-                  {accounts.length > 1 ? ` · ${account.snapshot.accountKey}` : ""}
+                  {snapshot.planLabel ? ` · ${snapshot.planLabel}` : ""}
+                  {accounts.length > 1 ? ` · ${account.accountKey}` : ""}
                 </span>
                 <span className="text-[10px] text-muted-foreground">
                   {account.unavailableReason !== null
                     ? `stale (${account.unavailableReason})`
-                    : `updated ${new Date(account.snapshot.capturedAt).toLocaleTimeString()}`}
+                    : `updated ${new Date(snapshot.capturedAt).toLocaleTimeString()}`}
                   {pendingCount > 0
                     ? ` · ${pendingCount} queued message${pendingCount === 1 ? "" : "s"}`
                     : ""}
@@ -167,7 +192,7 @@ function ExpandedPanel(props: { accounts: ReadonlyArray<AccountUsageState>; nowM
               {sessionWindows.length > 0 ? (
                 <UsageHistoryChart
                   environmentId={environmentId}
-                  accountKey={account.snapshot.accountKey}
+                  accountKey={account.accountKey}
                   windows={sessionWindows}
                   title={`5-hour window${sessionEta ? ` · ${sessionEta}` : ""}`}
                 />
@@ -175,7 +200,7 @@ function ExpandedPanel(props: { accounts: ReadonlyArray<AccountUsageState>; nowM
               {weeklyWindows.length > 0 ? (
                 <UsageHistoryChart
                   environmentId={environmentId}
-                  accountKey={account.snapshot.accountKey}
+                  accountKey={account.accountKey}
                   windows={weeklyWindows}
                   title={`Weekly windows${weeklyEta ? ` · ${weeklyEta}` : ""}`}
                 />
@@ -219,31 +244,75 @@ export function UsageStatusBar() {
 
   return (
     // Rendered inside the composer's column, which already supplies the
-    // horizontal inset; matching its max-width keeps the meters exactly as
+    // horizontal inset; matching its max-width keeps the bubble exactly as
     // wide as the input box.
-    <div className="w-full shrink-0 pt-1">
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-1">
-        {expanded ? <ExpandedPanel accounts={accounts} nowMs={nowMs} /> : null}
-        <button
-          type="button"
-          onClick={() => setExpanded((value) => !value)}
-          aria-expanded={expanded}
-          aria-label={expanded ? "Collapse usage details" : "Expand usage details"}
-          className={cn(
-            "flex w-full cursor-pointer items-center gap-4 rounded-lg px-2 text-left outline-none",
-            "hover:bg-accent/40 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
-          )}
-          style={{ height: USAGE_STATUS_BAR_HEIGHT_PX }}
-        >
-          {accounts.map((account) => (
-            <AccountMeters
-              key={account.snapshot.accountKey}
-              account={account}
-              nowMs={nowMs}
-              showAccountLabel={accounts.length > 1}
-            />
-          ))}
-        </button>
+    <div className="w-full shrink-0 pt-1.5">
+      <div className="mx-auto w-full max-w-3xl">
+        {/*
+         * One bubble anchored at the bottom of the composer stack. Expanding
+         * grows it upward: the charts row animates from 0fr to 1fr while the
+         * meter row animates to 0fr, so the collapsed bars give way to the
+         * charts instead of both being on screen at once.
+         */}
+        <div className="alert-glass overflow-hidden rounded-2xl border border-border/60 shadow-sm">
+          <div
+            className={cn(
+              "grid transition-[grid-template-rows] duration-300 ease-out motion-reduce:transition-none",
+              expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+            )}
+          >
+            <div className="min-h-0 overflow-hidden">
+              <div className="flex items-center justify-between gap-2 px-3 pt-2">
+                <span className="font-medium text-foreground/80 text-xs">Claude usage</span>
+                <button
+                  type="button"
+                  onClick={() => setExpanded(false)}
+                  aria-label="Collapse usage details"
+                  className={cn(
+                    "flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none",
+                    "hover:bg-accent/40 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
+                  )}
+                >
+                  <ChevronDownIcon className="size-3.5" />
+                </button>
+              </div>
+              <div className="max-h-[45dvh] overflow-y-auto px-3 pt-1 pb-2.5">
+                <ExpandedPanel accounts={accounts} nowMs={nowMs} />
+              </div>
+            </div>
+          </div>
+
+          <div
+            className={cn(
+              "grid transition-[grid-template-rows] duration-300 ease-out motion-reduce:transition-none",
+              expanded ? "grid-rows-[0fr]" : "grid-rows-[1fr]",
+            )}
+          >
+            <div className="min-h-0 overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setExpanded(true)}
+                aria-expanded={expanded}
+                aria-label="Expand usage details"
+                tabIndex={expanded ? -1 : undefined}
+                className={cn(
+                  "flex w-full cursor-pointer items-center gap-4 px-3 py-1.5 text-left outline-none",
+                  "hover:bg-accent/30 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
+                )}
+                style={{ height: USAGE_STATUS_BAR_HEIGHT_PX + 12 }}
+              >
+                {accounts.map((account) => (
+                  <AccountMeters
+                    key={account.accountKey}
+                    account={account}
+                    nowMs={nowMs}
+                    showAccountLabel={accounts.length > 1}
+                  />
+                ))}
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   );

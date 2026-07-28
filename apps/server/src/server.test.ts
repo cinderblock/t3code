@@ -663,6 +663,7 @@ const buildAppUnderTest = (options?: {
         Layer.mergeAll(
           Layer.mock(UsageBroadcaster.UsageBroadcaster)({
             getSnapshots: Effect.succeed([]),
+            getAccountStates: Effect.succeed([]),
             streamUsage: Stream.empty,
             getHistory: () => Effect.succeed({ samples: [] }),
             pollSoon: Effect.void,

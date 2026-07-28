@@ -101,10 +101,24 @@ export const AccountUsageUnavailableReason = Schema.Literals([
 ]);
 export type AccountUsageUnavailableReason = typeof AccountUsageUnavailableReason.Type;
 
+/**
+ * A known account and whatever we currently have for it. `snapshot` is null
+ * before the first successful poll — the account is still reported so the UI
+ * can show a placeholder instead of silently rendering nothing, which is
+ * indistinguishable from a bug.
+ */
+export const AccountUsageStatus = Schema.Struct({
+  accountKey: TrimmedNonEmptyString,
+  snapshot: Schema.NullOr(AccountUsageSnapshot),
+  unavailableReason: Schema.NullOr(AccountUsageUnavailableReason),
+  unavailableDetail: Schema.NullOr(Schema.String),
+});
+export type AccountUsageStatus = typeof AccountUsageStatus.Type;
+
 export const AccountUsageStreamEvent = Schema.Union([
   Schema.Struct({
     _tag: Schema.Literal("snapshot"),
-    snapshots: Schema.Array(AccountUsageSnapshot),
+    accounts: Schema.Array(AccountUsageStatus),
   }),
   Schema.Struct({
     _tag: Schema.Literal("accountUpdated"),

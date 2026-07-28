@@ -22,10 +22,12 @@ export function resolveQueuedMessageAccountKey(
 ): string | null {
   const preferred = preferredInstanceId
     ? accounts.find((account) =>
-        account.snapshot.instanceIds.some((instanceId) => instanceId === preferredInstanceId),
+        (account.snapshot?.instanceIds ?? []).some(
+          (instanceId) => instanceId === preferredInstanceId,
+        ),
       )
     : undefined;
-  return (preferred ?? accounts[0])?.snapshot.accountKey ?? null;
+  return (preferred ?? accounts[0])?.accountKey ?? null;
 }
 
 function describeWindow(windowId: string): string {

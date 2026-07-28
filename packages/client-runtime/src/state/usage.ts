@@ -18,7 +18,13 @@ import {
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 
 export interface AccountUsageState {
-  readonly snapshot: AccountUsageSnapshot;
+  readonly accountKey: string;
+  /**
+   * Null until the first successful poll. The account is still tracked so
+   * the UI can render a placeholder rather than vanishing, which reads as a
+   * bug rather than a transient backoff.
+   */
+  readonly snapshot: AccountUsageSnapshot | null;
   /** Set while the poller cannot refresh this account; snapshot is stale. */
   readonly unavailableReason: AccountUsageUnavailableReason | null;
   readonly unavailableDetail: string | null;
@@ -32,42 +38,53 @@ export function applyAccountUsageEvent(
   current: Option.Option<AccountUsageProjection>,
   event: AccountUsageStreamEvent,
 ): Option.Option<AccountUsageProjection> {
+  const currentAccounts = Option.match(current, {
+    onNone: () => [] as ReadonlyArray<AccountUsageState>,
+    onSome: (projection) => projection.accounts,
+  });
+
   switch (event._tag) {
     case "snapshot":
       return Option.some({
-        accounts: event.snapshots.map((snapshot) => ({
-          snapshot,
-          unavailableReason: null,
-          unavailableDetail: null,
+        accounts: event.accounts.map((account) => ({
+          accountKey: account.accountKey,
+          snapshot: account.snapshot,
+          unavailableReason: account.unavailableReason,
+          unavailableDetail: account.unavailableDetail,
         })),
       });
     case "accountUpdated": {
-      const accounts = Option.match(current, {
-        onNone: () => [] as ReadonlyArray<AccountUsageState>,
-        onSome: (projection) => projection.accounts,
-      });
-      const next = accounts.filter(
-        (account) => account.snapshot.accountKey !== event.snapshot.accountKey,
+      const others = currentAccounts.filter(
+        (account) => account.accountKey !== event.snapshot.accountKey,
       );
       return Option.some({
         accounts: [
-          ...next,
-          { snapshot: event.snapshot, unavailableReason: null, unavailableDetail: null },
+          ...others,
+          {
+            accountKey: event.snapshot.accountKey,
+            snapshot: event.snapshot,
+            unavailableReason: null,
+            unavailableDetail: null,
+          },
         ],
       });
     }
     case "accountUnavailable": {
-      return Option.map(current, (projection) => ({
-        accounts: projection.accounts.map((account) =>
-          account.snapshot.accountKey === event.accountKey
-            ? {
-                ...account,
-                unavailableReason: event.reason,
-                unavailableDetail: event.detail,
-              }
-            : account,
-        ),
-      }));
+      // Upsert: the account may have failed before it ever produced a
+      // snapshot, in which case this is the first we hear of it.
+      const existing = currentAccounts.find((account) => account.accountKey === event.accountKey);
+      const others = currentAccounts.filter((account) => account.accountKey !== event.accountKey);
+      return Option.some({
+        accounts: [
+          ...others,
+          {
+            accountKey: event.accountKey,
+            snapshot: existing?.snapshot ?? null,
+            unavailableReason: event.reason,
+            unavailableDetail: event.detail,
+          },
+        ],
+      });
     }
   }
 }

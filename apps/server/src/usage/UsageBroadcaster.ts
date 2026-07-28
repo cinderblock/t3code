@@ -27,6 +27,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 import {
   AccountUsageError,
   type AccountUsageSnapshot,
+  type AccountUsageStatus,
   type AccountUsageStreamEvent,
   type AccountUsageUnavailableReason,
   type ProviderInstanceId,
@@ -65,6 +66,7 @@ interface AccountPollState {
   nextPollAtMs: number;
   lastSnapshotFingerprint: string | null;
   unavailableReason: AccountUsageUnavailableReason | null;
+  unavailableDetail: string | null;
 }
 
 interface ClaudeAccount {
@@ -78,6 +80,8 @@ export class UsageBroadcaster extends Context.Service<
   {
     /** Current snapshots for every account with data. */
     readonly getSnapshots: Effect.Effect<ReadonlyArray<AccountUsageSnapshot>>;
+    /** Every known account, including ones still awaiting a first snapshot. */
+    readonly getAccountStates: Effect.Effect<ReadonlyArray<AccountUsageStatus>>;
     /** Snapshot burst followed by live change events. */
     readonly streamUsage: Stream.Stream<AccountUsageStreamEvent, AccountUsageError>;
     readonly getHistory: (
@@ -105,6 +109,8 @@ export const make = Effect.gen(function* () {
   const snapshotsRef = yield* Ref.make(new Map<string, AccountUsageSnapshot>());
   const pollStatesRef = yield* Ref.make(new Map<string, AccountPollState>());
   const pollSoonRef = yield* Ref.make(false);
+  /** Account keys discovered by the tick loop; see `getAccountStates`. */
+  const knownAccountKeysRef = yield* Ref.make<ReadonlyArray<string>>([]);
 
   /**
    * Enumerate distinct Claude accounts from settings — the legacy
@@ -167,6 +173,7 @@ export const make = Effect.gen(function* () {
         nextPollAtMs: 0,
         lastSnapshotFingerprint: null,
         unavailableReason: null,
+        unavailableDetail: null,
       };
       const next = new Map(states);
       next.set(accountKey, created);
@@ -220,6 +227,7 @@ export const make = Effect.gen(function* () {
       yield* setPollState(snapshot.accountKey, {
         lastSnapshotFingerprint: fingerprint,
         unavailableReason: null,
+        unavailableDetail: null,
       });
       yield* PubSub.publish(eventsPubSub, { _tag: "accountUpdated", snapshot });
     }
@@ -234,7 +242,7 @@ export const make = Effect.gen(function* () {
     if (state.unavailableReason === reason) {
       return;
     }
-    yield* setPollState(accountKey, { unavailableReason: reason });
+    yield* setPollState(accountKey, { unavailableReason: reason, unavailableDetail: detail });
     yield* PubSub.publish(eventsPubSub, {
       _tag: "accountUnavailable",
       accountKey,
@@ -242,6 +250,31 @@ export const make = Effect.gen(function* () {
       detail,
     });
   });
+
+  /**
+   * Every account we know about, including ones that have never produced a
+   * snapshot. Subscribers need these so a still-polling or rate-limited
+   * account renders as a placeholder rather than disappearing.
+   */
+  const getAccountStates: UsageBroadcaster["Service"]["getAccountStates"] = Effect.gen(
+    function* () {
+      // Reads only refs — resolving the account list needs `Path`, which the
+      // service interface deliberately doesn't require, so the tick loop
+      // keeps `knownAccountKeysRef` current instead.
+      const accountKeys = yield* Ref.get(knownAccountKeysRef);
+      const snapshots = yield* Ref.get(snapshotsRef);
+      const states = yield* Ref.get(pollStatesRef);
+      return accountKeys.map((accountKey): AccountUsageStatus => {
+        const state = states.get(accountKey);
+        return {
+          accountKey,
+          snapshot: snapshots.get(accountKey) ?? null,
+          unavailableReason: state?.unavailableReason ?? null,
+          unavailableDetail: state?.unavailableDetail ?? null,
+        };
+      });
+    },
+  );
 
   const ensureCredentials = Effect.fn("UsageBroadcaster.ensureCredentials")(function* (
     account: ClaudeAccount,
@@ -343,6 +376,10 @@ export const make = Effect.gen(function* () {
 
   const tick = Effect.gen(function* () {
     const accounts = yield* listClaudeAccounts;
+    yield* Ref.set(
+      knownAccountKeysRef,
+      accounts.map((account) => account.accountKey),
+    );
     const pollAll = yield* Ref.getAndSet(pollSoonRef, false);
     const nowMs = yield* Clock.currentTimeMillis;
     for (const account of accounts) {
@@ -373,9 +410,9 @@ export const make = Effect.gen(function* () {
   const streamUsage: UsageBroadcaster["Service"]["streamUsage"] = Stream.unwrap(
     Effect.gen(function* () {
       const subscription = yield* PubSub.subscribe(eventsPubSub);
-      const snapshots = yield* getSnapshots;
+      const accounts = yield* getAccountStates;
       return Stream.concat(
-        Stream.make({ _tag: "snapshot" as const, snapshots }),
+        Stream.make({ _tag: "snapshot" as const, accounts }),
         Stream.fromSubscription(subscription),
       );
     }),
@@ -406,6 +443,7 @@ export const make = Effect.gen(function* () {
 
   return UsageBroadcaster.of({
     getSnapshots,
+    getAccountStates,
     streamUsage,
     getHistory,
     pollSoon,
