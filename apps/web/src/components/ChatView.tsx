@@ -6040,14 +6040,14 @@ function ChatViewContent(props: ChatViewProps) {
                         </div>
                       </div>
                     </div>
-                    {/* Usage meters live in the composer's own column, below
-                        the glass shell and above the safe-area padding, so
-                        they share the input's inset and max-width. */}
-                    <UsageStatusBar />
                     <div
                       aria-hidden
                       className="h-[calc(env(safe-area-inset-bottom)+1rem)] sm:h-[calc(env(safe-area-inset-bottom)+1.25rem)]"
                     />
+                    {/* Usage meters come after the safe-area spacer so the
+                        bubble sits flush against the bottom edge of the
+                        window, sharing the composer's inset and max-width. */}
+                    <UsageStatusBar />
                   </div>
                 </div>
               </div>

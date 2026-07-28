@@ -1,6 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { ChevronDownIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AccountUsageState } from "@t3tools/client-runtime/state/usage";
 import type { UsageWindow } from "@t3tools/contracts";
 
@@ -23,6 +23,26 @@ import {
 
 /** Height of the meter strip itself (the expanded panel stacks above it). */
 const USAGE_STATUS_BAR_HEIGHT_PX = 24;
+
+/**
+ * Track an element's laid-out height so a collapsed wrapper can animate to a
+ * concrete pixel value. `offsetHeight` (not `scrollHeight`) so a section that
+ * caps itself with `max-h` reports the capped height.
+ */
+function useMeasuredHeight<T extends HTMLElement>() {
+  const ref = useRef<T | null>(null);
+  const [height, setHeight] = useState(0);
+  useEffect(() => {
+    const element = ref.current;
+    if (element === null) return;
+    const measure = () => setHeight(element.offsetHeight);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+  return [ref, height] as const;
+}
 
 function WindowMeter(props: { window: UsageWindow; emphasized: boolean; nowMs: number }) {
   const { window, emphasized, nowMs } = props;
@@ -142,8 +162,10 @@ function AccountMeters(props: {
 function ExpandedPanel(props: { accounts: ReadonlyArray<AccountUsageState>; nowMs: number }) {
   const { accounts, nowMs } = props;
   const environmentId = useAtomValue(primaryEnvironmentIdAtom);
-  const queuedMessages = useAtomValue(primaryQueuedMessagesAtom);
-  const pendingCount = queuedMessages.filter((message) => message.status === "pending").length;
+  // The bubble header carries the plan/updated line, so this renders only the
+  // charts — a second "Claude usage" heading here would duplicate it. Per
+  // account labels stay when there is more than one account to tell apart.
+  const showAccountHeading = accounts.length > 1;
   if (environmentId === null) return null;
 
   return (
@@ -174,21 +196,12 @@ function ExpandedPanel(props: { accounts: ReadonlyArray<AccountUsageState>; nowM
           const spend = monthlyWindow?.dollars;
           return (
             <div key={account.accountKey} className="flex flex-col gap-3">
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <span className="font-medium text-foreground/90 text-xs">
-                  Claude usage
+              {showAccountHeading ? (
+                <span className="truncate font-medium text-foreground/90 text-xs">
+                  {account.accountKey}
                   {snapshot.planLabel ? ` · ${snapshot.planLabel}` : ""}
-                  {accounts.length > 1 ? ` · ${account.accountKey}` : ""}
                 </span>
-                <span className="text-[10px] text-muted-foreground">
-                  {account.unavailableReason !== null
-                    ? `stale (${account.unavailableReason})`
-                    : `updated ${new Date(snapshot.capturedAt).toLocaleTimeString()}`}
-                  {pendingCount > 0
-                    ? ` · ${pendingCount} queued message${pendingCount === 1 ? "" : "s"}`
-                    : ""}
-                </span>
-              </div>
+              ) : null}
               {sessionWindows.length > 0 ? (
                 <UsageHistoryChart
                   environmentId={environmentId}
@@ -229,8 +242,15 @@ function ExpandedPanel(props: { accounts: ReadonlyArray<AccountUsageState>; nowM
  */
 export function UsageStatusBar() {
   const accounts = useAtomValue(primaryAccountUsageAtom);
+  const queuedMessages = useAtomValue(primaryQueuedMessagesAtom);
   const [expanded, setExpanded] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  // `grid-template-rows: 0fr -> 1fr` did not animate here, so both sections
+  // animate an explicit pixel height instead. The content keeps laying out at
+  // its natural size inside a clipped wrapper; a ResizeObserver feeds that
+  // size back so the height target stays correct as charts load.
+  const [chartsRef, chartsHeight] = useMeasuredHeight<HTMLDivElement>();
+  const [metersRef, metersHeight] = useMeasuredHeight<HTMLDivElement>();
 
   // Keep reset countdowns fresh while visible.
   useEffect(() => {
@@ -242,6 +262,31 @@ export function UsageStatusBar() {
     return null;
   }
 
+  const headlineAccount = accounts.find((account) => account.snapshot !== null) ?? accounts[0]!;
+  const headlineSnapshot = headlineAccount.snapshot;
+  const headline = [
+    "Claude usage",
+    headlineSnapshot?.planLabel ?? null,
+    accounts.length > 1 ? `${accounts.length} accounts` : null,
+  ]
+    .filter((part): part is string => part !== null)
+    .join(" · ");
+  const pendingQueuedCount = queuedMessages.filter(
+    (message) => message.status === "pending",
+  ).length;
+  const headlineStatus = [
+    headlineAccount.unavailableReason !== null
+      ? `stale (${headlineAccount.unavailableReason})`
+      : headlineSnapshot !== null
+        ? `updated ${new Date(headlineSnapshot.capturedAt).toLocaleTimeString()}`
+        : null,
+    pendingQueuedCount > 0
+      ? `${pendingQueuedCount} queued message${pendingQueuedCount === 1 ? "" : "s"}`
+      : null,
+  ]
+    .filter((part): part is string => part !== null)
+    .join(" · ");
+
   return (
     // Rendered inside the composer's column, which already supplies the
     // horizontal inset; matching its max-width keeps the bubble exactly as
@@ -249,32 +294,39 @@ export function UsageStatusBar() {
     <div className="w-full shrink-0 pt-1.5">
       <div className="mx-auto w-full max-w-3xl">
         {/*
-         * One bubble anchored at the bottom of the composer stack. Expanding
-         * grows it upward: the charts row animates from 0fr to 1fr while the
-         * meter row animates to 0fr, so the collapsed bars give way to the
-         * charts instead of both being on screen at once.
+         * One bubble sitting flush against the bottom edge of the window, so
+         * only the top corners are rounded. Expanding grows it upward: the
+         * chart section animates from 0 to its measured height while the
+         * meter row animates to 0, so the bars give way to the charts.
          */}
-        <div className="alert-glass overflow-hidden rounded-2xl border border-border/60 shadow-sm">
+        <div className="alert-glass overflow-hidden rounded-t-2xl border border-b-0 border-border/60 shadow-sm">
           <div
-            className={cn(
-              "grid transition-[grid-template-rows] duration-300 ease-out motion-reduce:transition-none",
-              expanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
-            )}
+            className="overflow-hidden transition-[height] duration-300 ease-out motion-reduce:transition-none"
+            style={{ height: expanded ? chartsHeight : 0 }}
+            aria-hidden={!expanded}
           >
-            <div className="min-h-0 overflow-hidden">
+            <div ref={chartsRef}>
               <div className="flex items-center justify-between gap-2 px-3 pt-2">
-                <span className="font-medium text-foreground/80 text-xs">Claude usage</span>
-                <button
-                  type="button"
-                  onClick={() => setExpanded(false)}
-                  aria-label="Collapse usage details"
-                  className={cn(
-                    "flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none",
-                    "hover:bg-accent/40 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
-                  )}
-                >
-                  <ChevronDownIcon className="size-3.5" />
-                </button>
+                <span className="min-w-0 truncate font-medium text-foreground/80 text-xs">
+                  {headline}
+                </span>
+                <span className="flex shrink-0 items-center gap-2">
+                  {headlineStatus.length > 0 ? (
+                    <span className="text-[10px] text-muted-foreground">{headlineStatus}</span>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={() => setExpanded(false)}
+                    aria-label="Collapse usage details"
+                    tabIndex={expanded ? undefined : -1}
+                    className={cn(
+                      "flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none",
+                      "hover:bg-accent/40 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
+                    )}
+                  >
+                    <ChevronDownIcon className="size-3.5" />
+                  </button>
+                </span>
               </div>
               <div className="max-h-[45dvh] overflow-y-auto px-3 pt-1 pb-2.5">
                 <ExpandedPanel accounts={accounts} nowMs={nowMs} />
@@ -283,12 +335,11 @@ export function UsageStatusBar() {
           </div>
 
           <div
-            className={cn(
-              "grid transition-[grid-template-rows] duration-300 ease-out motion-reduce:transition-none",
-              expanded ? "grid-rows-[0fr]" : "grid-rows-[1fr]",
-            )}
+            className="overflow-hidden transition-[height] duration-300 ease-out motion-reduce:transition-none"
+            style={{ height: expanded ? 0 : metersHeight }}
+            aria-hidden={expanded}
           >
-            <div className="min-h-0 overflow-hidden">
+            <div ref={metersRef}>
               <button
                 type="button"
                 onClick={() => setExpanded(true)}
