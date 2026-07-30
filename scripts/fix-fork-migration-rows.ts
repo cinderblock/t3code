@@ -23,6 +23,8 @@
  * Stop the desktop app first — it holds the database open in WAL mode.
  */
 
+// @effect-diagnostics nodeBuiltinImport:off - standalone `node scripts/...` utility, no Effect runtime
+// @effect-diagnostics globalConsole:off - its output IS the user interface; Effect.log would need a runtime
 import { DatabaseSync } from "node:sqlite";
 import * as NodeFs from "node:fs";
 import * as NodeOS from "node:os";
@@ -59,7 +61,7 @@ function repair(dbPath: string, apply: boolean): boolean {
 
     const rows = db
       .prepare(`SELECT migration_id, name FROM effect_sql_migrations ORDER BY migration_id DESC`)
-      .all() as ReadonlyArray<{ migration_id: number; name: string }>;
+      .all() as unknown as ReadonlyArray<{ migration_id: number; name: string }>;
 
     // Match on id AND name: if upstream has since shipped its own 35/36, the names
     // differ and those rows are legitimate — deleting them would re-run real

@@ -121,7 +121,17 @@ export const make = Effect.gen(function* () {
     (key) => detectResolvedKind(parseDetectionCacheKey(key)),
     {
       capacity: DETECTION_CACHE_CAPACITY,
-      timeToLive: (exit) => (Exit.isSuccess(exit) ? DETECTION_CACHE_TTL : DETECTION_FAILURE_TTL),
+      // Merge of two distinct intents the conflict conflated:
+      //   - upstream: a successful "not a repo" (null) must NOT be cached, or a
+      //     freshly-created repo stays invisible for the TTL.
+      //   - fork: a detection FAILURE (path not probeable at all) must be cached
+      //     briefly, or every status/checkpoint/title op re-spawns git against
+      //     an unreachable path and the spawns pile up.
+      // Different cases, so keep both rather than picking a side.
+      timeToLive: Exit.match({
+        onSuccess: (detected) => (detected === null ? Duration.zero : DETECTION_CACHE_TTL),
+        onFailure: () => DETECTION_FAILURE_TTL,
+      }),
     },
   );
 
