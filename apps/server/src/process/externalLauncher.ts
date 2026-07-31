@@ -19,6 +19,7 @@ import {
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
+import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -300,10 +301,49 @@ const resolveBrowserLaunch = Effect.fn("externalLauncher.resolveBrowserLaunch")(
   return buildBrowserLaunch(target, platform, env);
 });
 
+// Editor availability only changes when the user installs or removes an editor, but discovering it
+// is expensive in exactly the wrong way: every editor that is NOT installed walks the entire PATH
+// with an fs.stat per candidate (on Windows, once per PATHEXT entry). `server.getConfig` runs this
+// during every client bootstrap, so a reconnect loop multiplies it -- one measured session did
+// ~22.7k `shell.isExecutableFile` stats, which stalls the event loop and makes the next disconnect
+// more likely, feeding the loop.
+//
+// Memoize the resolved list, keyed by platform + PATH + PATHEXT so a PATH change still re-detects,
+// with a short TTL so installing an editor is picked up without restarting the backend.
+const AVAILABLE_EDITORS_CACHE_TTL_MS = 60_000;
+
+interface AvailableEditorsCacheEntry {
+  readonly key: string;
+  readonly editors: ReadonlyArray<EditorId>;
+  readonly expiresAtMs: number;
+}
+
+let availableEditorsCache: AvailableEditorsCacheEntry | null = null;
+
+function availableEditorsCacheKey(platform: NodeJS.Platform, env: NodeJS.ProcessEnv): string {
+  // Windows preserves the original casing of environment keys, so PATH may arrive as `Path`.
+  const pathValue = env.PATH ?? env.Path ?? "";
+  return `${platform}\0${pathValue}\0${env.PATHEXT ?? ""}`;
+}
+
 const resolveAvailableEditors = Effect.fn("externalLauncher.resolveAvailableEditors")(function* () {
   const platform = yield* HostProcessPlatform;
   const env = yield* readCommandLookupEnv;
-  return yield* buildAvailableEditors(platform, env);
+  const cacheKey = availableEditorsCacheKey(platform, env);
+  const nowMs = yield* Clock.currentTimeMillis;
+
+  const cached = availableEditorsCache;
+  if (cached !== null && cached.key === cacheKey && cached.expiresAtMs > nowMs) {
+    return cached.editors;
+  }
+
+  const editors = yield* buildAvailableEditors(platform, env);
+  availableEditorsCache = {
+    key: cacheKey,
+    editors,
+    expiresAtMs: nowMs + AVAILABLE_EDITORS_CACHE_TTL_MS,
+  };
+  return editors;
 });
 
 /**

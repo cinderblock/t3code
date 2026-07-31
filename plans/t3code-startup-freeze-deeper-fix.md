@@ -3,6 +3,157 @@
 Status: **INSTRUMENTED 2026-07-27** — the lag monitor that was deferred three times now exists.
 Awaiting one app restart to capture a startup profile. Do not attempt another blind fix.
 
+## 2026-07-31 (latest) — close code captured: 1000 is OUR OWN teardown, not the cause
+
+The rebuilt client finally emitted `socket-close`. **The close code does not mean what the
+previous entry assumed.** Ordering, from one cycle:
+
+```
+19:41:54.139  lost-after-connect: Noook   attempt 24   reason: transport
+19:41:56.095  socket close: Noook   code 1000 wasClean=true    <-- 2s AFTER the loss
+```
+
+The clean 1000 arrives _after_ the client already declared the connection lost, in every cycle
+(2-4s later). So the 1000 is Effect's scope teardown calling `close()` on a socket that was
+**still open**. It is the consequence of giving up, not the reason.
+
+Control in the same log, same minute: **BlackHole closed with `code 1006`** — a real transport
+death with no close frame. Noook never does that. So:
+
+> The Noook socket is healthy when the client kills it. Whatever ends the session ends it at the
+> **RPC/session layer**, not the transport.
+
+Cycle shape: close -> 16s backoff (`RETRY_DELAYS_MS` caps at 16_000) -> connect -> **alive only
+~8 seconds** -> declared lost. That 16 + ~8-10 is the "26.2s metronome"; it is not a 26s timer
+anywhere, it is the loop's own period. Stop looking for a 26s constant.
+
+Relevant to whoever picks this up: `session.ts` builds the protocol with
+`retryTransientErrors: false` and `retryPolicy: Schedule.recurs(0)`, so a _single_ transient
+protocol-level error ends the whole session with no retry. That is consistent with
+"healthy socket, dead session" and is the next thing to instrument — capture the failure/cause
+that `onDisconnect` fires on, not just the fact that it fired.
+
+### DISPROVEN today — do not re-derive
+
+- **`Equal.equals` reference-equality theory: WRONG.** The theory was that
+  `ConnectionCatalogEntry` being a plain `interface` made `Equal.equals(previous, entry)` a
+  reference compare, so `retainEquivalentRuntime` never retained and every 3s platform poll tore
+  the connection down. Tested directly against the repo's effect build:
+
+  ```
+  deep structural (distinct nested refs): true
+  differing content                    : false
+  extra key                            : false
+  ```
+
+  effect-smol's `Equal.equals` **is deep structural on plain objects**. The guard works. The
+  platform-poll path is not the closer. (`Stream.tick(3s)` in `apps/web/src/connection/platform.ts`
+  does re-emit unconditionally, but reconcile is a no-op when content is unchanged.)
+
+- **Not the keybinding SchemaError** — stale 07-30 log line; `composer.stash` is legitimate in the
+  merged source and only failed because the running build predated the command.
+- **Not a backend crash-loop, not port contention, not the remote LAN boxes.** See previous entry.
+
+### Pre-existing breakage found while testing (NOT caused by this work)
+
+`pnpm -C packages/shared test` fails **5 tests in 2 files** on a pristine tree (verified with
+`shell.ts` byte-identical to HEAD):
+
+- `src/relayClient.test.ts` — 4 failed, incl. "observes PATH changes after the manager has been
+  constructed" and "downloads, verifies, validates, and atomically installs the managed executable"
+- `src/logging.test.ts` — 1 failed, "only treats a missing log file as an empty current size"
+
+These arrived with the merge. **Consequence for this investigation: the shared test suite is not a
+trustworthy safety net right now** — a change there cannot be validated by "tests still pass".
+
+### Event-loop stalls REGRESSED after the merges
+
+|               | 2026-07-27 | 2026-07-30 | 2026-07-31  |
+| ------------- | ---------- | ---------- | ----------- |
+| worst stall   | 3745 ms    | 2131 ms    | **6734 ms** |
+| severe (>=5s) | several    | **0**      | **4**       |
+
+Backend also logs `Event loop blocked long enough to fail a client health check` — but note that
+string is just `EventLoopLagMonitor`'s label for any stall past `SEVERE_THRESHOLD_MS` (5s), **not**
+an observation that a probe actually failed. There were 4 of those against ~29 disconnects, so
+severe stalls do not explain the disconnect cycle either.
+
+### Driver of the stalls, and the fix applied
+
+`shell.isExecutableFile` ran **22,680 times** in one session. Arithmetic matches exactly: 82
+command resolutions x ~57 PATH entries x PATHEXT candidates. Source is editor detection — a
+command that is _absent_ walks the entire PATH, and `server.getConfig` re-runs
+`resolveAvailableEditors` on **every client bootstrap**, so each reconnect re-probes every editor,
+which lengthens the stall, which makes the next disconnect likelier.
+
+**Fix applied at the editor layer, deliberately NOT in `shell.ts`.** The first attempt memoized
+`resolveCommandPathForPlatform` (caching misses, since a miss is the expensive case). Rejected:
+the relay client _installs_ its managed executable at runtime and resolves it immediately after,
+so a cached miss is wrong in production, not merely inconvenient in tests. Instead
+`externalLauncher.resolveAvailableEditors` now memoizes the resolved editor list for 60s, keyed by
+platform + PATH + PATHEXT so a PATH change still re-detects and an installed editor appears without
+a restart.
+
+## 2026-07-31 (earlier) — the socket-close data was never captured: the build predated the commit
+
+**Do not read anything into "zero `socket-close` records" from the 11:58 run.** Checked
+directly: the running renderer bundle contained the string `no close event observed` but
+NOT `socket-close`.
+
+|                                                    | time      |
+| -------------------------------------------------- | --------- |
+| build that was running                             | 11:58     |
+| commit `1d78b30b2` (emits the socket-close record) | **12:07** |
+
+The build predated the instrumentation by 9 minutes, so the close listener was never in the
+running code. Rebuilt 12:19; `socket-close` is now confirmed present in
+`apps/web/dist/assets/textarea-*.js` and `apps/desktop/dist-electron/main.cjs`.
+**Next run's close code is still the decisive datum.** Awaiting one relaunch.
+
+Ruled out this session while waiting:
+
+- **Not a backend crash-loop.** Backend pid 85540 stayed up the whole time (started 11:58,
+  still listening on `0.0.0.0:3773`); `server.trace.ndjson` kept committing thread SQL
+  throughout. Stable pid, no runId churn.
+- **Not two instances fighting over 3773.** One listener, one launch; the other electron
+  pids are that launch's renderer/GPU/utility children.
+- **Not the remote LAN boxes.** "Noook" is the _local_ backend, not a saved remote —
+  `saved-environments.json` holds only deskypi / 10828390-t3code / uberfall / BlackHole.
+  BlackHole was concurrently ESTABLISHED and healthy while Noook flapped.
+- **Not the keybinding SchemaError.** That log line is from 07-30 and is stale; `composer.stash`
+  is a legitimate command in the merged source (`packages/contracts/src/keybindings.ts`).
+  It was only failing because the then-running build predated the command being added — the
+  same stale-build class of error as above.
+
+### Lead to test once the close code is in hand (NOT yet evidence)
+
+`EnvironmentRegistry.acquireSupervisor` (`connection/registry.ts` ~280) tears the whole
+service scope down and rebuilds it whenever `Equal.equals(existing.entry, entry)` is false:
+
+```ts
+if (existing !== undefined) {
+  if (Equal.equals(existing.entry, entry)) return existing.supervisor;
+  yield * closeServiceScope(environmentId); // <-- kills the connection
+}
+```
+
+`ConnectionCatalogEntry` is a plain `interface` (`connection/catalog.ts:39`), **not** a
+`Data`/`Schema` class, so it carries no `Equal` trait and `Equal.equals` degrades to
+reference equality. Any code path that rebuilds the entries map with fresh objects would
+therefore make every acquire tear down the connection.
+
+Why that is interesting here: `registry.run()` funnels through `acquireSupervisor`, and
+`backgroundActivityReporter.ts:25` calls it on a **`REPORT_INTERVAL_MS = 25_000`** timer —
+against a measured disconnect period of **26.2s metronomic**. A teardown from this path
+would close the socket from the _client_ side, which is consistent with the client seeing
+no server close frame.
+
+Caveat that keeps this a lead and not a conclusion: it only fires if something actually
+rewrites the entries map (updates at registry.ts:381/485/566 — not yet traced). If entries
+are stable, reference equality holds and this path is a no-op. **Confirm with the close code
+first; do not "fix" this blind.** That mistake has already been made twice in this
+investigation.
+
 ## 2026-07-31 — THE DISCONNECTS ARE A SEPARATE BUG. Two problems, not one.
 
 The first run with client-side disconnect diagnostics overturned the working theory.
@@ -12,11 +163,11 @@ The first run with client-side disconnect diagnostics overturned the working the
 
 Same 62s window as the 2026-07-27 baseline:
 
-| | 2026-07-27 | 2026-07-30 |
-| --- | --- | --- |
-| stalled | 34.9s (**57%**) | 21.3s (**34%**) |
-| worst stall | 3745 ms | **2131 ms** |
-| severe (>=5s) | several | **0** |
+|               | 2026-07-27      | 2026-07-30      |
+| ------------- | --------------- | --------------- |
+| stalled       | 34.9s (**57%**) | 21.3s (**34%**) |
+| worst stall   | 3745 ms         | **2131 ms**     |
+| severe (>=5s) | several         | **0**           |
 
 After the first 62s it is flat: 3 stalls totalling 0.8s over the next 16 minutes.
 
@@ -35,7 +186,7 @@ event: lost-after-connect   reason: transport   hadEstablished: true
   near-misses. There are none, so the probe path is healthy and this is NOT the
   event-loop blocking that Problem 1 describes.
 - Server side, `ws.rpc.server.getConfig` and `PreviewAutomationBroker.acquireConnection`
-  both show a **26.3s median gap** — but those are the *consequence* (bootstrap
+  both show a **26.3s median gap** — but those are the _consequence_ (bootstrap
   re-running after each reconnect), not the cause.
 - **Ruled out:** auth credential rejection (zero in the current trace).
 
@@ -51,6 +202,7 @@ assumed to be the event-loop spiral because they co-occurred at startup. They ar
 independent. Measure the symptom directly before attributing it to a known cause.
 
 ## ROOT CAUSE FOUND (2026-07-28) — spawn flood driven by a reconnect feedback loop
+
 ### (this explains Problem 1 above, NOT the disconnects)
 
 First real backend CPU profile: `C:\temp\t3runs\20260728-010854\cpuprof\server-11212-startup.cpuprofile`
