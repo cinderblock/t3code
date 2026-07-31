@@ -46,16 +46,25 @@ $ErrorActionPreference = 'Stop'
 # Claude edits this block between debugging sessions. Nothing here is a
 # command-line flag on purpose.
 #
-# Current objective: capture the synchronous hot path behind the startup
-# freeze (34.9s of the first 61.7s is event-loop blocked). CPU profiling is
-# the decisive measurement, so it is ON.
+# Current objective: correlate client disconnects with backend event-loop
+# stalls. That needs only the lag monitor and the per-run diagnostics file,
+# both of which are cheap.
+#
+# DISCIPLINE: heavyweight instrumentation is opt-in and gets turned back OFF
+# as soon as the measurement it was added for is taken. Leaving it on is not
+# free and not neutral -- it perturbs the very window under observation.
 $Config = @{
-  # Profile the backend's startup. Written on a timer by the server itself, so
-  # unlike --cpu-prof it does not depend on a clean exit.
-  CpuProf = $true
+  # OFF. The startup hot path has been captured twice (2026-07-28 and
+  # 2026-07-30; see plans/t3code-startup-freeze-deeper-fix.md), so there is
+  # nothing left to learn from re-profiling every launch. Worse, the V8
+  # sampler runs for the first 90s of startup -- precisely the window where
+  # disconnects are being measured -- so leaving it on would distort the
+  # numbers it is meant to explain. Set true only to take a new profile, then
+  # set it back.
+  CpuProf = $false
 
-  # How long to profile from server start. The startup burst under
-  # investigation runs ~62s, so 90 covers it with margin.
+  # How long to profile from server start, when CpuProf is enabled. The
+  # startup burst runs ~62s, so 90 covers it with margin.
   CpuProfSeconds = 90
 
   # Chromium netlog. Off: the netlog questions (dead saved environments,
