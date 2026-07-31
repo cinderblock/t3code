@@ -3,7 +3,55 @@
 Status: **INSTRUMENTED 2026-07-27** — the lag monitor that was deferred three times now exists.
 Awaiting one app restart to capture a startup profile. Do not attempt another blind fix.
 
+## 2026-07-31 — THE DISCONNECTS ARE A SEPARATE BUG. Two problems, not one.
+
+The first run with client-side disconnect diagnostics overturned the working theory.
+**Do not conflate these again:**
+
+### Problem 1 — startup event-loop stalls (real, and now much improved)
+
+Same 62s window as the 2026-07-27 baseline:
+
+| | 2026-07-27 | 2026-07-30 |
+| --- | --- | --- |
+| stalled | 34.9s (**57%**) | 21.3s (**34%**) |
+| worst stall | 3745 ms | **2131 ms** |
+| severe (>=5s) | several | **0** |
+
+After the first 62s it is flat: 3 stalls totalling 0.8s over the next 16 minutes.
+
+### Problem 2 — a metronomic 26-second disconnect cycle (the actual toast source)
+
+Every recorded drop is:
+
+```
+event: lost-after-connect   reason: transport   hadEstablished: true
+```
+
+- **Period 26.2s, metronomic** — 19:00:43, 19:01:09, 19:01:35, 19:02:01 ... It is not
+  network flakiness and it is **not startup-specific**: a prior session logged the same
+  cycle continuously for **13 hours** (1,485 records).
+- **Zero `health-check-slow` records.** If the loop were starving probes we would see
+  near-misses. There are none, so the probe path is healthy and this is NOT the
+  event-loop blocking that Problem 1 describes.
+- Server side, `ws.rpc.server.getConfig` and `PreviewAutomationBroker.acquireConnection`
+  both show a **26.3s median gap** — but those are the *consequence* (bootstrap
+  re-running after each reconnect), not the cause.
+- **Ruled out:** auth credential rejection (zero in the current trace).
+
+The socket connects, works, and is ended ~26s later. `onDisconnect` fires with no
+browser `close` event seen, which means either the close event arrives after Effect's
+socket fiber observes the end, or **the socket never closed and the session was torn
+down for another reason**. Distinguishing those is the next step: `session.ts` now
+emits a separate `socket-close` record from the close listener itself, so its presence
+or absence answers it without depending on ordering.
+
+**Lesson repeated from earlier in this investigation:** the reconnect symptom was
+assumed to be the event-loop spiral because they co-occurred at startup. They are
+independent. Measure the symptom directly before attributing it to a known cause.
+
 ## ROOT CAUSE FOUND (2026-07-28) — spawn flood driven by a reconnect feedback loop
+### (this explains Problem 1 above, NOT the disconnects)
 
 First real backend CPU profile: `C:\temp\t3runs\20260728-010854\cpuprof\server-11212-startup.cpuprofile`
 (90 s from server start, 52,397 samples).

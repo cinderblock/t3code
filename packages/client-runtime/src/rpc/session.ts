@@ -94,6 +94,32 @@ export const make = Effect.gen(function* () {
           closeInfo = `code=${closed.code} clean=${closed.wasClean}${
             closed.reason ? ` reason=${closed.reason}` : ""
           }`;
+          // Emit here rather than relying on `closeInfo` being set by the time
+          // `onDisconnect` builds its error. It is not: Effect's socket fiber
+          // observes the end before the browser dispatches this event, so the
+          // first attempt at this reported "[no close event observed]" every
+          // time. Emitting from the listener removes the ordering dependency.
+          try {
+            (
+              globalThis as {
+                __t3CrashLog?: { send?: (payload: unknown) => void };
+              }
+            ).__t3CrashLog?.send?.({
+              level: "warn",
+              source: "connection-socket",
+              message: `socket close: ${connection.label}`,
+              data: {
+                event: "socket-close",
+                target: connection.label,
+                code: closed.code,
+                wasClean: closed.wasClean,
+                reason: closed.reason || undefined,
+                msSinceLoad: typeof performance !== "undefined" ? Math.round(performance.now()) : 0,
+              },
+            });
+          } catch {
+            // A diagnostic must never affect the socket lifecycle.
+          }
         });
       } catch {
         // Observation must never prevent the socket from being created.
