@@ -3,7 +3,36 @@
 Status: **INSTRUMENTED 2026-07-27** — the lag monitor that was deferred three times now exists.
 Awaiting one app restart to capture a startup profile. Do not attempt another blind fix.
 
-## 2026-07-31 (latest) — close code captured: 1000 is OUR OWN teardown, not the cause
+## 2026-07-31 (result) — editor cache shipped; the reconnect loop stopped
+
+First run on the fix (backend started 20:19:57Z, commit `d057bed87`):
+
+|                                          | before                                      | after                           |
+| ---------------------------------------- | ------------------------------------------- | ------------------------------- |
+| `shell.isExecutableFile`                 | 22,680                                      | **5,883** (−74%)                |
+| `externalLauncher.buildAvailableEditors` | once per bootstrap                          | **1 of 4 calls** (3 cache hits) |
+| Noook reconnect loop                     | continuous, 26.2s apart, 13h in one session | **stopped after 20:22:30**      |
+
+The 24 disconnects this run are the startup burst backing off (12 → 14 → 16 → 18 → 26s) and then
+**terminating**, instead of grinding at a fixed 26s forever. Nearly 3 minutes clean at 20:25, where
+the old behaviour would have produced ~7 more.
+
+**Not verified: the stall numbers.** `server-child.log` stopped being appended at the relaunch
+(byte-identical size/mtime), so the lag-monitor records for this run do not exist. "0 stall records"
+here means _the log is not being written_, NOT that stalls are gone. Do not quote a stall improvement
+from this run. Worth finding out why the child log went silent under `scripts/t3.vbs`.
+
+**Remaining PATH walking, and the safe next cut.** The residual 5,883 stats are no longer editor
+detection — they are `shell.resolveSpawnCommand` (534 calls x ~11 stats each). That path resolves
+`git` on every spawn and is not memoized: `spawnExecutableResolutionCache` covers the _sync Node_
+resolver, not the Effect `resolveCommandPath` path.
+
+Caching **successes only** there is safe and is the documented rationale of the existing sibling memo
+("only successful resolutions are cached so a not-yet-installed command stays re-checkable") — it
+keeps misses re-checkable, so the relay client's install-then-resolve flow still works, which is
+exactly what made the earlier miss-caching attempt wrong.
+
+## 2026-07-31 (earlier) — close code captured: 1000 is OUR OWN teardown, not the cause
 
 The rebuilt client finally emitted `socket-close`. **The close code does not mean what the
 previous entry assumed.** Ordering, from one cycle:
