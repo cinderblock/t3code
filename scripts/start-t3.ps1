@@ -302,6 +302,14 @@ if ($BuildOnly) {
 # --- diagnostics ---------------------------------------------------------
 $electronArgs = @('--trace-warnings')
 
+# Per-run diagnostics file. The backend appends one JSON line per event-loop
+# stall here. It exists because the two sinks that "should" work do not: the
+# desktop's capture of backend stdout into server-child.log silently stopped
+# recording, and server.trace.ndjson rotates every ~60-90s, which is shorter
+# than the interval between the disconnects being investigated.
+$env:T3_DIAGNOSTICS_FILE = Join-Path $RunDir 'diagnostics.ndjson'
+Write-Host "  diag    : $($env:T3_DIAGNOSTICS_FILE)"
+
 if ($Config.LagMs -gt 0) {
   $env:T3_EVENT_LOOP_LAG_MS = "$($Config.LagMs)"
   Remove-Item Env:\T3_EVENT_LOOP_LAG_OFF -ErrorAction SilentlyContinue

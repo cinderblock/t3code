@@ -49,6 +49,65 @@ const CONNECTION_PROBE_RETRY_DELAY = "1 second";
 // Probe the connection, tolerating a slow-but-open backend: a probe timeout is retried; only a
 // probe that keeps timing out (or fails outright) marks the connection as unhealthy. A real socket
 // close is surfaced elsewhere via session.closed, so this never masks an actually-dead connection.
+/**
+ * Disconnect diagnostics that actually survive.
+ *
+ * `Effect.logWarning` alone has proven insufficient here: the backend's stdout
+ * capture (`server-child.log`) silently stopped recording, and
+ * `server.trace.ndjson` rotates roughly every 60-90s under normal use, so by
+ * the time a disconnect is reported the evidence is already gone.
+ *
+ * So every connection failure is ALSO pushed through the desktop crash-log IPC
+ * bridge, which appends synchronously to `renderer.log`. That bridge is absent
+ * on web/mobile, hence the guard — this must never throw in those runtimes.
+ *
+ * `msSinceLoad` is the field that matters most right now: disconnects are
+ * reported as far worse during startup, and this is what proves or disproves
+ * that rather than relying on impressions.
+ */
+interface ConnectionDiagnostic {
+  readonly event: string;
+  readonly target: string;
+  readonly errorTag: string;
+  readonly reason: string;
+  readonly detail?: string | undefined;
+  readonly attempt: number;
+  readonly failureCount: number;
+  readonly retryInMs?: number | undefined;
+  readonly hadEstablished?: boolean | undefined;
+  readonly msSinceLoad: number;
+}
+
+/** Monotonic ms since this client loaded; 0 where `performance` is unavailable. */
+const msSinceLoad = (): number =>
+  typeof performance !== "undefined" ? Math.round(performance.now()) : 0;
+
+const crashLogBridge = (): { send: (payload: unknown) => void } | undefined => {
+  const candidate = (globalThis as { __t3CrashLog?: { send?: (payload: unknown) => void } })
+    .__t3CrashLog;
+  return typeof candidate?.send === "function"
+    ? (candidate as { send: (payload: unknown) => void })
+    : undefined;
+};
+
+const emitConnectionDiagnostic = (record: ConnectionDiagnostic): Effect.Effect<void> =>
+  Effect.sync(() => {
+    try {
+      crashLogBridge()?.send({
+        level: "warn",
+        source: "connection-supervisor",
+        message: `${record.event}: ${record.target}`,
+        data: record,
+      });
+    } catch {
+      // A diagnostic must never break the connection loop it is observing.
+    }
+  }).pipe(
+    Effect.andThen(
+      Effect.logWarning(`connection ${record.event}`).pipe(Effect.annotateLogs({ ...record })),
+    ),
+  );
+
 const runConnectionHealthCheck = (
   probe: Effect.Effect<void, ConnectionAttemptError>,
   label: string,
@@ -71,9 +130,20 @@ const runConnectionHealthCheck = (
           detail: `${label} did not respond to a connection health check.`,
         });
       }
-      yield* Effect.logWarning(
-        `${label} health check slow (attempt ${attempt}/${maxAttempts}); connection still open, retrying.`,
-      );
+      // Near-miss: the probe was slow but the socket is still open. These are
+      // the leading indicator of a disconnect, so record them even though this
+      // attempt recovers -- a run full of these explains a run that eventually
+      // drops, and they are invisible otherwise.
+      yield* emitConnectionDiagnostic({
+        event: "health-check-slow",
+        target: label,
+        errorTag: "ProbeTimeout",
+        reason: "timeout",
+        detail: `probe exceeded ${String(timeout)} on attempt ${attempt}/${maxAttempts}`,
+        attempt,
+        failureCount: 0,
+        msSinceLoad: msSinceLoad(),
+      });
       yield* Effect.sleep(CONNECTION_PROBE_RETRY_DELAY);
     }
   });
@@ -470,9 +540,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
                 ? MOBILE_CONNECTION_PROBE_TIMEOUT
                 : CONNECTION_PROBE_TIMEOUT,
               next.reason === "application-active-probe" ? 1 : CONNECTION_PROBE_MAX_ATTEMPTS,
-            ).pipe(
-              Effect.forkChild,
-            );
+            ).pipe(Effect.forkChild);
             for (;;) {
               const probeEvent = yield* Effect.raceFirst(
                 Fiber.await(probe).pipe(
@@ -753,6 +821,18 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
 
       failureCount += 1;
       const delayMs = retryDelayMs(failureCount - 1);
+      yield* emitConnectionDiagnostic({
+        event: outcome.established ? "lost-after-connect" : "attempt-failed",
+        target: target.label,
+        errorTag: error._tag,
+        reason: error.reason,
+        detail: "detail" in error && typeof error.detail === "string" ? error.detail : undefined,
+        attempt,
+        failureCount,
+        retryInMs: delayMs,
+        hadEstablished: outcome.established,
+        msSinceLoad: msSinceLoad(),
+      });
       pendingRetry = Option.map(attemptSpan, (previousAttempt) => ({
         previousAttempt,
         failureCount,

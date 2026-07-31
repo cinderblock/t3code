@@ -20,7 +20,21 @@
  * Tuning via environment:
  * - `T3_EVENT_LOOP_LAG_MS` — report threshold in ms (default 250).
  * - `T3_EVENT_LOOP_LAG_OFF` — set to disable the monitor entirely.
+ * - `T3_DIAGNOSTICS_FILE` — also append each stall as JSON to this path.
+ *
+ * ## Why it writes its own file
+ *
+ * `Effect.logWarning` goes to stdout and the trace, and both proved unreliable
+ * for this: the desktop's capture of backend stdout into `server-child.log`
+ * silently stopped recording (a run's "CPU profiler started" line exists in no
+ * current log despite the profile being written), and `server.trace.ndjson`
+ * rotates roughly every 60-90s under load, so a 19s window is all that
+ * survives. Appending directly — the same approach that makes CpuProfiler
+ * reliable — means stall evidence outlives both.
  */
+
+// @effect-diagnostics-next-line nodeBuiltinImport:off - diagnostic sink must not depend on the app's FileSystem layer or its logger
+import * as NodeFs from "node:fs";
 
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
@@ -34,6 +48,21 @@ const DEFAULT_THRESHOLD_MS = 250;
 
 /** Stalls at or above this are worth a louder log line — a client probe times out around here. */
 const SEVERE_THRESHOLD_MS = 5_000;
+
+/**
+ * Append one JSON line per stall. Synchronous and best-effort: a stall record
+ * is worthless if writing it can itself fail the server, and the write happens
+ * only when a stall already occurred, so it adds no cost to the healthy path.
+ */
+function appendDiagnostic(record: Record<string, unknown>): void {
+  const file = process.env.T3_DIAGNOSTICS_FILE?.trim();
+  if (!file) return;
+  try {
+    NodeFs.appendFileSync(file, `${JSON.stringify(record)}\n`);
+  } catch {
+    // Never let diagnostics break the process they are observing.
+  }
+}
 
 function resolveThresholdMs(): number {
   const raw = process.env.T3_EVENT_LOOP_LAG_MS?.trim();
@@ -80,15 +109,23 @@ export const layer = Layer.effectDiscard(
         lagMs >= SEVERE_THRESHOLD_MS
           ? "Event loop blocked long enough to fail a client health check"
           : "Event loop stalled";
-      yield* Effect.logWarning(message).pipe(
-        Effect.annotateLogs({
-          lagMs: Math.round(lagMs),
-          sinceStartupMs: Math.round(now - startedAt),
-          maxLagMs: Math.round(stats.maxLagMs),
-          totalStalledMs: Math.round(stats.totalLagMs),
-          stallCount: stats.stallCount,
-        }),
-      );
+      const annotations = {
+        lagMs: Math.round(lagMs),
+        sinceStartupMs: Math.round(now - startedAt),
+        maxLagMs: Math.round(stats.maxLagMs),
+        totalStalledMs: Math.round(stats.totalLagMs),
+        stallCount: stats.stallCount,
+      };
+      appendDiagnostic({
+        // `now` is already Effect's clock reading; epoch millis avoids
+        // constructing a Date inside Effect code (globalDateInEffect).
+        tsEpochMs: Math.round(now),
+        kind: "event-loop-stall",
+        pid: process.pid,
+        severe: lagMs >= SEVERE_THRESHOLD_MS,
+        ...annotations,
+      });
+      yield* Effect.logWarning(message).pipe(Effect.annotateLogs(annotations));
     });
 
     yield* Effect.forkScoped(Effect.forever(sample));
