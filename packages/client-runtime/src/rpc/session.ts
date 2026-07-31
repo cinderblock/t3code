@@ -75,6 +75,32 @@ export const make = Effect.gen(function* () {
 
     const connected = yield* Deferred.make<void>();
     const disconnected = yield* Deferred.make<never, ConnectionTransientError>();
+
+    // Capture the WebSocket close code.
+    //
+    // `onDisconnect` reports only that the socket closed, which is not enough
+    // to act on: measured runs show repeated `reason: "transport"` drops after
+    // a healthy connect, with zero probe timeouts, so the socket is being
+    // closed by something rather than starved. The close code says who and why
+    // -- 1006 means it died with no close frame (process death, network), 1001
+    // going away, 1011 a server error, 1013 try-again-later. Without it the
+    // next step is guesswork.
+    let closeInfo: string | undefined;
+    const observingWebSocketConstructor = ((url: string, protocols?: string | Array<string>) => {
+      const socket = webSocketConstructor(url, protocols);
+      try {
+        (socket as unknown as EventTarget).addEventListener?.("close", (event: Event) => {
+          const closed = event as CloseEvent;
+          closeInfo = `code=${closed.code} clean=${closed.wasClean}${
+            closed.reason ? ` reason=${closed.reason}` : ""
+          }`;
+        });
+      } catch {
+        // Observation must never prevent the socket from being created.
+      }
+      return socket;
+    }) as typeof webSocketConstructor;
+
     const hooks = RpcClient.ConnectionHooks.of({
       onConnect: Deferred.succeed(connected, undefined).pipe(Effect.asVoid),
       onDisconnect: Deferred.isDone(connected).pipe(
@@ -83,9 +109,11 @@ export const make = Effect.gen(function* () {
             disconnected,
             new ConnectionTransientErrorClass({
               reason: "transport",
-              detail: wasConnected
-                ? `${connection.label} disconnected.`
-                : `${connection.label} could not establish a WebSocket connection.`,
+              detail: `${
+                wasConnected
+                  ? `${connection.label} disconnected.`
+                  : `${connection.label} could not establish a WebSocket connection.`
+              }${closeInfo ? ` [${closeInfo}]` : " [no close event observed]"}`,
             }),
           ),
         ),
@@ -94,7 +122,9 @@ export const make = Effect.gen(function* () {
     });
     const socketLayer = Socket.layerWebSocket(connection.socketUrl, {
       openTimeout: SOCKET_OPEN_TIMEOUT,
-    }).pipe(Layer.provide(Layer.succeed(Socket.WebSocketConstructor, webSocketConstructor)));
+    }).pipe(
+      Layer.provide(Layer.succeed(Socket.WebSocketConstructor, observingWebSocketConstructor)),
+    );
     const protocolLayer = Layer.effect(
       RpcClient.Protocol,
       RpcClient.makeProtocolSocket({
