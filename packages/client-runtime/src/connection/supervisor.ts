@@ -46,9 +46,6 @@ const BACKOFF_RESET_AFTER_MS = 30_000;
 const CONNECTION_PROBE_MAX_ATTEMPTS = 4;
 const CONNECTION_PROBE_RETRY_DELAY = "1 second";
 
-// Probe the connection, tolerating a slow-but-open backend: a probe timeout is retried; only a
-// probe that keeps timing out (or fails outright) marks the connection as unhealthy. A real socket
-// close is surfaced elsewhere via session.closed, so this never masks an actually-dead connection.
 /**
  * Disconnect diagnostics that actually survive.
  *
@@ -108,6 +105,9 @@ const emitConnectionDiagnostic = (record: ConnectionDiagnostic): Effect.Effect<v
     ),
   );
 
+// Probe the connection, tolerating a slow-but-open backend: a probe timeout is retried; only a
+// probe that keeps timing out (or fails outright) marks the connection as unhealthy. A real socket
+// close is surfaced elsewhere via session.closed, so this never masks an actually-dead connection.
 const runConnectionHealthCheck = (
   probe: Effect.Effect<void, ConnectionAttemptError>,
   label: string,
