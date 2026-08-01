@@ -863,7 +863,31 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         current.network === network ? [false, current] : ([true, { ...current, network }] as const),
       ).pipe(
         Effect.flatMap((changed) =>
-          changed ? signal({ _tag: "NetworkChanged", network }) : Effect.void,
+          changed
+            ? // Record every observed network transition.
+              //
+              // A reported "offline" makes the supervisor end the current
+              // attempt, which closes the socket *gracefully* -- and measured
+              // closes are exactly that: code 1000, wasClean true, on the local
+              // backend, in episodic bursts with long stable gaps. Nothing
+              // crashed; something asked for the close.
+              //
+              // On desktop `network` comes from `navigator.onLine`, which
+              // Chromium is known to flap on machines with VPNs, Tailscale or
+              // several adapters. This makes such flapping visible instead of
+              // inferred: if these records bracket the disconnect bursts, the
+              // cause is connectivity reporting, not the backend.
+              emitConnectionDiagnostic({
+                event: "network-changed",
+                target: target.label,
+                errorTag: "NetworkStatus",
+                reason: network,
+                detail: `connectivity reported ${network}`,
+                attempt: 0,
+                failureCount: 0,
+                msSinceLoad: msSinceLoad(),
+              }).pipe(Effect.andThen(signal({ _tag: "NetworkChanged", network })))
+            : Effect.void,
         ),
       ),
     ),
