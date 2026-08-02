@@ -146,3 +146,15 @@ Full glossary with file links: `docs/internals/glossary.md`
 
 - Don't verify with browsers or computer use unless the user explicitly agrees or requests it.
 - Security is important, but should not be over-indexed on, especially for dev mode/maintainer-only features.
+
+<!-- fork-only section (cinderblock/t3code); appended last to minimise upstream merge conflicts -->
+
+## Fork: before debugging disconnects, startup freezes, or backend load
+
+Read **`plans/ATTEMPTS.md` first.** It logs what has already been tried on this fork, with
+evidence, including a table of hypotheses that are **already refuted by measurement** — probe
+timeouts, connectivity flapping, backend restarts, database size, PATH-walk cost, and more.
+Several of these have been re-investigated more than once by different agents.
+
+Append your own attempts to it, especially negative results. A refuted hypothesis recorded
+there saves the next agent a day of work.
