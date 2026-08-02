@@ -148,6 +148,9 @@ interface ActiveRemotePoller {
 
 interface StreamStatusOptions {
   readonly automaticRemoteRefreshInterval?: Effect.Effect<Duration.Duration, never>;
+  // Overrides STATUS_REFRESH_STARTUP_GRACE. Tests pass Duration.zero so the initial refresh is not
+  // parked behind a sleep that a TestClock would have to be advanced past.
+  readonly startupGrace?: Duration.Duration;
 }
 
 export function remoteRefreshFailureDelay(
@@ -434,10 +437,11 @@ export const make = Effect.gen(function* () {
     demandCwdsRef: Ref.Ref<ReadonlyMap<string, number>>,
     automaticRemoteRefreshInterval: Effect.Effect<Duration.Duration, never>,
     refreshImmediately: boolean,
+    startupGrace: Duration.Duration,
   ) => {
     return Effect.gen(function* () {
       // Let the backend finish coming up (and serve readiness) before this poller's first refresh.
-      yield* Effect.sleep(STATUS_REFRESH_STARTUP_GRACE);
+      yield* Effect.sleep(startupGrace);
 
       // Serve out the remaining backoff for a repo that was already failing
       // before this poller was (re-)forked. Every reconnect re-forks all
@@ -553,6 +557,7 @@ export const make = Effect.gen(function* () {
     demandCwd: string,
     automaticRemoteRefreshInterval: Effect.Effect<Duration.Duration, never>,
     refreshImmediately: boolean,
+    startupGrace: Duration.Duration,
   ) {
     yield* SynchronizedRef.modifyEffect(pollersRef, (activePollers) => {
       const existing = activePollers.get(cwd);
@@ -580,6 +585,7 @@ export const make = Effect.gen(function* () {
             demandCwds,
             automaticRemoteRefreshInterval,
             refreshImmediately,
+            startupGrace,
           ).pipe(
             Effect.forkIn(broadcasterScope),
             Effect.map((fiber) => {
@@ -653,6 +659,7 @@ export const make = Effect.gen(function* () {
           options?.automaticRemoteRefreshInterval ??
             Effect.succeed(DEFAULT_VCS_STATUS_REFRESH_INTERVAL),
           cachedStatus?.remote === null || cachedStatus?.remote === undefined,
+          options?.startupGrace ?? STATUS_REFRESH_STARTUP_GRACE,
         );
 
         const release = releaseRemotePoller(cwd, input.cwd).pipe(Effect.ignore, Effect.asVoid);

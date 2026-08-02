@@ -392,15 +392,18 @@ describe("VcsStatusBroadcaster", () => {
       const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
       const snapshotDeferred = yield* Deferred.make<VcsStatusStreamEvent>();
       const remoteUpdatedDeferred = yield* Deferred.make<VcsStatusStreamEvent>();
-      yield* Stream.runForEach(broadcaster.streamStatus({ cwd: "/repo" }), (event) => {
-        if (event._tag === "snapshot") {
-          return Deferred.succeed(snapshotDeferred, event).pipe(Effect.ignore);
-        }
-        if (event._tag === "remoteUpdated") {
-          return Deferred.succeed(remoteUpdatedDeferred, event).pipe(Effect.ignore);
-        }
-        return Effect.void;
-      }).pipe(Effect.forkScoped);
+      yield* Stream.runForEach(
+        broadcaster.streamStatus({ cwd: "/repo" }, { startupGrace: Duration.zero }),
+        (event) => {
+          if (event._tag === "snapshot") {
+            return Deferred.succeed(snapshotDeferred, event).pipe(Effect.ignore);
+          }
+          if (event._tag === "remoteUpdated") {
+            return Deferred.succeed(remoteUpdatedDeferred, event).pipe(Effect.ignore);
+          }
+          return Effect.void;
+        },
+      ).pipe(Effect.forkScoped);
 
       const snapshot = yield* Deferred.await(snapshotDeferred);
       yield* broadcaster.refreshStatus("/repo");
@@ -437,7 +440,10 @@ describe("VcsStatusBroadcaster", () => {
       yield* Stream.runForEach(
         broadcaster.streamStatus(
           { cwd: "/repo" },
-          { automaticRemoteRefreshInterval: Effect.succeed(Duration.zero) },
+          {
+            automaticRemoteRefreshInterval: Effect.succeed(Duration.zero),
+            startupGrace: Duration.zero,
+          },
         ),
         (event) => {
           if (event._tag === "snapshot") {
@@ -542,7 +548,10 @@ describe("VcsStatusBroadcaster", () => {
       yield* Stream.runForEach(
         broadcaster.streamStatus(
           { cwd: privateCwd },
-          { automaticRemoteRefreshInterval: Effect.succeed(Duration.zero) },
+          {
+            automaticRemoteRefreshInterval: Effect.succeed(Duration.zero),
+            startupGrace: Duration.zero,
+          },
         ),
         (event) =>
           event._tag === "remoteUpdated"
@@ -613,7 +622,10 @@ describe("VcsStatusBroadcaster", () => {
       yield* Stream.runForEach(
         broadcaster.streamStatus(
           { cwd: "/repo" },
-          { automaticRemoteRefreshInterval: Effect.succeed(Duration.minutes(1)) },
+          {
+            automaticRemoteRefreshInterval: Effect.succeed(Duration.minutes(1)),
+            startupGrace: Duration.zero,
+          },
         ),
         (event) =>
           event._tag === "snapshot"
@@ -722,7 +734,10 @@ describe("VcsStatusBroadcaster", () => {
       const snapshot = yield* Stream.runHead(
         broadcaster.streamStatus(
           { cwd: "/repo" },
-          { automaticRemoteRefreshInterval: Effect.succeed(Duration.seconds(1)) },
+          {
+            automaticRemoteRefreshInterval: Effect.succeed(Duration.seconds(1)),
+            startupGrace: Duration.zero,
+          },
         ),
       );
 
@@ -792,15 +807,19 @@ describe("VcsStatusBroadcaster", () => {
       const secondSnapshot = yield* Deferred.make<VcsStatusStreamEvent>();
       const firstScope = yield* Scope.make();
       const secondScope = yield* Scope.make();
-      yield* Stream.runForEach(broadcaster.streamStatus({ cwd: "/repo" }), (event) =>
-        event._tag === "snapshot"
-          ? Deferred.succeed(firstSnapshot, event).pipe(Effect.ignore)
-          : Effect.void,
+      yield* Stream.runForEach(
+        broadcaster.streamStatus({ cwd: "/repo" }, { startupGrace: Duration.zero }),
+        (event) =>
+          event._tag === "snapshot"
+            ? Deferred.succeed(firstSnapshot, event).pipe(Effect.ignore)
+            : Effect.void,
       ).pipe(Effect.forkIn(firstScope));
-      yield* Stream.runForEach(broadcaster.streamStatus({ cwd: "/repo" }), (event) =>
-        event._tag === "snapshot"
-          ? Deferred.succeed(secondSnapshot, event).pipe(Effect.ignore)
-          : Effect.void,
+      yield* Stream.runForEach(
+        broadcaster.streamStatus({ cwd: "/repo" }, { startupGrace: Duration.zero }),
+        (event) =>
+          event._tag === "snapshot"
+            ? Deferred.succeed(secondSnapshot, event).pipe(Effect.ignore)
+            : Effect.void,
       ).pipe(Effect.forkIn(secondScope));
 
       yield* Deferred.await(firstSnapshot);
