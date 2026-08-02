@@ -35,6 +35,9 @@
 
 // @effect-diagnostics-next-line nodeBuiltinImport:off - diagnostic sink must not depend on the app's FileSystem layer or its logger
 import * as NodeFs from "node:fs";
+// node:os needs no suppression (no Effect equivalent, so the rule ignores it);
+// adding one is itself a TS377000 warning that fails typecheck.
+import * as NodeOs from "node:os";
 
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
@@ -48,6 +51,53 @@ const DEFAULT_THRESHOLD_MS = 250;
 
 /** Stalls at or above this are worth a louder log line — a client probe times out around here. */
 const SEVERE_THRESHOLD_MS = 5_000;
+
+/**
+ * CPU accounting, so a stall can be attributed rather than guessed at.
+ *
+ * A stall says the loop was unavailable; it does not say why. These two numbers
+ * separate the only answers that matter:
+ *
+ * - `selfCpuPct` high  -> this process was busy. The work is ours to fix.
+ * - `selfCpuPct` low while `systemCpuPct` is high -> the machine was contended
+ *   and the backend was starved of CPU by something else. Nothing in this
+ *   codebase would fix that.
+ *
+ * Measured over the same window as the stall, so the attribution is local to
+ * the event rather than a session average.
+ */
+interface CpuSnapshot {
+  readonly selfUs: number;
+  readonly busyMs: number;
+  readonly totalMs: number;
+}
+
+function readCpuSnapshot(): CpuSnapshot {
+  const self = process.cpuUsage();
+  let busyMs = 0;
+  let totalMs = 0;
+  for (const cpu of NodeOs.cpus()) {
+    const { user, nice, sys, irq, idle } = cpu.times;
+    busyMs += user + nice + sys + irq;
+    totalMs += user + nice + sys + irq + idle;
+  }
+  return { selfUs: self.user + self.system, busyMs, totalMs };
+}
+
+/** Percent of one core used by this process, and of all cores machine-wide. */
+function cpuBetween(
+  previous: CpuSnapshot,
+  next: CpuSnapshot,
+  elapsedMs: number,
+): { selfCpuPct: number; systemCpuPct: number } {
+  const selfMs = (next.selfUs - previous.selfUs) / 1000;
+  const totalDelta = next.totalMs - previous.totalMs;
+  const busyDelta = next.busyMs - previous.busyMs;
+  return {
+    selfCpuPct: elapsedMs > 0 ? Math.round((100 * selfMs) / elapsedMs) : 0,
+    systemCpuPct: totalDelta > 0 ? Math.round((100 * busyDelta) / totalDelta) : 0,
+  };
+}
 
 /**
  * Append one JSON line per stall. Synchronous and best-effort: a stall record
@@ -89,16 +139,21 @@ export const layer = Layer.effectDiscard(
     const statsRef = yield* Ref.make(ZERO_STATS);
     const startedAt = yield* Clock.currentTimeMillis;
     const lastRef = yield* Ref.make(startedAt);
+    const cpuRef = yield* Ref.make(readCpuSnapshot());
 
     const sample = Effect.gen(function* () {
       yield* Effect.sleep(SAMPLE_INTERVAL);
       const now = yield* Clock.currentTimeMillis;
       const previous = yield* Ref.getAndSet(lastRef, now);
+      // Sampled every tick, not only on a stall, so the CPU window matches the
+      // stall window exactly instead of spanning the gap since the last stall.
+      const previousCpu = yield* Ref.getAndSet(cpuRef, readCpuSnapshot());
       // Overshoot beyond the requested sleep is time the loop could not run timers.
       const lagMs = now - previous - SAMPLE_INTERVAL_MS;
       if (lagMs < thresholdMs) {
         return;
       }
+      const cpu = cpuBetween(previousCpu, yield* Ref.get(cpuRef), now - previous);
 
       const stats = yield* Ref.updateAndGet(statsRef, (previous) => ({
         maxLagMs: Math.max(previous.maxLagMs, lagMs),
@@ -123,6 +178,11 @@ export const layer = Layer.effectDiscard(
         kind: "event-loop-stall",
         pid: process.pid,
         severe: lagMs >= SEVERE_THRESHOLD_MS,
+        // Attribution: self high = our work; self low + system high = the
+        // machine was contended and this process was starved.
+        selfCpuPct: cpu.selfCpuPct,
+        systemCpuPct: cpu.systemCpuPct,
+        cpuCount: NodeOs.cpus().length,
         ...annotations,
       });
       yield* Effect.logWarning(message).pipe(Effect.annotateLogs(annotations));
