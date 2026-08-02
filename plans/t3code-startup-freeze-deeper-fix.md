@@ -183,7 +183,48 @@ are stable, reference equality holds and this path is a no-op. **Confirm with th
 first; do not "fix" this blind.** That mistake has already been made twice in this
 investigation.
 
-## 2026-07-31 — THE DISCONNECTS ARE A SEPARATE BUG. Two problems, not one.
+## 2026-08-02 — CORRECTION: the disconnects are a STARTUP STORM that self-resolves
+
+Supersedes the "two independent problems" framing below. They are linked, but through
+**load**, not through the probe path that was originally assumed.
+
+Measured on 2026-08-02: **all 8 disconnects fell inside the first 162 seconds**, with gaps
+climbing 11.9 → 13.9 → 19.6 → 24.4 → 26.5 → 26.5 → 26.2s (the retry ladder maxing at 16s on
+top of a consistent **~10s connection lifetime**). After t+162s: **zero**, and the app stayed
+up and usable. Earlier sessions show the same shape — bursts, then stable gaps up to ~30
+minutes.
+
+### Established facts (do not re-derive)
+
+- **Backend is healthy throughout.** Single PID, **zero restarts** across the storm. It is
+  not crashing, and it is not being killed and respawned.
+- **Local socket close codes: 3x `1006`** (abnormal, no close frame) during the busiest
+  early phase, **then 5x `1000`** (clean). Two mechanisms, hard aborts first.
+- Backend is stalled **58.7s of 204s (29%)** during that window.
+
+### Ruled out by measurement
+
+| Hypothesis | Evidence against |
+| --- | --- |
+| `navigator.onLine` flapping tearing down the socket | **`network-changed: 0`** — connectivity never reported offline |
+| Health-probe timeouts (the original theory) | **zero `health-check-slow` records**, ever |
+| Backend process death / restart loop | single PID, zero `sinceStartupMs` regressions |
+| Auth credential rejection | zero rejections in the trace |
+| Stalls directly causing the closes | worst pre-close stall only 1.7s, far below any timeout — and with stalls at 29% duty cycle, finding one in any 6s window is expected by chance. **This correlation is not evidence.** |
+
+### Where this points
+
+The connection dies ~10s in, repeatedly, only while the backend is under startup load, and
+stops permanently once that load clears. The specific close mechanism is still unidentified,
+but chasing it further has cost several restarts for no result. The productive target is the
+load itself, which is already quantified: **~2,200 spawns in the first 90s** (`spawn` at
+22.7% of CPU). Reducing that should remove the storm regardless of which transport-level
+detail is delivering the final blow.
+
+Unverified suspect, noted but NOT tested: upstream's merge added HTTP response compression to
+a layer group that includes the WebSocket route (`server.ts:423,430`).
+
+## 2026-07-31 — superseded framing: "the disconnects are a separate bug"
 
 The first run with client-side disconnect diagnostics overturned the working theory.
 **Do not conflate these again:**
