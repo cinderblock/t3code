@@ -76,11 +76,16 @@ $Config = @{
   LagMs = 250
 
   # Sample per-process host CPU during startup (scripts/sample-host-cpu.ps1).
-  # ON while the Defender question is open: the backend reports systemCpuPct at
-  # 98-100% while its own selfCpuPct is 28-54%, so something else on the machine
-  # is starving it, and nothing has measured what. Cheap -- one out-of-process
-  # sample per second, and it stops on its own. Turn OFF once answered.
-  HostCpu = $true
+  #
+  # OFF. It answered its question on 2026-08-03 and must not be left on: it was
+  # NOT cheap. Its per-second Get-CimInstance made WmiPrvSE plus its own
+  # powershell host the single largest CPU consumer on the box -- avg 18.9%,
+  # peak 35.4% of a 12-core machine -- and the event-loop stall duty cycle rose
+  # 15.2% -> 31.7% between the run without it and the run with it. It measurably
+  # worsened the startup window it was measuring.
+  #
+  # Set true only to take a new attribution sample, then set it back.
+  HostCpu = $false
 
   # How long to sample host CPU. The storm has always ended by ~162s.
   HostCpuSeconds = 240

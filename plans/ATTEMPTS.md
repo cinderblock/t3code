@@ -355,6 +355,54 @@ instrumentation here will hit the same class of thing:
 **Rule earned: sanity-check an instrument against a state whose answer you already know**
 (here: an idle machine must read ~0%) before trusting a single number it produces.
 
+### 2026-08-03 — full CPU attribution — **T3 is not the hog; the box is oversubscribed**
+
+Run `C:	emp	3runs60803-115208`, 206 fully-attributed samples, 12 cores. The machine is
+genuinely pegged: `machineCpuPct` averages **98-99% from t+30s through t+200s**. Average share
+of the whole machine across the 147 samples where it was ≥90% busy:
+
+| Consumer                                              | avg       | peak      |
+| ----------------------------------------------------- | --------- | --------- |
+| **This sampler** (`WmiPrvSE` + its `powershell` host) | **18.9%** | **35.4%** |
+| `MsMpEng` (Defender)                                  | 10.6%     | 23.4%     |
+| `esrv_svc` (Intel Energy Server Service)              | 10.3%     | **47.1%** |
+| `chrome`                                              | 5.1%      | 19.8%     |
+| **`electron` (T3 Code itself)**                       | **6.9%**  | 24.6%     |
+
+**T3 Code is not what is pegging this machine.** It averages ~7% while the box sits at ~99%.
+The starvation the backend reports (`systemCpuPct` 100%, `selfCpuPct` 14-41%) is real and is
+**caused by other software on the host**. This is the strongest support yet for the user's
+"overloaded computer" reading, and it means backend micro-optimisation has a low ceiling.
+
+`esrv_svc` deserves a look: an Intel telemetry service, unrelated to T3, peaking at 47% of a
+12-core box (≈5.6 cores). **Not touched — it is the user's machine and their call.**
+
+**Refuted: my own "the unaccounted CPU is invisible short-lived spawns" theory** from earlier
+the same day. With full attribution the shortfall collapses to **3-16%** (occasionally slightly
+negative from sampling skew). The CPU is almost entirely attributable to _long-lived_ processes.
+The spawn flood is not hiding in the gap; there is no meaningful gap.
+
+### 2026-08-03 — the sampler perturbed the run it was measuring — **standing rule 4, violated by the person who wrote it**
+
+`sample-host-cpu.ps1` was described in its own commit message as "read-only, ~1 sample/sec".
+It was read-only. It was **not cheap**: a per-second `Get-CimInstance` drives `WmiPrvSE`, and
+that plus its own PowerShell host made **the instrument the single largest CPU consumer on the
+machine** (18.9% avg, 35.4% peak).
+
+Effect on the very metric under study:
+
+| Run               | Host sampler | Stall duty cycle | Worst stall |
+| ----------------- | ------------ | ---------------- | ----------- |
+| `20260803-003716` | off          | **15.2%**        | 1842 ms     |
+| `20260803-115208` | on           | **31.7%**        | 2850 ms     |
+
+The duty cycle **doubled**. Any comparison across those two runs is confounded, and the second
+run's 31.7% must NOT be read as a regression in the app. `Config.HostCpu` is now `$false`.
+
+**Rule: cost an instrument before trusting it, and measure the instrument's own footprint in
+its first run.** "It only samples once a second" says nothing about what one sample costs --
+`Get-CimInstance` is orders of magnitude more expensive than `Get-Process`.
+
 ## Unverified suspects (not yet tested)
 
 - **HTTP response compression on the WebSocket route.** Upstream's merge added
