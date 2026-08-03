@@ -108,7 +108,7 @@ end **before** the browser dispatches `close`. Emit from the listener instead.
 
 `edabbea6b`. Produced `network-changed: 0`, killing the connectivity theory.
 
-### 2026-08-02 — why the UI stays unusable through a storm — **fixed**
+### 2026-08-02 — why the UI stays unusable through a storm — **shipped, UNVERIFIED at runtime**
 
 This is the _user-visible_ half of the problem, and it is a separate bug from whatever closes
 the socket. It explains "it's easy to get stuck in a loop where it doesn't seem to recover".
@@ -148,7 +148,7 @@ disconnected" is not available as written — queued messages are server-side (t
 `fork_queued_messages` table), so enqueueing needs the very connection that is down. Offline
 queueing would need local persistence first.
 
-**Fixed 2026-08-02** (`b6e36a265`, `73ab6481e`), after sign-off:
+**Shipped 2026-08-02** (`b6e36a265`, `73ab6481e`), after sign-off. Unit-tested only -- neither change has been observed in a real storm:
 
 - `PRODUCTIVE_CONNECTION_MS = 5_000` in `supervisor.ts`. A connection that held at least that
   long walks the ladder **down** one rung instead of climbing it, so a storm recovers
@@ -163,6 +163,26 @@ queueing would need local persistence first.
   `ChatView.tsx`, so every consumer inherits it.
 - The diagnostic records now carry `attemptMs` and `productive`, so the decay is verifiable from
   `renderer.log` rather than by impression.
+
+**RISK — check this before calling the decay a win.** Every reconnect drops all subscriptions
+and re-runs bootstrap, which is what triggers the git-status spawn burst. The 16 s cap was
+accidentally acting as **load shedding**. Decaying to 8 s/4 s re-runs bootstrap roughly twice as
+often during the window that is already 29% event-loop-blocked, so the decay could plausibly
+make startup _worse_ — the same shape as the 2026-07-03 throttle revert, pointed the other way.
+
+Verify on the next restart, against these baselines, before trusting it:
+
+| Metric                           | Where                                     | Baseline (2026-08-02, pre-fix) |
+| -------------------------------- | ----------------------------------------- | ------------------------------ |
+| Stall duty cycle, first ~180 s   | `diagnostics.ndjson` (`event-loop-stall`) | **29% of 204 s**               |
+| Worst single stall               | same                                      | **2131 ms**, zero severe       |
+| Drop count / window              | `renderer.log` (`lost-after-connect`)     | all within first **~162 s**    |
+| `retryInMs` trend across a storm | same                                      | pinned at **16000**            |
+
+Expected if the fix works: `retryInMs` walks _down_ (16000 → 8000 → 4000) with `productive:
+true`, and the stall duty cycle does **not** rise. If duty cycle climbs materially above 29%,
+the decay is feeding the spiral — gate it off during the first ~90 s of a session rather than
+reverting it outright.
 
 **Not done, deliberately:** deleting the dead `isConnecting`. It is a no-op at runtime
 (permanently false, so every `isConnecting ||` folds away) but removing it touches ~29 sites
