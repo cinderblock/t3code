@@ -170,6 +170,7 @@ import { getProviderModelCapabilities, resolveSelectableProvider } from "../prov
 import { NO_PROVIDER_MODEL_SELECTION } from "../providerInstances";
 import { useClientSettings, useEnvironmentSettings } from "../hooks/useSettings";
 import { useNowMinute } from "../hooks/useNowMinute";
+import { useSettledFlag } from "../hooks/useSettledFlag";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { getTerminalFocusOwner } from "../lib/terminalFocus";
@@ -468,6 +469,11 @@ function formatOutgoingPrompt(params: {
   const promptEffort = resolvePromptInjectedEffort(caps, params.effort);
   return applyClaudePromptEffortPrefix(params.text, promptEffort);
 }
+// Fork addition: how long the active environment must stay non-connected before the composer
+// treats it as unavailable. Comfortably past the retry ladder's first two rungs (1s, 2s) so a
+// quick reconnect never disables the UI, but short enough that a real outage is still obvious.
+const ENVIRONMENT_UNAVAILABLE_SETTLE_MS = 2_500;
+
 const SCRIPT_TERMINAL_COLS = 120;
 const SCRIPT_TERMINAL_ROWS = 30;
 
@@ -1669,8 +1675,14 @@ function ChatViewContent(props: ChatViewProps) {
   const activeEnvironment =
     activeThread == null ? null : (environmentById.get(activeThread.environmentId) ?? null);
   const activeEnvironmentConnectionPhase = activeEnvironment?.connection.phase ?? "available";
-  const activeEnvironmentUnavailable =
-    activeEnvironment !== null && activeEnvironmentConnectionPhase !== "connected";
+  // Fork change: hysteresis. Raw phase flips on every retry-ladder rung (the first is 1s), which
+  // made the composer flicker between usable and disabled throughout a reconnect storm. Settling
+  // the flag hides drops the user would not have noticed; it still clears the instant the
+  // connection returns, so recovery is never delayed. See `useSettledFlag`.
+  const activeEnvironmentUnavailable = useSettledFlag(
+    activeEnvironment !== null && activeEnvironmentConnectionPhase !== "connected",
+    ENVIRONMENT_UNAVAILABLE_SETTLE_MS,
+  );
   const activeEnvironmentUnavailableLabel = activeEnvironment?.label ?? null;
   const activeEnvironmentUnavailableState = useMemo<EnvironmentUnavailableState | null>(() => {
     if (!activeEnvironmentUnavailable || !activeEnvironmentUnavailableLabel || !activeEnvironment) {
