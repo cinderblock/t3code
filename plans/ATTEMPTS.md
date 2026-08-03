@@ -195,6 +195,72 @@ disabling the new decay and re-running: `retries when a session never becomes re
 `interrupts and releases a connection attempt when setup times out`, `does not let platform
 wakeups reset an in-flight attempt`. Not investigated yet.
 
+### 2026-08-03 — first measured run with the ladder decay — **decay kept, hysteresis REVERTED**
+
+Run `C:\temp\t3runs\20260803-003716`, 134.7 s of `diagnostics.ndjson`.
+
+**The backoff decay looks good, and the load-shedding risk did not materialise:**
+
+| Metric           | Baseline 2026-08-02 | This run                                         |
+| ---------------- | ------------------- | ------------------------------------------------ |
+| Stall duty cycle | 29% of 204 s        | **15.2%** of 134.7 s (18.9% over the first 90 s) |
+| Worst stall      | 2131 ms             | **1842 ms**                                      |
+| Stalls ≥ 5000 ms | 0                   | **0**                                            |
+
+Retrying ~2× more often did **not** raise the stall duty cycle — it fell. The
+"decay feeds the spiral" risk recorded above is **not supported** by this run (one run, one
+machine; not conclusive).
+
+**New, important:** `systemCpuPct` is **98–100% on nearly every stall** while `selfCpuPct` is
+28–54%. The backend is mostly being **starved by the machine**, not burning CPU itself. Chasing
+backend work may be chasing the wrong thing on a contended box.
+
+**The composer hysteresis was reverted** (`73ab6481e`, reverted by `78afab0f3`) after it broke
+the UI within minutes of shipping. `useSettledFlag` cleared immediately on `false`, so **every
+momentary `connected` blip reset the timer** — under flapping faster than the 2.5 s settle it
+**never tripped at all**. Because `ChatView.tsx:6031` gates the sync pill on
+`!activeEnvironmentUnavailable`, the user got a permanent "Syncing messages…", an enabled
+composer, and sends that bounced, with no indication the environment was down.
+**Lesson: an asymmetric debounce that is slow to raise and instant to clear is fooled by short
+_connections_, not just short outages. Masking a disconnect is worse than the flicker it fixes.**
+
+### 2026-08-03 — close code 1000 is NOT evidence of a deliberate server close — **refuted**
+
+`.repos`/`node_modules` `effect` `Socket.ts:603` releases the socket with a hard-coded
+`ws.close(1000)`. **Every** client-side scope release therefore reports a clean 1000, whatever
+the reason. The 1000-vs-1006 split has been treated as forensic evidence in this investigation;
+it mostly is not. 1000 means "the client tore down its own scope", not "someone deliberately
+closed the connection".
+
+### 2026-08-03 — the ping/pong watchdog: the best unexplored lead
+
+Verified in the patched runtime (`node_modules/.pnpm/effect@4.0.0-beta.102*/…`):
+
+- `RpcClient.ts:1169-1179` — ping every 5 s; if no pong arrived since the last ping, open the
+  timeout latch. Ping at t≈5 s, timeout at t≈**10 s**.
+- `RpcClient.ts:1091-1102` — that latch races the read loop and fails it with
+  `SocketOpenError(kind: "Timeout", cause: "ping timeout")`.
+- `session.ts:158` — `retryPolicy: Schedule.recurs(0)`, so it is **not retried**.
+- `Socket.ts:603` — teardown then reports a clean **1000**.
+
+**~10 s is exactly the observed connection lifetime.**
+
+The critical implication: a ping timeout needs the server to miss a pong for **≥5 s**, and this
+run had **zero stalls ≥5000 ms** (worst 1842 ms). So if this is the mechanism, **it is not
+event-loop blocking**. The server answers `Ping` inside the per-client RPC message loop, and
+bootstrap work is async subprocess wait — in-flight, not blocking (standing rule 2). A pong can
+sit behind slow in-flight handlers for >5 s while the event loop looks healthy.
+
+**This would explain why every hypothesis in the refuted table failed.** They are all variants
+of "the server is too busy", measured via CPU and event-loop lag — and this mechanism is
+invisible to both.
+
+**Next step (not yet done):** the patched `RpcClient` exposes `onPing`/`onPong`/`onPingTimeout`
+`ConnectionHooks`. `session.ts:130-148` wires only `onConnect`/`onDisconnect`; the ping hooks
+have **never been observed**. Wire them into the existing crash-log bridge and record
+ping→pong latency. Pong latency climbing past 5 s while stalls stay under 2 s confirms the root
+cause; healthy pong latency exonerates the watchdog. Diagnostics only, no behaviour change.
+
 ## Unverified suspects (not yet tested)
 
 - **HTTP response compression on the WebSocket route.** Upstream's merge added
