@@ -471,6 +471,24 @@ exists because a slow-but-alive backend was being treated as dead, and reconnect
 bootstrap and made it worse. The ping watchdog needs the same tolerance, but its 5 s interval is
 hard-coded in vendored `effect`, so that means extending the patch.
 
+### 2026-08-03 — where a late Pong could come from — **narrowed, NOT measured**
+
+Read from the runtime `dist` copy of `RpcServer.js` (not `src` -- see the patch trap below).
+
+The `Ping` branch does no work at all: `Effect.catchCause(send(client.id, constPong), ...)`. So
+the server never "computes" a Pong slowly. A late Pong can therefore only come from:
+
+1. **Queueing ahead of it** -- messages dispatched per client before the Ping is reached. Note
+   the `Request` branch runs `schemas.decode(request.payload)` **inline** in the dispatch path,
+   before `server.write` hands off to the handler. Decode is in the critical path; handler
+   execution is not.
+2. **Socket write backpressure** -- `send` cannot get the Pong onto the wire promptly.
+
+**Deliberately not pursued further yet.** Distinguishing these needs the `pongLatencyMs` numbers
+from the wired hooks; going deeper into vendored code first would be another unmeasured
+hypothesis, which is how this investigation lost a month. If `pongLatencyMs` turns out healthy,
+both candidates are moot and the watchdog is exonerated.
+
 ## Unverified suspects (not yet tested)
 
 - **HTTP response compression on the WebSocket route.** Upstream's merge added
