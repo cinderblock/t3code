@@ -75,6 +75,16 @@ $Config = @{
   # 250 catches everything that matters without flooding; 0 disables.
   LagMs = 250
 
+  # Sample per-process host CPU during startup (scripts/sample-host-cpu.ps1).
+  # ON while the Defender question is open: the backend reports systemCpuPct at
+  # 98-100% while its own selfCpuPct is 28-54%, so something else on the machine
+  # is starving it, and nothing has measured what. Cheap -- one out-of-process
+  # sample per second, and it stops on its own. Turn OFF once answered.
+  HostCpu = $true
+
+  # How long to sample host CPU. The storm has always ended by ~162s.
+  HostCpuSeconds = 240
+
   # auto = rebuild when sources are newer than bundles | always | never
   Build = 'auto'
 
@@ -343,6 +353,23 @@ if ($Config.CpuProf) {
 } else {
   Remove-Item Env:\T3_CPU_PROF_DIR -ErrorAction SilentlyContinue
   Remove-Item Env:\NODE_OPTIONS -ErrorAction SilentlyContinue
+}
+
+# Host CPU attribution. Runs out-of-process on purpose: it is measuring the
+# backend while the backend is starved, so it must not share that event loop and
+# must survive the backend stalling. Detached so it never holds up the launcher.
+if ($Config.HostCpu) {
+  $hostCpuPath = Join-Path $RunDir 'host-cpu.ndjson'
+  $samplerScript = Join-Path $PSScriptRoot 'sample-host-cpu.ps1'
+  if (Test-Path -LiteralPath $samplerScript) {
+    Start-Process -FilePath 'powershell.exe' -WindowStyle Hidden -ArgumentList @(
+      '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$samplerScript`"",
+      '-OutFile', "`"$hostCpuPath`"", '-Seconds', "$($Config.HostCpuSeconds)"
+    ) | Out-Null
+    Write-Host "  hostcpu : first $($Config.HostCpuSeconds)s -> $hostCpuPath"
+  } else {
+    Write-Host "  hostcpu : SKIPPED, $samplerScript not found" -ForegroundColor Yellow
+  }
 }
 
 $netLogPath = Join-Path $RunDir 'netlog.json'

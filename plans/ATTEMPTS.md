@@ -261,6 +261,51 @@ have **never been observed**. Wire them into the existing crash-log bridge and r
 ping→pong latency. Pong latency climbing past 5 s while stalls stay under 2 s confirms the root
 cause; healthy pong latency exonerates the watchdog. Diagnostics only, no behaviour change.
 
+### 2026-08-03 — Windows Defender as the CPU amplifier — **instrumented, awaiting a run**
+
+**The 2026-07-28 "expensive spawns (antivirus)" refutation was too quick and is hereby
+qualified.** It measured **9.2 ms/spawn** and called that "normal for Windows". Both parts are
+true and the conclusion still does not follow: ~9 ms is slow for a process spawn, and "normal
+for Windows" already includes Defender's real-time scanning on a typical machine. It measured
+_our_ per-spawn latency and never asked **who else was burning CPU**.
+
+Measured config on this machine (2026-08-03, `Get-MpComputerStatus` / `Get-MpPreference`):
+
+- `RealTimeProtection`, `BehaviorMonitor`, `OnAccessProtection`: **all True**
+- **No exclusion covers `C:\Users\camer\git\t3code`**, `git.exe`, or `node.exe`
+- The user _has_ excluded many other dev trees (Rust `target`, `.venv`, PlatformIO, ESPHome,
+  GitKraken) — so this repo is the unexcluded outlier, and it is the one spawning ~2,200
+  `git.exe` processes in the first 90 s.
+
+Why it fits everything the refuted table could not:
+
+| Evidence                                         | Fits                                                     |
+| ------------------------------------------------ | -------------------------------------------------------- |
+| `systemCpuPct` 98–100% while `selfCpuPct` 28–54% | Defender burns CPU, backend is starved                   |
+| Zero event-loop stalls ≥5000 ms, ever            | Starvation delays the pong **without blocking the loop** |
+| Ping timeout at ~10 s → clean 1000 close         | Downstream consequence, not the cause                    |
+| Drops stop after ~162 s                          | Defender's scan cache warms                              |
+| User's own "maybe the cache is warm now?"        | Same observation, independently                          |
+| Worse on a loaded machine                        | Contention for the same cores                            |
+
+**Instrumentation added** (`scripts/sample-host-cpu.ps1`, wired into `start-t3.ps1` behind
+`Config.HostCpu`, default ON): one out-of-process sample/second of per-process CPU
+(`MsMpEng`, `System`, `electron`, `node`, `git`) for the first 240 s, to
+`<run>/host-cpu.ndjson`. Epoch millis, so it lines up directly with `diagnostics.ndjson`.
+Out-of-process on purpose — it measures the backend _while the backend is starved_, so it must
+not share that event loop or die with it.
+
+**Prediction to test:** `MsMpEngPct` is high through the storm window and falls away when the
+drops stop. If instead MsMpEng is quiet while `systemCpuPct` is still pegged, Defender is
+exonerated and the starvation is something else on the box.
+
+**Do NOT add a Defender exclusion as a first move.** It is a real security decision, not a free
+win: this repo is where coding agents execute arbitrary commands and write files. Measure
+first, then choose deliberately among (narrowest first) excluding `git.exe` as a process,
+excluding `.git` directories, excluding the whole tree — or the option that changes no security
+posture at all, **cutting the ~2,200 spawns**, which has been the evidence-backed lever since
+July.
+
 ## Unverified suspects (not yet tested)
 
 - **HTTP response compression on the WebSocket route.** Upstream's merge added
@@ -286,6 +331,10 @@ Every one of these produced a confident wrong answer:
 - **`Effect.async` does not exist in Effect 4** — it is `Effect.callback`. Using the wrong name
   types the result `unknown`, which poisons the requirements channel of every downstream layer
   and surfaces as ~60 errors _in another file_. Bisect by disabling the new layer.
+- **A commit containing only `.ps1` files fails the pre-commit hook.** `vp fmt` gets no
+  formattable target and exits 1 with "Expected at least one target file. All matched files may
+  have been excluded by ignore rules." — which then reverts the staged state. Commit launcher
+  and script changes together with a markdown or TS file.
 - **The pre-commit hook (`vp staged` → `vp fmt`) OOMs on a large upstream merge.** It passes
   staged paths explicitly, bypassing `fmt.ignorePatterns`, so it tries to format ~12k vendored
   `.repos` files it is configured to skip. Killing it mid-run destroys the merge.
