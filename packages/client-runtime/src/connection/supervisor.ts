@@ -37,6 +37,20 @@ const CONNECTION_ESTABLISHMENT_TIMEOUT = "30 seconds";
 const CONNECTION_PROBE_TIMEOUT = "15 seconds";
 const MOBILE_CONNECTION_PROBE_TIMEOUT = "3 seconds";
 const BACKOFF_RESET_AFTER_MS = 30_000;
+// Fork addition. A connection that lasted at least this long walks the retry ladder *down* one
+// rung even though it fell short of BACKOFF_RESET_AFTER_MS.
+//
+// Without this the ladder is a one-way ratchet. Reset requires surviving 30s, but connections
+// during a reconnect storm on this machine live ~10s, so `stable` is never true, `failureCount`
+// only ever climbs, and the delay pins at the 16s cap for the rest of the session. The client
+// keeps retrying -- it never gives up -- but it settles into a permanent ~10s-up/~16s-down cycle,
+// and the composer (disabled whenever phase !== "connected") is unusable for most of it.
+//
+// The floor matters: decaying on *any* establishment would let an instant connect/drop loop pull
+// the delay down to 1s and hammer a backend that is already struggling. A connection that held
+// for a few seconds did real work and is evidence the backend is reachable, not evidence to back
+// off harder.
+const PRODUCTIVE_CONNECTION_MS = 5_000;
 // A single slow health-check probe must not tear down a live connection. A busy backend (e.g.
 // heavy git-status work) can delay the probe RPC well past CONNECTION_PROBE_TIMEOUT while the
 // socket is perfectly alive, and reconnecting only re-runs bootstrap and bogs the backend more
@@ -72,6 +86,9 @@ interface ConnectionDiagnostic {
   readonly failureCount: number;
   readonly retryInMs?: number | undefined;
   readonly hadEstablished?: boolean | undefined;
+  /** How long the whole attempt lasted, and whether that was long enough to decay the ladder. */
+  readonly attemptMs?: number | undefined;
+  readonly productive?: boolean | undefined;
   readonly msSinceLoad: number;
 }
 
@@ -780,9 +797,16 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
 
       const attempt = failureCount + 1;
       const nextGeneration = generation + 1;
+      const attemptStartedAt = yield* Clock.currentTimeMillis;
       const outcome: AttemptOutcome = yield* Effect.scoped(
         runAttempt(attempt, nextGeneration, latestFailure, pendingRetry),
       );
+      // Fork addition. Timed here in the loop rather than threaded through AttemptOutcome so the
+      // outcome types and their construction sites stay byte-identical to upstream and do not
+      // conflict on merge. This spans establishment as well as connected time, which is the
+      // conservative direction: a slow-to-establish attempt is not a hot-loop risk either.
+      const attemptMs = (yield* Clock.currentTimeMillis) - attemptStartedAt;
+      const productive = outcome.established && attemptMs >= PRODUCTIVE_CONNECTION_MS;
       if (outcome.established) {
         generation = nextGeneration;
         if (outcome.stable) {
@@ -819,8 +843,14 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         continue;
       }
 
-      failureCount += 1;
-      const delayMs = retryDelayMs(failureCount - 1);
+      // Fork change: a connection that held for PRODUCTIVE_CONNECTION_MS walks the ladder back
+      // down instead of climbing it, so a storm of ~10s connections goes 16s -> 8s -> 4s -> ...
+      // rather than pinning at the cap for the rest of the session. Failing to establish at all
+      // still climbs, so a genuinely dead backend keeps its full backoff. When `productive` is
+      // false both lines below are exactly upstream's behaviour (`failureCount` is >= 1 after the
+      // increment, so the clamp is a no-op).
+      failureCount = productive ? Math.max(0, failureCount - 1) : failureCount + 1;
+      const delayMs = retryDelayMs(Math.max(0, failureCount - 1));
       yield* emitConnectionDiagnostic({
         event: outcome.established ? "lost-after-connect" : "attempt-failed",
         target: target.label,
@@ -831,6 +861,8 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         failureCount,
         retryInMs: delayMs,
         hadEstablished: outcome.established,
+        attemptMs,
+        productive,
         msSinceLoad: msSinceLoad(),
       });
       pendingRetry = Option.map(attemptSpan, (previousAttempt) => ({

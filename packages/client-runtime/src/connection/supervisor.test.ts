@@ -370,6 +370,73 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect("walks the retry ladder back down after a connection that holds", () =>
+    Effect.gen(function* () {
+      // Regression: the ladder used to be a one-way ratchet. It only reset after a connection
+      // survived BACKOFF_RESET_AFTER_MS (30s), so a connection that lived ~10s -- the observed
+      // lifetime during a reconnect storm -- climbed the ladder instead, pinning the delay at
+      // the 16s cap for the rest of the session and leaving the UI blocked most of the time.
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          attempt <= 5 ? Effect.fail(transient()) : Effect.succeed(PREPARED_CONNECTION),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      // Five failures pin the ladder at its cap.
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "backoff" && state.attempt === 1,
+      );
+      for (const [index, delay] of [1_000, 2_000, 4_000, 8_000].entries()) {
+        yield* TestClock.adjust(delay);
+        yield* eventuallyState(
+          supervisor.state,
+          (state) => state.phase === "backoff" && state.attempt === index + 2,
+        );
+      }
+
+      // The sixth attempt connects, and holds for 10s: short of the 30s "stable" reset, but
+      // long enough to be evidence the backend is reachable.
+      yield* TestClock.adjust(16_000);
+      yield* eventuallyState(supervisor.state, (state) => state.phase === "connected");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(6);
+      yield* TestClock.adjust("10 seconds");
+      yield* harness.closeLatestSession();
+      yield* eventuallyState(supervisor.state, (state) => state.phase === "backoff");
+
+      // One rung down (8s), not another 16s.
+      yield* TestClock.adjust("7999 millis");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(6);
+      yield* TestClock.adjust("1 milli");
+      yield* eventuallyState(supervisor.state, (state) => state.phase === "connected");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(7);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("keeps a short-lived connection on the way up the ladder", () =>
+    Effect.gen(function* () {
+      // The guard on the decay: a connection that drops immediately must not pull the delay
+      // down, or an instant connect/drop loop would hammer a backend that is already struggling.
+      const harness = yield* makeHarness();
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.closeLatestSession();
+      yield* eventuallyState(supervisor.state, (state) => state.phase === "backoff");
+
+      // Below PRODUCTIVE_CONNECTION_MS, so this counts as a failure: the usual 1s first rung.
+      yield* TestClock.adjust("999 millis");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(1);
+      yield* TestClock.adjust("1 milli");
+      yield* eventuallyState(supervisor.state, (state) => state.phase === "connected");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(2);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("keeps the latest failure visible throughout the next connection attempt", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({
