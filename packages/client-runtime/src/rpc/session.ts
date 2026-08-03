@@ -127,7 +127,69 @@ export const make = Effect.gen(function* () {
       return socket;
     }) as typeof webSocketConstructor;
 
+    // Ping/pong watchdog observation.
+    //
+    // `makeProtocolSocket` runs a watchdog: it writes a Ping every 5s and, if no
+    // Pong arrived since the previous one, fails the read loop with
+    // `SocketError("ping timeout")`. With `retryPolicy: Schedule.recurs(0)`
+    // below, one missed Pong is fatal, and the socket teardown then reports a
+    // hard-coded `close(1000)` -- so this shows up as a clean, deliberate-looking
+    // close roughly 10s after connect.
+    //
+    // Measured connection lifetimes are 86% inside 10.0-11.0s (median 10495ms),
+    // which is a timer firing rather than load: a contended machine produces
+    // scatter. But that is inference from timing. These hooks measure the thing
+    // itself -- how long the server actually takes to answer a Ping.
+    //
+    // The point of `pongLatencyMs` is to locate the fix. The server answers Ping
+    // inside its per-client RPC message loop, and backend bootstrap work is
+    // async subprocess wait -- in-flight, not blocking -- so a Pong can sit
+    // behind slow handlers for seconds while the event loop looks perfectly
+    // healthy. That is exactly why the event-loop lag monitor and the CPU
+    // profiler never saw this: neither can.
+    let pingSentAtMs: number | undefined;
+    let pingSeq = 0;
+    const monotonicMs = () => (typeof performance !== "undefined" ? performance.now() : 0);
+    const emitPingDiagnostic = (data: Record<string, unknown>) => {
+      try {
+        (
+          globalThis as { __t3CrashLog?: { send?: (payload: unknown) => void } }
+        ).__t3CrashLog?.send?.({
+          level: "warn",
+          source: "connection-ping",
+          message: `${String(data["event"])}: ${connection.label}`,
+          data: { ...data, target: connection.label, msSinceLoad: Math.round(monotonicMs()) },
+        });
+      } catch {
+        // A diagnostic must never affect the connection it observes.
+      }
+    };
+
     const hooks = RpcClient.ConnectionHooks.of({
+      onPing: Effect.sync(() => {
+        pingSeq += 1;
+        pingSentAtMs = monotonicMs();
+      }),
+      onPong: Effect.sync(() => {
+        if (pingSentAtMs === undefined) return;
+        const latency = Math.round(monotonicMs() - pingSentAtMs);
+        // The first pong of a connection establishes a baseline; without it a
+        // silent log could mean either "always fast" or "hook never fired".
+        // After that only report the slow ones, so a healthy session stays quiet.
+        if (pingSeq === 1 || latency >= 500) {
+          emitPingDiagnostic({ event: "pong", pingSeq, pongLatencyMs: latency });
+        }
+      }),
+      onPingTimeout: Effect.sync(() => {
+        emitPingDiagnostic({
+          event: "ping-timeout",
+          pingSeq,
+          // No pong arrived for this ping; this is how long it had been waiting
+          // when the watchdog gave up and killed a socket that is very likely
+          // still open.
+          waitedMs: pingSentAtMs === undefined ? null : Math.round(monotonicMs() - pingSentAtMs),
+        });
+      }),
       onConnect: Deferred.succeed(connected, undefined).pipe(Effect.asVoid),
       onDisconnect: Deferred.isDone(connected).pipe(
         Effect.flatMap((wasConnected) =>
