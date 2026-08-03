@@ -306,6 +306,55 @@ excluding `.git` directories, excluding the whole tree — or the option that ch
 posture at all, **cutting the ~2,200 spawns**, which has been the evidence-backed lever since
 July.
 
+### 2026-08-03 — Defender measured: real, but NOT the starver — **partially refuted**
+
+Run `C:	emp	3runs60803-110932`, 188 host-CPU samples over 203 s, 12 cores.
+
+`MsMpEng` averages **7.7–10.1%** of the machine through the first 120 s, peaking at **21.9%**,
+then decaying. On a 12-core box that is ~1–2.6 cores. **Defender is a real contributor and
+cannot be the thing pegging the machine.** The hypothesis as stated is not supported; treat
+Defender as an amplifier at most.
+
+**Correction, same run:** an earlier draft of this analysis claimed MsMpEng "hits exactly 0.0%
+at t+162 s", matching the boundary where drops stop. **That was an artifact of the analysis
+bucket edges**, which had been chosen at 162 s. The last non-zero MsMpEng sample is actually
+**t+209 s**. There is no sharp 162 s transition in this data. A binned average is not an event.
+
+**The actual open question.** Against the backend's own `systemCpuPct` of 100% during stalls,
+the named watch list accounted for only 13–31%, leaving **69–87% unattributed**. That number is
+NOT yet evidence for the spawn flood: sampler v1 only summed a five-name watch list, so
+ordinary processes (chrome, SearchIndexer, the agent itself) landed in the shortfall too.
+Sampler v2 attributes **every** process and publishes `machineCpuPct`, `sampledTotalPct`,
+`unaccountedPct` and `topProcs`, so the next run can distinguish:
+
+- shortfall **large** with small `topProcs` → short-lived processes, i.e. the spawn flood
+  (`Get-Process` samples instantaneously and structurally cannot see a 9 ms `git.exe`);
+- shortfall **explained by a name in `topProcs`** → a long-lived hog nobody thought to watch.
+
+### 2026-08-03 — four bugs found while building the host-CPU sampler — **all fixed pre-ship**
+
+Every one of these produced plausible, wrong output. Listed because the next person writing
+instrumentation here will hit the same class of thing:
+
+1. **First tick reported ~1,000,000%.** With no previous sample, each process's _lifetime_ CPU
+   was counted as one interval's delta. Guarding on the wrong variable (already populated
+   earlier in the same tick) did not catch it.
+2. **Negative shortfalls.** Newly-appeared processes were also counted from zero, so the sampled
+   sum could exceed the machine total. Fixed by **skipping processes absent from the previous
+   tick** — which is also what makes short-lived spawn CPU land in `unaccountedPct`, the
+   quantity being measured.
+3. **`topProcs` emitted `c:l, 1:`.** PowerShell unrolls a single-element array of pairs into the
+   pair itself, so `$_[0]`/`$_[1]` indexed into a _string_. Use `[pscustomobject]`, never nested
+   arrays, for anything that might have exactly one element.
+4. **A fully idle machine measured 92% busy.** `Win32_PerfRawData_PerfOS_Processor`'s `_Total`
+   instance reports `PercentIdleTime` **already averaged across processors**. Dividing by core
+   count again yields `100*(1 - 1/12)` = 92% at idle. Do not scale `_Total` by `$cores`.
+   (`Get-Counter` was tried first and is also wrong here: it samples an instant, not an
+   interval, so it disagrees with an interval-based sum.)
+
+**Rule earned: sanity-check an instrument against a state whose answer you already know**
+(here: an idle machine must read ~0%) before trusting a single number it produces.
+
 ## Unverified suspects (not yet tested)
 
 - **HTTP response compression on the WebSocket route.** Upstream's merge added

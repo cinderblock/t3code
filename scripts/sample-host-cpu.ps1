@@ -41,6 +41,10 @@ $ErrorActionPreference = 'Stop'
 # Process CPU is a monotonically increasing total, so a sample is only meaningful
 # as a delta against the previous one. Keyed by name; values are total CPU seconds.
 $previous = @{}
+# Per-PID CPU totals from the previous tick, for whole-machine attribution.
+$prevAll = @{}
+$prevIdle = $null
+$prevStamp = $null
 $cores = [Environment]::ProcessorCount
 
 # MsMpEng is the Defender engine (the "Antimalware Service Executable"). System
@@ -59,17 +63,21 @@ $watch = @('MsMpEng', 'System', 'node', 'git', 'electron')
 function Get-CpuByName {
   $totals = @{}
   $counts = @{}
+  $all = @{}
   foreach ($p in Get-Process -ErrorAction SilentlyContinue) {
     $name = $p.ProcessName
-    if ($watch -notcontains $name) { continue }
     $cpu = 0.0
     # .CPU throws for protected processes even when elevated; a missing sample is
     # better than a dead sampler.
     try { if ($null -ne $p.CPU) { $cpu = [double]$p.CPU } } catch { }
+    # Per-PID, so a process that exits and one that starts are not conflated into
+    # a single name total (which would produce bogus negative deltas).
+    $all["$name#$($p.Id)"] = $cpu
+    if ($watch -notcontains $name) { continue }
     $totals[$name] = [double]($totals[$name]) + $cpu
     $counts[$name] = [int]($counts[$name]) + 1
   }
-  return @{ Totals = $totals; Counts = $counts }
+  return @{ Totals = $totals; Counts = $counts; All = $all }
 }
 
 $deadline = (Get-Date).AddSeconds($Seconds)
@@ -77,6 +85,12 @@ $startedAt = Get-Date
 
 while ((Get-Date) -lt $deadline) {
   $tickStart = Get-Date
+  $rawIdle = $null; $rawStamp = $null
+  try {
+    $perf = Get-CimInstance Win32_PerfRawData_PerfOS_Processor -Filter "Name='_Total'" -ErrorAction Stop
+    $rawIdle = [double]$perf.PercentIdleTime
+    $rawStamp = [double]$perf.Timestamp_Sys100NS
+  } catch { }
   $snap = Get-CpuByName
   $record = [ordered]@{
     tsEpochMs      = [long][Math]::Round(([DateTimeOffset](Get-Date)).ToUnixTimeMilliseconds())
@@ -99,6 +113,69 @@ while ((Get-Date) -lt $deadline) {
     $record["${key}Count"] = $count
     $previous[$name] = $total
   }
+
+  # --- who is using the REST of the machine? -----------------------------
+  # The first run of this sampler found 69-87% of a 12-core box unaccounted for
+  # by the named watch list, which makes the watch list the wrong tool: it can
+  # only ever confirm suspects, never identify one. So attribute every process,
+  # report the biggest movers, and publish the shortfall explicitly.
+  #
+  # The shortfall is the interesting number. `Get-Process` samples
+  # instantaneously, so a git.exe that lives ~9ms is almost never observed --
+  # meaning the CPU burned by thousands of short-lived spawns CANNOT appear in
+  # any per-process total here. A large `unaccountedPct` alongside a small
+  # `topProcs` is therefore positive evidence for the spawn flood, not a gap in
+  # the measurement. A large shortfall explained by some process in `topProcs`
+  # means the opposite: a long-lived hog we simply had not thought to watch.
+  $hadPrev = $prevAll.Count -gt 0
+  $sampledPct = 0.0
+  $movers = @()
+  foreach ($key in $snap.All.Keys) {
+    # A process not present last tick is SKIPPED, not counted from zero. Its
+    # total is lifetime CPU, so counting it as one interval's delta would
+    # massively overstate the sample (the first tick otherwise reports
+    # ~1,000,000%, and later ticks can exceed the machine total and produce a
+    # negative shortfall). Skipping means CPU burned by processes that come and
+    # go inside one interval lands in `unaccountedPct` -- which is precisely the
+    # quantity being measured here.
+    if (-not $prevAll.ContainsKey($key)) { continue }
+    $delta = [double]$snap.All[$key] - [double]$prevAll[$key]
+    if ($delta -le 0) { continue }
+    $pct = 100.0 * $delta / ($IntervalSeconds * $cores)
+    $sampledPct += $pct
+    if ($pct -ge 1.0) {
+      $movers += [pscustomobject]@{ Name = $key.Split('#')[0]; Pct = [Math]::Round($pct, 1) }
+    }
+  }
+  $prevAll = $snap.All
+
+  if ($hadPrev) {
+    $record['sampledTotalPct'] = [Math]::Round($sampledPct, 1)
+    $top = @($movers) | Sort-Object -Property Pct -Descending | Select-Object -First 8
+    $record['topProcs'] = @($top | ForEach-Object { "$($_.Name):$($_.Pct)" })
+    # Machine-wide ground truth, measured over the SAME interval as the
+    # per-process deltas above. Get-Counter was tried first and is wrong for this:
+    # it samples an instant, so it routinely disagreed with an interval sum and
+    # produced negative shortfalls. Raw idle-time deltas mirror exactly how the
+    # backend derives systemCpuPct from os.cpus(), so the two are comparable.
+    if ($null -ne $prevIdle) {
+      $dIdle = [double]$rawIdle - $prevIdle
+      $dTime = [double]$rawStamp - $prevStamp
+      if ($dTime -gt 0) {
+        # NOT divided by $cores: the _Total instance's PercentIdleTime is already
+        # averaged across processors, not summed. Dividing again reports a fully
+        # idle 12-core box as 100*(1 - 1/12) = 92% busy.
+        $busy = 100.0 * (1.0 - ($dIdle / $dTime))
+        if ($busy -lt 0) { $busy = 0 }
+        $record['machineCpuPct'] = [Math]::Round($busy, 1)
+        $record['unaccountedPct'] = [Math]::Round($busy - $sampledPct, 1)
+      }
+    }
+  }
+
+  # Updated only AFTER the block above consumes it. Rolling it forward earlier
+  # makes every delta zero, which silently drops machineCpuPct entirely.
+  if ($null -ne $rawIdle) { $prevIdle = $rawIdle; $prevStamp = $rawStamp }
 
   try {
     Add-Content -Path $OutFile -Value ($record | ConvertTo-Json -Compress) -Encoding utf8
