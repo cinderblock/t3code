@@ -108,7 +108,7 @@ end **before** the browser dispatches `close`. Emit from the listener instead.
 
 `edabbea6b`. Produced `network-changed: 0`, killing the connectivity theory.
 
-### 2026-08-02 — why the UI stays unusable through a storm — **mechanism identified, not yet fixed**
+### 2026-08-02 — why the UI stays unusable through a storm — **fixed**
 
 This is the _user-visible_ half of the problem, and it is a separate bug from whatever closes
 the socket. It explains "it's easy to get stuck in a loop where it doesn't seem to recover".
@@ -148,9 +148,32 @@ disconnected" is not available as written — queued messages are server-side (t
 `fork_queued_messages` table), so enqueueing needs the very connection that is down. Offline
 queueing would need local persistence first.
 
-Proposed but **not applied** (connection behaviour needs sign-off): decay the ladder on each
-successful _establishment_ rather than all-or-nothing on 30 s of uptime, so repeated 10 s
-connections walk the delay back down instead of pinning at max.
+**Fixed 2026-08-02** (`b6e36a265`, `73ab6481e`), after sign-off:
+
+- `PRODUCTIVE_CONNECTION_MS = 5_000` in `supervisor.ts`. A connection that held at least that
+  long walks the ladder **down** one rung instead of climbing it, so a storm recovers
+  16s → 8s → 4s → … instead of locking at the cap. Failing to establish at all still climbs, so
+  a dead backend keeps its full backoff; the 5 s floor stops an instant connect/drop loop from
+  pulling the delay to 1 s and hammering a struggling backend. Timed in the `run` loop rather
+  than threaded through `AttemptOutcome`, so the outcome types stay identical to upstream's and
+  do not conflict on merge. Two regression tests in `supervisor.test.ts`.
+- `ENVIRONMENT_UNAVAILABLE_SETTLE_MS = 2_500` + `apps/web/src/hooks/useSettledFlag.ts`. The
+  composer gate must now stay non-connected that long before it trips, and clears immediately on
+  reconnect, so short drops no longer flicker the UI. Applied at the single derivation site in
+  `ChatView.tsx`, so every consumer inherits it.
+- The diagnostic records now carry `attemptMs` and `productive`, so the decay is verifiable from
+  `renderer.log` rather than by impression.
+
+**Not done, deliberately:** deleting the dead `isConnecting`. It is a no-op at runtime
+(permanently false, so every `isConnecting ||` folds away) but removing it touches ~29 sites
+across `ChatView.tsx`, `ChatComposer.tsx` and `ComposerPrimaryActions.tsx` — three of the most
+actively-developed upstream files. A permanent conflict surface that large is not worth a
+cosmetic cleanup in a fork. It is upstream's dead code; report it there instead.
+
+**Pre-existing test failures** in `supervisor.test.ts` at this commit, confirmed unrelated by
+disabling the new decay and re-running: `retries when a session never becomes ready`,
+`interrupts and releases a connection attempt when setup times out`, `does not let platform
+wakeups reset an in-flight attempt`. Not investigated yet.
 
 ## Unverified suspects (not yet tested)
 
