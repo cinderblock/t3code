@@ -31,8 +31,11 @@ assumed:
    and then stop for the rest of the session.** Close codes: `1006` (abnormal) during the
    busiest phase, then `1000` (clean).
 
-The exact close mechanism is **still unidentified**. Chasing it directly has cost many
-restarts for no result. The lever with evidence behind it is the startup load.
+**SUPERSEDED 2026-08-03** — the close mechanism IS now identified: the client's own ping
+watchdog, firing at ~10s when the server does not answer a Ping within 5s. See the
+"connection lifetime is a FIXED TIMEOUT" entry. Point 1 below (stalls) and point 2 (drops) are
+**not** the same problem: the drops need no stall at all, and this framing sent the
+investigation after CPU for weeks.
 
 ## Already refuted — do NOT re-run these
 
@@ -402,6 +405,55 @@ run's 31.7% must NOT be read as a regression in the app. `Config.HostCpu` is now
 **Rule: cost an instrument before trusting it, and measure the instrument's own footprint in
 its first run.** "It only samples once a second" says nothing about what one sample costs --
 `Get-CimInstance` is orders of magnitude more expensive than `Get-Process`.
+
+### 2026-08-03 — connection lifetime is a FIXED TIMEOUT, not load — **the breakthrough**
+
+From `renderer.log`, run `20260803-115208` (14 `lost-after-connect` records, t+60s to t+214s):
+
+```
+attemptMs: 10220 10233 10235 10254 10269 10282 10299 10495 10511 10615 10655 11233 13671
+median 10495 ms   |   86% fall inside 10000-11000 ms
+```
+
+**86% of connection lifetimes sit in a one-second band.** Load-driven failure produces variance;
+this is a fixed timer firing. Combined with the verified ping watchdog (ping at 5s, latch opens
+on the next 5s tick with no pong → ~10s; `RpcClient.ts:1169-1179`, `1091-1102`), the mechanism
+is no longer speculative:
+
+**The client's own ping watchdog kills a perfectly live socket because the server did not answer
+a Ping within 5s.** `Socket.ts:603` then reports the teardown as a clean 1000.
+
+Why every previous hypothesis missed it:
+
+- It is **client-initiated**, so no amount of server-side close-path reading would find it.
+- It needs **no event-loop stall** — this run had zero stalls ≥5000 ms (worst 2850 ms). The
+  server answers `Ping` inside the per-client RPC message loop, and bootstrap work is async
+  subprocess wait: in-flight, not blocking (standing rule 2). The pong sits behind slow handlers
+  while the loop looks healthy.
+- The whole investigation instrumented **CPU and event-loop lag** — the two things that cannot
+  see this.
+- It self-limits: once bootstrap drains, pongs are prompt again and connections survive. That is
+  the "all drops inside the first ~162s then stop" pattern, which was read for weeks as evidence
+  of _load_ and is really evidence of _bootstrap congestion clearing_.
+
+**Also: the backoff decay masked the symptom without touching the cause.** With
+`failureCount=0` and `retryInMs=1000`, each drop now recovers in ~1s instead of 16s, so 14
+disconnects were invisible to the user, who reported this startup as having no storm. It had
+one. **Do not read "feels better" as "fixed" — check `lost-after-connect` counts.**
+
+**The watchdog is not configurable.** `makeProtocolSocket` accepts only `retryTransientErrors`
+and `retryPolicy`; the 5s interval is hard-coded (`Effect.delay("5 seconds")`,
+`Schedule.spaced(5000)`). T3 sets `retryPolicy: Schedule.recurs(0)` (`session.ts:158`), so a
+single missed pong is fatal with no retry. Changing this means extending the existing
+`patches/effect@4.0.0-beta.102.patch`.
+
+**Next: confirm before patching.** The patched `RpcClient` exposes `onPing`/`onPong`/
+`onPingTimeout` hooks that `session.ts:130-148` never wires. Wiring them records actual
+ping→pong latency, which both confirms the mechanism directly and shows _how_ late the pong is
+— the number that decides whether the fix belongs in the client's tolerance or the server's RPC
+loop. This is the same shape as the fork's existing fix for slow health-check probes
+(`CONNECTION_PROBE_MAX_ATTEMPTS = 4`, tolerate slow-but-alive rather than reconnect into a
+bootstrap spiral).
 
 ## Unverified suspects (not yet tested)
 
