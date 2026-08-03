@@ -447,13 +447,29 @@ and `retryPolicy`; the 5s interval is hard-coded (`Effect.delay("5 seconds")`,
 single missed pong is fatal with no retry. Changing this means extending the existing
 `patches/effect@4.0.0-beta.102.patch`.
 
-**Next: confirm before patching.** The patched `RpcClient` exposes `onPing`/`onPong`/
-`onPingTimeout` hooks that `session.ts:130-148` never wires. Wiring them records actual
-ping→pong latency, which both confirms the mechanism directly and shows _how_ late the pong is
-— the number that decides whether the fix belongs in the client's tolerance or the server's RPC
-loop. This is the same shape as the fork's existing fix for slow health-check probes
-(`CONNECTION_PROBE_MAX_ATTEMPTS = 4`, tolerate slow-but-alive rather than reconnect into a
-bootstrap spiral).
+**Ping hooks now wired** (`packages/client-runtime/src/rpc/session.ts`, `cce1ec5c9`). `onPing`
+stamps the send time, `onPong` reports `pongLatencyMs` (the first pong of each connection as a
+baseline, then only those >= 500 ms so a healthy session stays quiet), `onPingTimeout` reports
+`waitedMs`. Records reach `renderer.log` through the crash-log bridge with
+`source: "connection-ping"`. Diagnostics only; no behaviour change.
+
+Read the next run with:
+
+```
+grep -o '"event":"ping-timeout"[^}]*' renderer.log     # did the watchdog fire?
+grep -o '"pongLatencyMs":[0-9]*' renderer.log          # how late is the server's Pong?
+```
+
+**What each outcome means.** `ping-timeout` records lining up with `lost-after-connect` confirm
+the mechanism outright. High `pongLatencyMs` (seconds) while event-loop stalls stay under 3 s
+localises the fault to the **server's per-client RPC message loop** rather than CPU. Healthy
+`pongLatencyMs` with drops continuing **exonerates the watchdog**, and the 10.5 s timing match
+was a coincidence -- worth knowing before anyone patches vendored `effect`.
+
+The fork already has the template for the tolerant fix: `CONNECTION_PROBE_MAX_ATTEMPTS = 4`
+exists because a slow-but-alive backend was being treated as dead, and reconnecting only re-ran
+bootstrap and made it worse. The ping watchdog needs the same tolerance, but its 5 s interval is
+hard-coded in vendored `effect`, so that means extending the patch.
 
 ## Unverified suspects (not yet tested)
 
@@ -468,6 +484,11 @@ bootstrap spiral).
 
 Every one of these produced a confident wrong answer:
 
+- **In a pnpm-patched package, `src/` is NOT what runs -- `dist/` is.** The `effect` patch
+  applies to `dist/` only; `src/` inside `node_modules/.pnpm/effect@4.0.0-beta.102_patch_*/` is
+  the **unpatched** upstream source. Verifying runtime behaviour against `src/` reads code that
+  never executes. This produced a confident "the ping hooks do not exist" conclusion when they
+  do -- both `dist/*.js` and `dist/*.d.ts` have them. For anything patched, check `dist/`.
 - **Git Bash mangles `ref:path` arguments.** `git cat-file -e "upstream/main:$f"` became
   `upstream\main;...` and reported a tracked file as missing. Use `git ls-tree` to check
   existence.
