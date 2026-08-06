@@ -5,6 +5,8 @@ import { VcsDriverKind } from "./vcs.ts";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const GIT_LIST_BRANCHES_MAX_LIMIT = 200;
+export const GIT_GRAPH_MAX_LIMIT = 500;
+export const GIT_GRAPH_DEFAULT_LIMIT = 200;
 
 // Domain Types
 
@@ -139,6 +141,19 @@ export const VcsListRefsInput = Schema.Struct({
 });
 export type VcsListRefsInput = typeof VcsListRefsInput.Type;
 
+/**
+ * One page of the commit graph. `cursor` is a commit offset (`git log --skip`),
+ * not an opaque token, because `--date-order` over a fixed ref set is stable
+ * enough to page through and the client needs to know how deep it has walked.
+ */
+export const VcsGraphSnapshotInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  cursor: Schema.optional(NonNegativeInt),
+  limit: Schema.optional(PositiveInt.check(Schema.isLessThanOrEqualTo(GIT_GRAPH_MAX_LIMIT))),
+  refresh: Schema.optional(Schema.Boolean),
+});
+export type VcsGraphSnapshotInput = typeof VcsGraphSnapshotInput.Type;
+
 export const VcsCreateWorktreeInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   refName: TrimmedNonEmptyStringSchema,
@@ -266,6 +281,64 @@ export const VcsListRefsResult = Schema.Struct({
   totalCount: NonNegativeInt,
 });
 export type VcsListRefsResult = typeof VcsListRefsResult.Type;
+
+/**
+ * A ref as the commit graph needs it: with the commit oid it resolves to, which
+ * {@link VcsRef} deliberately omits. Annotated tags are peeled, so `oid` is
+ * always a commit, never a tag object.
+ */
+export const VcsGraphRefKind = Schema.Literals(["local", "remote", "tag"]);
+export type VcsGraphRefKind = typeof VcsGraphRefKind.Type;
+
+export const VcsGraphRef = Schema.Struct({
+  /** Ref name without its `refs/heads/`, `refs/remotes/`, or `refs/tags/` prefix. */
+  name: TrimmedNonEmptyStringSchema,
+  kind: VcsGraphRefKind,
+  oid: TrimmedNonEmptyStringSchema,
+  /** True for the branch checked out in the worktree the request was made from. */
+  current: Schema.Boolean,
+  isDefault: Schema.Boolean,
+  worktreePath: Schema.NullOr(TrimmedNonEmptyStringSchema),
+});
+export type VcsGraphRef = typeof VcsGraphRef.Type;
+
+export const VcsGraphCommit = Schema.Struct({
+  oid: TrimmedNonEmptyStringSchema,
+  /** Empty for a root commit; more than one entry means a merge. */
+  parents: Schema.Array(TrimmedNonEmptyStringSchema),
+  /** Subject line only. Empty is legal — git permits an empty commit message. */
+  summary: Schema.String,
+  authorName: Schema.String,
+  authorEmail: Schema.String,
+  authoredAt: Schema.DateTimeUtc,
+  committedAt: Schema.DateTimeUtc,
+});
+export type VcsGraphCommit = typeof VcsGraphCommit.Type;
+
+export const VcsGraphWorktree = Schema.Struct({
+  path: TrimmedNonEmptyStringSchema,
+  /** Null when the worktree has a detached HEAD. */
+  refName: Schema.NullOr(TrimmedNonEmptyStringSchema),
+  /** Null when HEAD is unborn (a fresh repo with no commits). */
+  headOid: Schema.NullOr(TrimmedNonEmptyStringSchema),
+  /** The repository's main worktree, as opposed to one added via `git worktree add`. */
+  isPrimary: Schema.Boolean,
+});
+export type VcsGraphWorktree = typeof VcsGraphWorktree.Type;
+
+export const VcsGraphSnapshotResult = Schema.Struct({
+  isRepo: Schema.Boolean,
+  commits: Schema.Array(VcsGraphCommit),
+  refs: Schema.Array(VcsGraphRef),
+  worktrees: Schema.Array(VcsGraphWorktree),
+  /**
+   * Null when the walk reached the end of history. There is no total count:
+   * counting every reachable commit costs a second full walk and the graph
+   * never needs it.
+   */
+  nextCursor: Schema.NullOr(NonNegativeInt),
+});
+export type VcsGraphSnapshotResult = typeof VcsGraphSnapshotResult.Type;
 
 export const VcsCreateWorktreeResult = Schema.Struct({
   worktree: VcsWorktree,

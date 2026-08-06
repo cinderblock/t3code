@@ -21,6 +21,8 @@ import {
   type ReviewDiffPreviewInput,
   type ReviewDiffPreviewResult,
   type VcsInitInput,
+  type VcsGraphSnapshotInput,
+  type VcsGraphSnapshotResult,
   type VcsListRefsInput,
   type VcsListRefsResult,
   type VcsPullResult,
@@ -228,6 +230,9 @@ export class GitVcsDriver extends Context.Service<
     readonly listRefs: (
       input: VcsListRefsInput,
     ) => Effect.Effect<VcsListRefsResult, GitCommandError>;
+    readonly graphSnapshot: (
+      input: VcsGraphSnapshotInput,
+    ) => Effect.Effect<VcsGraphSnapshotResult, GitCommandError>;
     readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
     readonly createWorktree: (
       input: VcsCreateWorktreeInput,

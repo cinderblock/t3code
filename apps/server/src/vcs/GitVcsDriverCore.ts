@@ -21,8 +21,12 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   GitCommandError,
+  GIT_GRAPH_DEFAULT_LIMIT,
   type ReviewDiffPreviewInput,
   type ReviewDiffPreviewSource,
+  type VcsGraphCommit,
+  type VcsGraphRef,
+  type VcsGraphWorktree,
   type VcsRef,
 } from "@t3tools/contracts";
 import { dedupeRemoteBranchesWithLocalMatches, normalizeGitRemoteUrl } from "@t3tools/shared/git";
@@ -137,6 +141,13 @@ interface GitRepositoryPaths {
   readonly gitCommonDir: string;
   readonly worktreeRoot: string | null;
   readonly currentBranch: string | null;
+}
+
+type GitGraphCommit = VcsGraphCommit;
+
+/** A worktree as git reports it, before prunable/missing entries are filtered out. */
+interface GitGraphWorktreeEntry extends VcsGraphWorktree {
+  readonly prunable: boolean;
 }
 
 interface GitRefsSnapshot {
@@ -274,6 +285,157 @@ function parseWorktreeBranchPaths(stdout: string): ReadonlyMap<string, string> {
   flush();
 
   return worktreePaths;
+}
+
+/**
+ * Commit records are NUL-delimited and their fields unit-separated, so a commit
+ * subject containing tabs, quotes, or non-UTF8 bytes cannot desynchronise the
+ * parse the way a newline- or tab-delimited format would.
+ */
+const GIT_GRAPH_RECORD_SEPARATOR = "\0";
+const GIT_GRAPH_FIELD_SEPARATOR = "\x1f";
+export const GIT_GRAPH_COMMIT_FORMAT = "--format=%x00%H%x1f%P%x1f%an%x1f%ae%x1f%at%x1f%ct%x1f%s";
+export const GIT_GRAPH_REF_FORMAT =
+  "--format=%(refname)%1f%(objectname)%1f%(*objectname)%1f%(symref)";
+
+export function parseGraphCommits(stdout: string): GitGraphCommit[] {
+  const commits: GitGraphCommit[] = [];
+  for (const record of stdout.split(GIT_GRAPH_RECORD_SEPARATOR)) {
+    if (record.length === 0) continue;
+    const fields = record.split(GIT_GRAPH_FIELD_SEPARATOR);
+    if (fields.length < 7) continue;
+    const [oid, parentsRaw, authorName, authorEmail, authoredRaw, committedRaw, subjectRaw] =
+      fields as [string, string, string, string, string, string, string];
+    if (oid.length === 0) continue;
+    const authoredSeconds = Number.parseInt(authoredRaw, 10);
+    const committedSeconds = Number.parseInt(committedRaw, 10);
+    if (!Number.isFinite(authoredSeconds) || !Number.isFinite(committedSeconds)) continue;
+    commits.push({
+      oid,
+      parents: parentsRaw.length === 0 ? [] : parentsRaw.split(" ").filter((p) => p.length > 0),
+      // `%s` never spans lines, so the only newline is the one git appends
+      // after the final field of each record.
+      summary: subjectRaw.replace(/\n$/, ""),
+      authorName,
+      authorEmail,
+      authoredAt: DateTime.makeUnsafe(authoredSeconds * 1000),
+      committedAt: DateTime.makeUnsafe(committedSeconds * 1000),
+    });
+  }
+  return commits;
+}
+
+/**
+ * Parses `git worktree list --porcelain -z`, keeping detached and unborn
+ * worktrees that {@link parseWorktreeBranchPaths} deliberately drops — the graph
+ * needs a row for every worktree, not only those on a named branch.
+ */
+export function parseGraphWorktrees(stdout: string): GitGraphWorktreeEntry[] {
+  const entries: GitGraphWorktreeEntry[] = [];
+  let currentPath: string | null = null;
+  let currentBranch: string | null = null;
+  let currentHead: string | null = null;
+  let currentPrunable = false;
+  let currentBare = false;
+
+  const flush = () => {
+    if (currentPath !== null && !currentBare) {
+      entries.push({
+        path: currentPath,
+        refName: currentBranch,
+        headOid: currentHead,
+        isPrimary: entries.length === 0,
+        prunable: currentPrunable,
+      });
+    }
+    currentPath = null;
+    currentBranch = null;
+    currentHead = null;
+    currentPrunable = false;
+    currentBare = false;
+  };
+
+  for (const field of stdout.split("\0")) {
+    if (field === "") {
+      flush();
+    } else if (field.startsWith("worktree ")) {
+      currentPath = field.slice("worktree ".length);
+    } else if (field.startsWith("branch refs/heads/")) {
+      currentBranch = field.slice("branch refs/heads/".length);
+    } else if (field.startsWith("HEAD ")) {
+      currentHead = field.slice("HEAD ".length);
+    } else if (field === "bare") {
+      currentBare = true;
+    } else if (field === "prunable" || field.startsWith("prunable ")) {
+      currentPrunable = true;
+    }
+  }
+  flush();
+
+  return entries;
+}
+
+export function parseGraphRefs(
+  stdout: string,
+  context: {
+    readonly defaultBranch: string | null;
+    readonly remoteNames: ReadonlyArray<string>;
+    readonly worktreePathByBranch: ReadonlyMap<string, string>;
+    readonly currentBranch: string | null;
+  },
+): VcsGraphRef[] {
+  const refs: VcsGraphRef[] = [];
+  for (const line of stdout.split("\n")) {
+    if (line.length === 0) continue;
+    const [fullRefName, objectName, peeledObjectName, symbolicTarget] =
+      line.split(GIT_GRAPH_FIELD_SEPARATOR);
+    // Symrefs (notably refs/remotes/origin/HEAD) alias a real ref; drawing them
+    // would double-label the same commit.
+    if (!fullRefName || symbolicTarget) continue;
+    // Annotated tags resolve to a tag object, so peel to the commit it wraps.
+    const oid = peeledObjectName && peeledObjectName.length > 0 ? peeledObjectName : objectName;
+    if (!oid || oid.length === 0) continue;
+
+    if (fullRefName.startsWith("refs/heads/")) {
+      const name = fullRefName.slice("refs/heads/".length);
+      refs.push({
+        name,
+        kind: "local",
+        oid,
+        current: context.currentBranch !== null && name === context.currentBranch,
+        isDefault: name === context.defaultBranch,
+        worktreePath: context.worktreePathByBranch.get(name) ?? null,
+      });
+      continue;
+    }
+    if (fullRefName.startsWith("refs/tags/")) {
+      refs.push({
+        name: fullRefName.slice("refs/tags/".length),
+        kind: "tag",
+        oid,
+        current: false,
+        isDefault: false,
+        worktreePath: null,
+      });
+      continue;
+    }
+    if (!fullRefName.startsWith("refs/remotes/")) continue;
+
+    const name = fullRefName.slice("refs/remotes/".length);
+    const parsedRemoteRef = parseRemoteRefWithRemoteNames(name, context.remoteNames);
+    refs.push({
+      name,
+      kind: "remote",
+      oid,
+      current: false,
+      isDefault:
+        context.defaultBranch !== null &&
+        parsedRemoteRef?.remoteName === "origin" &&
+        parsedRemoteRef.branchName === context.defaultBranch,
+      worktreePath: null,
+    });
+  }
+  return refs;
 }
 
 function splitNullSeparatedPaths(input: string, truncated: boolean): string[] {
@@ -2540,6 +2702,150 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     },
   );
 
+  const graphSnapshot: GitVcsDriver.GitVcsDriver["Service"]["graphSnapshot"] = Effect.fn(
+    "graphSnapshot",
+  )(function* (input) {
+    const repositoryPaths = yield* resolveRepositoryPaths(input.cwd, input.refresh === true).pipe(
+      Effect.catchTags({
+        GitCommandError: (error) =>
+          isMissingGitCwdError(error) ? Effect.succeed(null) : Effect.fail(error),
+      }),
+    );
+    if (repositoryPaths === null) {
+      return { isRepo: false, commits: [], refs: [], worktrees: [], nextCursor: null };
+    }
+
+    const gitCommonDir = repositoryPaths.gitCommonDir;
+    const fetchCwd =
+      path.basename(gitCommonDir) === ".git" ? path.dirname(gitCommonDir) : gitCommonDir;
+    const gitDirArgs = ["--git-dir", gitCommonDir] as const;
+
+    // Refs and worktrees first: a detached worktree HEAD is reachable from no
+    // ref, so the commit walk below has to be told about it explicitly or that
+    // worktree's row would point at a commit missing from the graph.
+    const [refsResult, worktreeListResult, defaultRefResult, remoteNamesResult] = yield* Effect.all(
+      [
+        executeGitWithStableDiagnostics(
+          "GitVcsDriver.graphSnapshot.refs",
+          fetchCwd,
+          [
+            ...gitDirArgs,
+            "for-each-ref",
+            GIT_GRAPH_REF_FORMAT,
+            "refs/heads",
+            "refs/remotes",
+            "refs/tags",
+          ],
+          {
+            timeoutMs: 30_000,
+            maxOutputBytes: 16 * 1024 * 1024,
+            fallbackErrorDetail: "Git ref enumeration for the commit graph failed.",
+          },
+        ),
+        executeGit(
+          "GitVcsDriver.graphSnapshot.worktreeList",
+          fetchCwd,
+          [...gitDirArgs, "worktree", "list", "--porcelain", "-z"],
+          { timeoutMs: 30_000, allowNonZeroExit: true, maxOutputBytes: 16 * 1024 * 1024 },
+        ),
+        executeGit(
+          "GitVcsDriver.graphSnapshot.defaultRef",
+          fetchCwd,
+          [...gitDirArgs, "symbolic-ref", "refs/remotes/origin/HEAD"],
+          { timeoutMs: 5_000, allowNonZeroExit: true },
+        ),
+        executeGit("GitVcsDriver.graphSnapshot.remoteNames", fetchCwd, [...gitDirArgs, "remote"], {
+          timeoutMs: 5_000,
+          allowNonZeroExit: true,
+        }),
+      ],
+      { concurrency: 2 },
+    );
+
+    const remoteNames =
+      remoteNamesResult.exitCode === 0 ? parseRemoteNames(remoteNamesResult.stdout) : [];
+    const defaultBranch =
+      defaultRefResult.exitCode === 0
+        ? defaultRefResult.stdout.trim().replace(/^refs\/remotes\/origin\//, "")
+        : null;
+
+    const parsedWorktrees =
+      worktreeListResult.exitCode === 0 ? parseGraphWorktrees(worktreeListResult.stdout) : [];
+    const liveWorktrees = yield* Effect.filter(
+      parsedWorktrees.filter((entry) => !entry.prunable),
+      (entry) =>
+        fileSystem.stat(entry.path).pipe(
+          Effect.as(true),
+          Effect.orElseSucceed(() => false),
+        ),
+      { concurrency: 16 },
+    );
+    const worktrees: VcsGraphWorktree[] = liveWorktrees.map((entry) => ({
+      path: path.normalize(path.resolve(entry.path)),
+      refName: entry.refName,
+      headOid: entry.headOid,
+      isPrimary: entry.isPrimary,
+    }));
+    const worktreePathByBranch = new Map(
+      worktrees.flatMap((entry) => (entry.refName === null ? [] : [[entry.refName, entry.path]])),
+    );
+
+    const refs = parseGraphRefs(refsResult.stdout, {
+      defaultBranch,
+      remoteNames,
+      worktreePathByBranch,
+      currentBranch: repositoryPaths.currentBranch,
+    });
+
+    const limit = input.limit ?? GIT_GRAPH_DEFAULT_LIMIT;
+    const cursor = input.cursor ?? 0;
+    const detachedHeadOids = [
+      ...new Set(
+        worktrees.flatMap((entry) =>
+          entry.refName === null && entry.headOid !== null ? [entry.headOid] : [],
+        ),
+      ),
+    ];
+    const logResult = yield* executeGitWithStableDiagnostics(
+      "GitVcsDriver.graphSnapshot.log",
+      fetchCwd,
+      [
+        ...gitDirArgs,
+        "log",
+        "--date-order",
+        "--no-color",
+        GIT_GRAPH_COMMIT_FORMAT,
+        `--skip=${cursor}`,
+        // One extra commit tells us whether another page exists without a
+        // second walk.
+        `-n`,
+        `${limit + 1}`,
+        "--branches",
+        "--tags",
+        "--remotes",
+        "HEAD",
+        ...detachedHeadOids,
+      ],
+      {
+        timeoutMs: 30_000,
+        maxOutputBytes: 32 * 1024 * 1024,
+        allowNonZeroExit: true,
+      },
+    );
+    // An unborn HEAD in a repo with no commits exits non-zero with no output;
+    // that is an empty graph, not a failure.
+    const parsedCommits = logResult.exitCode === 0 ? parseGraphCommits(logResult.stdout) : [];
+    const hasMore = parsedCommits.length > limit;
+
+    return {
+      isRepo: true,
+      commits: parsedCommits.slice(0, limit),
+      refs,
+      worktrees,
+      nextCursor: hasMore ? cursor + limit : null,
+    };
+  });
+
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input) {
@@ -2862,6 +3168,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     getReviewDiffPreview,
     readConfigValue,
     listRefs,
+    graphSnapshot,
     createWorktree: (input) => withListRefsInvalidation(input.cwd, createWorktree(input)),
     fetchPullRequestBranch: (input) =>
       withListRefsInvalidation(input.cwd, fetchPullRequestBranch(input)),
