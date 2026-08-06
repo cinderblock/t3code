@@ -4,9 +4,12 @@ import type { GitGraphRow } from "~/lib/gitGraphLayout";
 
 import { laneColor } from "./gitGraphPresentation";
 
-export const GIT_GRAPH_LANE_WIDTH = 14;
+// Kept tight on purpose: the gutter is sized by the page's widest lane count,
+// and a branchy repo really does reach 10 lanes. At 14px that gutter ate nearly
+// a third of a default-width panel and left no room for commit summaries.
+export const GIT_GRAPH_LANE_WIDTH = 10;
 export const GIT_GRAPH_ROW_HEIGHT = 30;
-const DOT_RADIUS = 3.5;
+const DOT_RADIUS = 3;
 const STROKE_WIDTH = 1.5;
 
 const laneX = (column: number) => column * GIT_GRAPH_LANE_WIDTH + GIT_GRAPH_LANE_WIDTH / 2;

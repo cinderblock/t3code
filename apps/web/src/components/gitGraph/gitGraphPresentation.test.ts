@@ -7,6 +7,7 @@ import {
   groupGraphRefsByOid,
   laneColor,
   shortOid,
+  splitVisibleGraphRefs,
 } from "./gitGraphPresentation";
 
 const ref = (
@@ -83,6 +84,52 @@ describe("groupGraphRefsByOid", () => {
 
   it("returns an empty map for no refs", () => {
     expect(groupGraphRefsByOid([]).size).toBe(0);
+  });
+});
+
+describe("splitVisibleGraphRefs", () => {
+  const refs = (count: number) =>
+    Array.from({ length: count }, (_, index) => ref({ name: `branch-${index}`, kind: "local" }));
+
+  it("shows every ref when it fits", () => {
+    const { visible, overflowCount } = splitVisibleGraphRefs(refs(3), 3);
+
+    expect(visible).toHaveLength(3);
+    expect(overflowCount).toBe(0);
+  });
+
+  it("reserves a slot for the overflow chip so the row never exceeds the budget", () => {
+    const { visible, overflowCount } = splitVisibleGraphRefs(refs(10), 3);
+
+    // Two chips plus a "+8" chip is three slots total.
+    expect(visible).toHaveLength(2);
+    expect(overflowCount).toBe(8);
+    expect(visible.length + 1).toBeLessThanOrEqual(3);
+  });
+
+  it("accounts for every ref between visible and overflow", () => {
+    const { visible, overflowCount } = splitVisibleGraphRefs(refs(7), 3);
+
+    expect(visible.length + overflowCount).toBe(7);
+  });
+
+  it("keeps the highest-ranked refs visible", () => {
+    const grouped = groupGraphRefsByOid([
+      ref({ name: "origin/main", kind: "remote" }),
+      ref({ name: "topic", kind: "local" }),
+      ref({ name: "feature", kind: "local", current: true }),
+      ref({ name: "v1.0", kind: "tag" }),
+    ]);
+    const { visible } = splitVisibleGraphRefs(grouped.get("a".repeat(40)) ?? [], 3);
+
+    expect(visible.map((entry) => entry.name)).toEqual(["feature", "topic"]);
+  });
+
+  it("handles an empty ref list", () => {
+    const { visible, overflowCount } = splitVisibleGraphRefs([], 3);
+
+    expect(visible).toEqual([]);
+    expect(overflowCount).toBe(0);
   });
 });
 

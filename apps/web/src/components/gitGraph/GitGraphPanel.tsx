@@ -11,14 +11,23 @@ import { vcsEnvironment } from "~/state/vcs";
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
 import { GitGraphRowGlyph, GIT_GRAPH_ROW_HEIGHT } from "./GitGraphRowGlyph";
-import { formatCommitAge, groupGraphRefsByOid, shortOid } from "./gitGraphPresentation";
+import {
+  formatCommitAge,
+  groupGraphRefsByOid,
+  shortOid,
+  splitVisibleGraphRefs,
+} from "./gitGraphPresentation";
 
 function RefChip(props: { graphRef: VcsGraphRef }) {
   const { graphRef } = props;
   return (
     <span
       className={cn(
-        "inline-flex max-w-[12rem] shrink-0 items-center truncate rounded-full border px-1.5 py-px text-[10px] leading-4",
+        // `inline-block`, not `inline-flex`: `text-overflow: ellipsis` does not
+        // apply to a flex container's anonymous text child, so an inline-flex
+        // chip spills its branch name over the neighbouring column instead of
+        // truncating. `min-w-0` lets a long name give ground rather than push.
+        "inline-block min-w-0 max-w-[9rem] truncate rounded-full border px-1.5 py-px align-middle text-[10px] leading-4",
         graphRef.current
           ? "border-primary/50 bg-primary/15 font-medium text-primary"
           : graphRef.kind === "tag"
@@ -96,7 +105,9 @@ export function GitGraphPanel(props: { environmentId: EnvironmentId; cwd: string
         <ol className="flex flex-col py-1">
           {layout.rows.map((row, index) => {
             const commit = snapshot.commits[index]!;
-            const rowRefs = refsByOid.get(commit.oid) ?? [];
+            const { visible: visibleRefs, overflowCount } = splitVisibleGraphRefs(
+              refsByOid.get(commit.oid) ?? [],
+            );
             return (
               <li
                 key={commit.oid}
@@ -104,11 +115,22 @@ export function GitGraphPanel(props: { environmentId: EnvironmentId; cwd: string
                 style={{ height: GIT_GRAPH_ROW_HEIGHT }}
               >
                 <GitGraphRowGlyph row={row} columnCount={layout.columnCount} />
-                <div className="flex min-w-0 flex-1 items-center gap-1.5">
-                  {rowRefs.map((graphRef) => (
-                    <RefChip key={`${graphRef.kind}:${graphRef.name}`} graphRef={graphRef} />
-                  ))}
-                  <span className="truncate text-xs">
+                <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
+                  {visibleRefs.length > 0 || overflowCount > 0 ? (
+                    // Capped as a group so chips and summary each keep a share
+                    // of a narrow row instead of one starving the other.
+                    <span className="flex max-w-[55%] shrink-0 items-center gap-1 overflow-hidden">
+                      {visibleRefs.map((graphRef) => (
+                        <RefChip key={`${graphRef.kind}:${graphRef.name}`} graphRef={graphRef} />
+                      ))}
+                      {overflowCount > 0 ? (
+                        <span className="shrink-0 rounded-full border border-border bg-muted px-1.5 py-px text-[10px] leading-4 text-muted-foreground">
+                          +{overflowCount}
+                        </span>
+                      ) : null}
+                    </span>
+                  ) : null}
+                  <span className="min-w-0 flex-1 truncate text-xs">
                     {commit.summary.length > 0 ? (
                       commit.summary
                     ) : (
@@ -116,7 +138,9 @@ export function GitGraphPanel(props: { environmentId: EnvironmentId; cwd: string
                     )}
                   </span>
                 </div>
-                <span className="shrink-0 truncate text-[11px] text-muted-foreground max-w-[7rem]">
+                {/* The author is the first thing worth dropping when the panel
+                    is narrow; the summary is what people scan for. */}
+                <span className="hidden max-w-[7rem] shrink-0 truncate text-[11px] text-muted-foreground @md:block">
                   {commit.authorName}
                 </span>
                 <span className="w-9 shrink-0 text-right text-[11px] tabular-nums text-muted-foreground">
@@ -134,7 +158,9 @@ export function GitGraphPanel(props: { environmentId: EnvironmentId; cwd: string
   };
 
   return (
-    <div className="flex h-full min-w-0 flex-col bg-background">
+    // A container, not a media, query: the panel is user-resizable, so row
+    // density has to respond to the panel's own width, not the viewport's.
+    <div className="@container flex h-full min-w-0 flex-col bg-background">
       {header}
       {body()}
     </div>

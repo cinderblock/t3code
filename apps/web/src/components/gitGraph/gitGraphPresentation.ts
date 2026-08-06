@@ -63,6 +63,24 @@ export function groupGraphRefsByOid(
   return byOid;
 }
 
+/**
+ * Rows carry at most this many chips. A commit at the tip of many remote
+ * branches would otherwise push the commit summary off the row entirely, and
+ * the summary is the thing people actually read.
+ */
+export const GIT_GRAPH_MAX_VISIBLE_REFS = 3;
+
+export function splitVisibleGraphRefs(
+  refs: ReadonlyArray<VcsGraphRef>,
+  max: number = GIT_GRAPH_MAX_VISIBLE_REFS,
+): { readonly visible: ReadonlyArray<VcsGraphRef>; readonly overflowCount: number } {
+  if (refs.length <= max) return { visible: refs, overflowCount: 0 };
+  // Showing `max - 1` leaves room for the "+N" chip, so the row never grows
+  // past the budget it was given.
+  const visible = refs.slice(0, Math.max(0, max - 1));
+  return { visible, overflowCount: refs.length - visible.length };
+}
+
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
