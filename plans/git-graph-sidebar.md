@@ -215,9 +215,10 @@ Each phase is independently shippable behind a client setting
       `for-each-ref` with tags + oids), ws handler, focused server tests. Verifiable
       headlessly with no UI. **Done** — 18 tests pass (14 parser units, 4 real-git
       integration).
-- [ ] **Phase 2 — graph rendering.** Client atoms, lane-layout module + unit tests
-      (this is the piece most worth testing in isolation), virtualized row list, SVG
+- [x] **Phase 2 — graph rendering.** Client atoms, lane-layout module + unit tests
+      (this is the piece most worth testing in isolation), row list, SVG
       glyphs, ref chips. Read-only, no selection yet. New right-panel surface registered.
+      **Done, but not yet seen running** — see "Phase 2 status" below.
 - [ ] **Phase 3 — synthetic worktree rows.** `vcs.rowChanges` for staged/unstaged,
       batched per-worktree status with the invalidation rules above, rows rendered
       above HEAD.
@@ -312,8 +313,45 @@ Two things came out differently once the code was written. Both are deliberate.
 - Empty commit subjects, root commits, unborn HEADs, bare repos, and prunable
   worktrees all have explicit handling and tests.
 
-### Next: Phase 2
+- [x] 2026-08-06 — **Phase 2 landed** (`880d8376b`). 23 new web tests; web
+      typecheck and lint clean.
 
-Client atoms + lane layout + rendering. Start with the lane-layout module and its
-unit tests — it is pure, it is the part most likely to be subtly wrong, and it
-needs no server running.
+### Phase 2 status — the important caveat
+
+**None of this UI has been rendered yet.** `apps/web` has no component-test
+harness (every existing web test is pure logic), and no dev server or browser has
+been run, so what is proven is: the layout algorithm and presentation helpers are
+correct under test, and everything typechecks. What is _not_ proven is that the
+panel mounts, the atom resolves, the SVG lines meet across rows, or the row
+layout holds at a realistic panel width. That needs one pass in a real client via
+the `test-t3-app` skill.
+
+Deliberately not adding a component-test harness for this — introducing
+testing-library to a repo with none would be a larger change than the feature.
+
+### Phase 2 details worth carrying forward
+
+- **Files added:** `apps/web/src/lib/gitGraphLayout.ts` (pure lane assignment),
+  `apps/web/src/components/gitGraph/{GitGraphPanel,GitGraphRowGlyph,gitGraphPresentation}`.
+- **Surface registration touched fewer places than expected.** `RIGHT_PANEL_KINDS`,
+  the `RightPanelSurface` union, `singletonSurface()`, `surfaceTitle()`,
+  `SurfaceIcon()`, the `+` menu, `RightPanelEmptyState`, and the `rightPanelContent`
+  switch — but **no storage version bump**, because `migratePersistedRightPanelState`
+  passes unrecognised surface kinds straight through and old persisted state can
+  never contain `gitGraph`.
+- **The paging invariant is tested:** laying out two pages, seeding the second with
+  the first's `trailingLanes`, gives the same columns as one whole-history pass.
+  Load-more must thread `trailingLanes` through or lanes will visibly reshuffle.
+- **`cwd` passed to the panel is `gitCwd`** — the thread's worktree when it has one,
+  else the project root. The server resolves it to `--git-common-dir`, so every
+  thread on the same repo shares one graph, which is the "project repo, all
+  worktrees" decision working as intended.
+- **Rows are unvirtualized.** 200 rows is cheap and the repo's only list
+  virtualization (`@legendapp/list`) is wired into `MessagesTimeline` in a way that
+  would be substantial to replicate. Revisit when load-more can stack pages.
+
+### Next: Phase 3
+
+Synthetic worktree rows (`vcs.rowChanges` for staged/unstaged, batched per-worktree
+status). Before that, a real-client pass on Phase 2 is worth doing — every later
+phase builds on this panel's layout, so a rendering mistake here compounds.
