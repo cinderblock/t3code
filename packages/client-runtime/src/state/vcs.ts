@@ -15,7 +15,11 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom, AtomRegistry } from "effect/unstable/reactivity";
 
-import { createEnvironmentRpcCommand, createEnvironmentSubscriptionAtomFamily } from "./runtime.ts";
+import {
+  createEnvironmentRpcCommand,
+  createEnvironmentRpcQueryAtomFamily,
+  createEnvironmentSubscriptionAtomFamily,
+} from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
@@ -270,6 +274,13 @@ export function createVcsEnvironmentAtoms<R, E>(
 
   return {
     listRefs,
+    // The commit graph is only fetched while its panel is visible, so a short
+    // stale time is enough to coalesce remounts without polling git.
+    graphSnapshot: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:vcs:graph-snapshot",
+      tag: WS_METHODS.vcsGraphSnapshot,
+      staleTimeMs: 5_000,
+    }),
     status: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:vcs:status",
       subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.subscribeVcsStatus>) =>

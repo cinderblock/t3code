@@ -398,6 +398,7 @@ const PreviewPanel = lazy(() =>
   import("./preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
 );
 const DiffPanel = lazy(() => import("./DiffPanel"));
+const GitGraphPanel = lazy(() => import("./gitGraph/GitGraphPanel"));
 const FilePreviewPanel = lazy(() => import("./files/FilePreviewPanel"));
 const EMPTY_PENDING_FILE_SURFACE_IDS: ReadonlySet<string> = new Set();
 const TYPE_TO_FOCUS_EDITABLE_SELECTOR = [
@@ -3223,6 +3224,10 @@ function ChatViewContent(props: ChatViewProps) {
     if (!activeThreadRef || !activeProject) return;
     useRightPanelStore.getState().open(activeThreadRef, "files");
   }, [activeProject, activeThreadRef]);
+  const addGitGraphSurface = useCallback(() => {
+    if (!activeThreadRef || !isGitRepo) return;
+    useRightPanelStore.getState().open(activeThreadRef, "gitGraph");
+  }, [activeThreadRef, isGitRepo]);
   const openFileSurface = useCallback(
     (relativePath: string) => {
       if (!activeThreadRef || !activeProject) return;
@@ -5812,6 +5817,10 @@ function ChatViewContent(props: ChatViewProps) {
           initialGitScope={initialDiffPanelGitScope}
         />
       </Suspense>
+    ) : activeRightPanelSurface?.kind === "gitGraph" ? (
+      <Suspense fallback={null}>
+        <GitGraphPanel environmentId={environmentId} cwd={gitCwd} />
+      </Suspense>
     ) : activeRightPanelSurface?.kind === "plan" ? (
       <PlanSidebar
         activePlan={activePlan}
@@ -6265,9 +6274,11 @@ function ChatViewContent(props: ChatViewProps) {
           onAddTerminal={addTerminalSurface}
           onAddDiff={addDiffSurface}
           onAddFiles={addFilesSurface}
+          onAddGitGraph={addGitGraphSurface}
           browserAvailable={isPreviewSupportedInRuntime()}
           diffAvailable={isServerThread && isGitRepo}
           filesAvailable={activeProject !== null}
+          gitGraphAvailable={isGitRepo && gitCwd !== null}
         >
           {rightPanelContent}
         </RightPanelTabs>
@@ -6292,9 +6303,11 @@ function ChatViewContent(props: ChatViewProps) {
             onAddTerminal={addTerminalSurface}
             onAddDiff={addDiffSurface}
             onAddFiles={addFilesSurface}
+            onAddGitGraph={addGitGraphSurface}
             browserAvailable={isPreviewSupportedInRuntime()}
             diffAvailable={isServerThread && isGitRepo}
             filesAvailable={activeProject !== null}
+            gitGraphAvailable={isGitRepo && gitCwd !== null}
           >
             {rightPanelContent}
           </RightPanelTabs>
