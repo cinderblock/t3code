@@ -316,9 +316,41 @@ Two things came out differently once the code was written. Both are deliberate.
 - [x] 2026-08-06 — **Phase 2 landed** (`880d8376b`). 23 new web tests; web
       typecheck and lint clean.
 
-### Phase 2 status — the important caveat
+### Phase 2 verified in a real client (2026-08-06)
 
-**None of this UI has been rendered yet.** `apps/web` has no component-test
+Ran the web app against a copy of real state and opened the History surface on
+the t3code repo itself. **It works**: the surface registers (tab, icon,
+empty-state card), the RPC resolves, 200 commits render with a genuine 10-lane
+graph, merge/fork curves, local/remote/tag chips, ages and short oids.
+
+Three layout faults only a real repo exposed, all fixed in `4232158a5`:
+
+1. **Long branch names overran the author column.** `truncate` does not
+   ellipsize a flex container's anonymous text child, so an `inline-flex` chip
+   overflowed rather than clipping, and `shrink-0` stopped it yielding space.
+   Chips are now `inline-block` and shrinkable.
+2. **The lane gutter ate the row.** It is sized by the page's widest lane count,
+   and this repo really does reach 10 lanes (verified: commits land in all ten
+   columns, 19 rows carry curves). At 14px/lane that was 140px of a ~500px
+   panel. Lanes are now 10px.
+3. **A commit at several remote tips pushed the summary off the row.** Chips are
+   capped at three per row (two plus "+N") and the chip group at 55% of the row.
+
+Also confirmed a **false alarm**: the lane line looked dashed in a zoomed
+screenshot, but measuring the DOM showed rows are contiguous (30px row, 30px
+SVG, zero gap) and every row draws `y0→15` and `y15→30`. The apparent breaks are
+the commit dot's background-coloured ring plus JPEG artefacts. Do not "fix" this.
+
+**Environment gotcha:** seeding the test base dir from `~/.t3/userdata` produced
+a **3.9 GB** snapshot, and the dev server spent minutes with a stalled event loop
+(150+ `Event loop stalled` warnings) chewing on it, which froze the renderer
+periodically. Next time seed a smaller database or register a single project by
+hand — the huge copy bought nothing except realistic project data.
+
+### Phase 2 status — the earlier caveat, now resolved
+
+_(Superseded by the verification above — kept because the reasoning still applies
+to future phases.)_ `apps/web` has no component-test
 harness (every existing web test is pure logic), and no dev server or browser has
 been run, so what is proven is: the layout algorithm and presentation helpers are
 correct under test, and everything typechecks. What is _not_ proven is that the
