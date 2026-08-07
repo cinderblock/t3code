@@ -219,10 +219,10 @@ Each phase is independently shippable behind a client setting
       (this is the piece most worth testing in isolation), row list, SVG
       glyphs, ref chips. Read-only, no selection yet. New right-panel surface registered.
       **Done, but not yet seen running** — see "Phase 2 status" below.
-- [~] **Phase 3 — synthetic worktree rows.** Server half **done** (`13186df98`):
-  `vcs.worktreeChanges` reads `git status --porcelain=2 -z` per requested
-  worktree and splits staged from unstaged on the `XY` status pair. 26 server
-  tests pass. **Client half not started** — the rows are not rendered yet.
+- [x] **Phase 3 — synthetic worktree rows.** Server (`13186df98`) and client
+      (`66a3747ec`). Verified in a real client: the row read
+      "Uncommitted changes · (1 untracked) · 6 files", matching `git status` exactly
+      (5 unstaged + 1 untracked), with no staged row because nothing was staged.
 - [ ] **Phase 4 — slide-up change list.** Bottom ~60% panel, `ChangedFilesTree`
       reused, row selection state.
 - [ ] **Phase 5 — diff in main view.** `vcs.rowFileDiff`, `GitDiffMainView`,
@@ -422,7 +422,37 @@ status` subprocess per path, capped at 32 (`GIT_WORKTREE_CHANGES_MAX_PATHS`),
 - A file can be both staged and unstaged (`XY` = `MM`); it counts once on each
   side, which is what a git client shows.
 
-### Next: Phase 3 client half, then Phase 4
+### Phase 3 client notes
+
+- **Synthetic rows do not draw into the lane graph.** A worktree's HEAD can be
+  any commit on the page, so a connector would have to thread arbitrarily far
+  down. A hollow marker plus a divider under the block carries the "above HEAD"
+  relationship instead. Revisit only if it actually reads as disconnected.
+- Untracked and conflicted files are folded into the unstaged row's total but
+  still called out inline (`(1 untracked)`), so a conflicted worktree is not
+  silently reduced to a number.
+- The worktree-changes query is gated on the snapshot existing and on the paths
+  it reported, so closing the tab costs nothing.
+
+### The test environment was rebuilt (2026-08-07)
+
+The 3.9 GB copy was deleted and replaced with an empty base dir at
+`.t3/git-graph-lite/`, with `~/git/t3code` registered through the normal Add
+Project flow. `.t3` went from 3.9 GB to 46 MB and the graph now loads in
+seconds instead of erroring.
+
+**Before the rebuild the panel showed "All fibers interrupted without error"** —
+the overloaded server was interrupting the RPC, not a bug in the graph code.
+Confirmed by timing the underlying command directly: `git status --porcelain=2
+-z` on this repo returns 849 bytes in 0.2 s. If that error appears again,
+suspect the environment first.
+
+Gotcha when swapping base dirs: the client persists environment data in
+localStorage and an IndexedDB store (`t3code:connection-runtime`), so a client
+pointed at the old environment shows stale projects and fails to connect. Clear
+both, then pair again with a fresh token.
+
+### Next: Phase 4
 
 Synthetic worktree rows (`vcs.rowChanges` for staged/unstaged, batched per-worktree
 status). Before that, a real-client pass on Phase 2 is worth doing — every later
