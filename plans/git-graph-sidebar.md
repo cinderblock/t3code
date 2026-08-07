@@ -219,9 +219,10 @@ Each phase is independently shippable behind a client setting
       (this is the piece most worth testing in isolation), row list, SVG
       glyphs, ref chips. Read-only, no selection yet. New right-panel surface registered.
       **Done, but not yet seen running** — see "Phase 2 status" below.
-- [ ] **Phase 3 — synthetic worktree rows.** `vcs.rowChanges` for staged/unstaged,
-      batched per-worktree status with the invalidation rules above, rows rendered
-      above HEAD.
+- [~] **Phase 3 — synthetic worktree rows.** Server half **done** (`13186df98`):
+  `vcs.worktreeChanges` reads `git status --porcelain=2 -z` per requested
+  worktree and splits staged from unstaged on the `XY` status pair. 26 server
+  tests pass. **Client half not started** — the rows are not rendered yet.
 - [ ] **Phase 4 — slide-up change list.** Bottom ~60% panel, `ChangedFilesTree`
       reused, row selection state.
 - [ ] **Phase 5 — diff in main view.** `vcs.rowFileDiff`, `GitDiffMainView`,
@@ -402,7 +403,26 @@ testing-library to a repo with none would be a larger change than the feature.
   virtualization (`@legendapp/list`) is wired into `MessagesTimeline` in a way that
   would be substantial to replicate. Revisit when load-more can stack pages.
 
-### Next: Phase 3
+### Phase 3 server notes
+
+- **The procedure takes explicit worktree paths**, rather than deriving them from
+  the repo. That makes the cost of a call visible where it is made — one `git
+status` subprocess per path, capped at 32 (`GIT_WORKTREE_CHANGES_MAX_PATHS`),
+  concurrency 3 to match `VcsStatusBroadcaster`.
+- **Requested paths are intersected with `git worktree list`.** Without that, a
+  caller could read `git status` from any directory on the machine. Rejected
+  paths come back in `skippedPaths` so the client can distinguish "clean" from
+  "not checked".
+- **File counts only, no line counts.** Insertions/deletions would need two more
+  `git diff --numstat` calls per worktree; the change list computes them when a
+  row is actually opened (Phase 4).
+- **Rename entries need care:** a `2` record in `--porcelain=2 -z` is followed by
+  a _second_ NUL-terminated field holding the original path. Reading that as its
+  own record double-counts. There is a test for it.
+- A file can be both staged and unstaged (`XY` = `MM`); it counts once on each
+  side, which is what a git client shows.
+
+### Next: Phase 3 client half, then Phase 4
 
 Synthetic worktree rows (`vcs.rowChanges` for staged/unstaged, batched per-worktree
 status). Before that, a real-client pass on Phase 2 is worth doing — every later
