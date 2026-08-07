@@ -341,11 +341,31 @@ screenshot, but measuring the DOM showed rows are contiguous (30px row, 30px
 SVG, zero gap) and every row draws `y0→15` and `y15→30`. The apparent breaks are
 the commit dot's background-coloured ring plus JPEG artefacts. Do not "fix" this.
 
-**Environment gotcha:** seeding the test base dir from `~/.t3/userdata` produced
-a **3.9 GB** snapshot, and the dev server spent minutes with a stalled event loop
-(150+ `Event loop stalled` warnings) chewing on it, which froze the renderer
-periodically. Next time seed a smaller database or register a single project by
-hand — the huge copy bought nothing except realistic project data.
+**Environment gotcha — do not seed from the full live database.** Seeding the
+test base dir from `~/.t3/userdata` with `VACUUM INTO` produced a **3.9 GB**
+snapshot, because the live database really is that big (measured 2026-08-07):
+
+| table                            | size    | rows    |
+| -------------------------------- | ------- | ------- |
+| `orchestration_events`           | 1.77 GB | 865,849 |
+| `projection_thread_activities`   | 1.20 GB | 608,674 |
+| `orchestration_command_receipts` | 0.17 GB | 856,123 |
+| indexes on the above             | ~0.5 GB |         |
+
+`~/.t3/userdata/state.sqlite` was 3.98 GB, 4.6 GB including attachments and WAL.
+A dev server pointed at the copy logged 150+ `Event loop stalled` warnings —
+105 s cumulative, worst single stall 2.4 s — and froze the browser renderer
+twice mid-verification.
+
+Next time, register one project by hand against an empty base dir, or seed only
+the projection tables needed. The full copy bought nothing but realistic project
+names. **Separately: this size is worth investigating on its own** — it is a
+plausible contributor to whatever the `debug/crash-investigation` branch is
+chasing, since an event log that only grows will degrade monotonically.
+
+The test environment from that pass is retained at `.t3/git-graph-test/`
+(gitignored) with a dev server still on it; remove with `rm -rf .t3/git-graph-test`
+once no further real-client verification is wanted.
 
 ### Phase 2 status — the earlier caveat, now resolved
 
