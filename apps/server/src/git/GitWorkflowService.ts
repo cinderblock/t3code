@@ -13,6 +13,8 @@ import {
   type VcsCreateWorktreeResult,
   type VcsGraphSnapshotInput,
   type VcsGraphSnapshotResult,
+  type VcsWorktreeChangesInput,
+  type VcsWorktreeChangesResult,
   type VcsListRefsInput,
   type VcsListRefsResult,
   type GitManagerServiceError,
@@ -67,6 +69,9 @@ export class GitWorkflowService extends Context.Service<
     readonly graphSnapshot: (
       input: VcsGraphSnapshotInput,
     ) => Effect.Effect<VcsGraphSnapshotResult, GitCommandError>;
+    readonly worktreeChanges: (
+      input: VcsWorktreeChangesInput,
+    ) => Effect.Effect<VcsWorktreeChangesResult, GitCommandError>;
     readonly createWorktree: (
       input: VcsCreateWorktreeInput,
     ) => Effect.Effect<VcsCreateWorktreeResult, GitCommandError>;
@@ -314,6 +319,14 @@ export const make = Effect.gen(function* () {
       detectGitRepositoryForCommand("GitWorkflowService.graphSnapshot", input.cwd).pipe(
         Effect.flatMap((isGitRepository) =>
           isGitRepository ? git.graphSnapshot(input) : Effect.succeed(nonRepositoryGraphSnapshot()),
+        ),
+      ),
+    worktreeChanges: (input) =>
+      detectGitRepositoryForCommand("GitWorkflowService.worktreeChanges", input.cwd).pipe(
+        Effect.flatMap((isGitRepository) =>
+          isGitRepository
+            ? git.worktreeChanges(input)
+            : Effect.succeed({ worktrees: [], skippedPaths: [...input.worktreePaths] }),
         ),
       ),
     createWorktree: (input) =>

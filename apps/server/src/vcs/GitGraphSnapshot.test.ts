@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -8,7 +8,12 @@ import * as Path from "effect/Path";
 
 import * as ServerConfig from "../config.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
-import { parseGraphCommits, parseGraphRefs, parseGraphWorktrees } from "./GitVcsDriverCore.ts";
+import {
+  parseGraphCommits,
+  parseGraphRefs,
+  parseGraphWorktrees,
+  parseWorktreeChangeCounts,
+} from "./GitVcsDriverCore.ts";
 import * as VcsProcess from "./VcsProcess.ts";
 
 const FIELD = "\x1f";
@@ -249,6 +254,69 @@ describe("parseGraphRefs", () => {
   });
 });
 
+describe("parseWorktreeChangeCounts", () => {
+  // `git status --porcelain=2 -z`: "1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>"
+  const ordinary = (xy: string, path: string) =>
+    `1 ${xy} N... 100644 100644 100644 aaa bbb ${path}\0`;
+
+  it("separates staged from unstaged using the two status characters", () => {
+    const counts = parseWorktreeChangeCounts(
+      ordinary("M.", "staged-only.ts") +
+        ordinary(".M", "unstaged-only.ts") +
+        ordinary("MM", "both.ts"),
+    );
+
+    // "both.ts" is staged AND unstaged: it counts once on each side.
+    expect(counts.stagedFileCount).toBe(2);
+    expect(counts.unstagedFileCount).toBe(2);
+  });
+
+  it("counts untracked files separately and ignores ignored ones", () => {
+    const counts = parseWorktreeChangeCounts("? new.ts\0! build-output.js\0");
+
+    expect(counts.untrackedFileCount).toBe(1);
+    expect(counts.stagedFileCount).toBe(0);
+    expect(counts.unstagedFileCount).toBe(0);
+  });
+
+  it("counts unmerged entries as conflicts rather than staged changes", () => {
+    const counts = parseWorktreeChangeCounts(
+      "u UU N... 100644 100644 100644 100644 aaa bbb ccc conflicted.ts\0",
+    );
+
+    expect(counts.conflictedFileCount).toBe(1);
+    expect(counts.stagedFileCount).toBe(0);
+    expect(counts.unstagedFileCount).toBe(0);
+  });
+
+  it("does not count a rename's original path as its own entry", () => {
+    // A "2" record is followed by a second NUL-terminated field holding the
+    // path it was renamed from; reading that as a record would double-count.
+    const counts = parseWorktreeChangeCounts(
+      `2 R. N... 100644 100644 100644 aaa bbb R100 new-name.ts\0old-name.ts\0` +
+        ordinary("M.", "other.ts"),
+    );
+
+    expect(counts.stagedFileCount).toBe(2);
+    expect(counts.unstagedFileCount).toBe(0);
+  });
+
+  it("returns zeroes for a clean worktree", () => {
+    expect(parseWorktreeChangeCounts("")).toEqual({
+      stagedFileCount: 0,
+      unstagedFileCount: 0,
+      untrackedFileCount: 0,
+      conflictedFileCount: 0,
+    });
+  });
+
+  it("is not confused by a path containing a newline", () => {
+    const counts = parseWorktreeChangeCounts(ordinary("M.", "weird\nname.ts"));
+
+    expect(counts.stagedFileCount).toBe(1);
+  });
+});
+
 const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-git-graph-snapshot-test-",
 });
@@ -403,6 +471,63 @@ it.layer(TestLayer)("graphSnapshot", (it) => {
           (commit) => commit.oid,
         );
         assert.strictEqual(new Set(allOids).size, 5, "pages must not overlap or skip commits");
+      }),
+    { timeout: 60_000 },
+  );
+
+  it.effect(
+    "counts staged, unstaged, and untracked work per worktree",
+    () =>
+      Effect.gen(function* () {
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeRepo();
+
+        yield* writeAndCommit(cwd, "tracked.txt", "first");
+        yield* runGit(cwd, ["branch", "-M", "main"]);
+
+        // Get both files committed first: staging anything before this commit
+        // would just be swallowed by it.
+        yield* writeAndCommit(cwd, "second.txt", "add second");
+
+        // Now one staged edit, one unstaged edit, and one untracked file.
+        yield* fileSystem.writeFileString(path.join(cwd, "tracked.txt"), "staged change");
+        yield* runGit(cwd, ["add", "tracked.txt"]);
+        yield* fileSystem.writeFileString(path.join(cwd, "second.txt"), "modified, not staged");
+        yield* fileSystem.writeFileString(path.join(cwd, "untracked.txt"), "new");
+
+        const result = yield* driver.worktreeChanges({ cwd, worktreePaths: [cwd] });
+
+        assert.strictEqual(result.worktrees.length, 1);
+        const counts = result.worktrees[0]!;
+        assert.strictEqual(counts.stagedFileCount, 1, "tracked.txt is staged");
+        assert.strictEqual(counts.unstagedFileCount, 1, "second.txt is modified since the index");
+        assert.strictEqual(counts.untrackedFileCount, 1);
+        assert.strictEqual(counts.conflictedFileCount, 0);
+        assert.deepStrictEqual(result.skippedPaths, []);
+      }),
+    { timeout: 60_000 },
+  );
+
+  it.effect(
+    "refuses a path that is not a worktree of this repository",
+    () =>
+      Effect.gen(function* () {
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cwd = yield* makeRepo();
+        yield* writeAndCommit(cwd, "a.txt", "first");
+
+        // A real git repo, but a different one: reading its status through this
+        // repository's request would be an access-boundary escape.
+        const outsider = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-git-graph-out-" });
+        yield* runGit(outsider, ["init"]);
+
+        const result = yield* driver.worktreeChanges({ cwd, worktreePaths: [outsider] });
+
+        assert.deepStrictEqual(result.worktrees, []);
+        assert.deepStrictEqual(result.skippedPaths, [outsider]);
       }),
     { timeout: 60_000 },
   );

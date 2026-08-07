@@ -23,6 +23,8 @@ import {
   type VcsInitInput,
   type VcsGraphSnapshotInput,
   type VcsGraphSnapshotResult,
+  type VcsWorktreeChangesInput,
+  type VcsWorktreeChangesResult,
   type VcsListRefsInput,
   type VcsListRefsResult,
   type VcsPullResult,
@@ -233,6 +235,9 @@ export class GitVcsDriver extends Context.Service<
     readonly graphSnapshot: (
       input: VcsGraphSnapshotInput,
     ) => Effect.Effect<VcsGraphSnapshotResult, GitCommandError>;
+    readonly worktreeChanges: (
+      input: VcsWorktreeChangesInput,
+    ) => Effect.Effect<VcsWorktreeChangesResult, GitCommandError>;
     readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
     readonly createWorktree: (
       input: VcsCreateWorktreeInput,

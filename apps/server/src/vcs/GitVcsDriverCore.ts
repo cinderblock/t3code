@@ -438,6 +438,56 @@ export function parseGraphRefs(
   return refs;
 }
 
+/**
+ * Counts uncommitted work from `git status --porcelain=2 -z`.
+ *
+ * Each changed entry carries a two-character `XY` field: `X` is the index
+ * status and `Y` the working-tree status, with `.` meaning unchanged. That is
+ * what separates "staged" from "unstaged" — the flat file list on
+ * `VcsStatusResult` collapses the two and cannot answer this.
+ */
+export function parseWorktreeChangeCounts(stdout: string): {
+  readonly stagedFileCount: number;
+  readonly unstagedFileCount: number;
+  readonly untrackedFileCount: number;
+  readonly conflictedFileCount: number;
+} {
+  let stagedFileCount = 0;
+  let unstagedFileCount = 0;
+  let untrackedFileCount = 0;
+  let conflictedFileCount = 0;
+
+  // `-z` makes every record NUL-terminated, which keeps paths containing
+  // newlines from being read as extra records.
+  const records = stdout.split("\0");
+  for (let index = 0; index < records.length; index++) {
+    const record = records[index]!;
+    if (record.length === 0) continue;
+    const kind = record[0];
+
+    if (kind === "?") {
+      untrackedFileCount += 1;
+      continue;
+    }
+    if (kind === "!") continue;
+    if (kind === "u") {
+      conflictedFileCount += 1;
+      continue;
+    }
+    if (kind !== "1" && kind !== "2") continue;
+
+    const xy = record.slice(2, 4);
+    if (xy.length < 2) continue;
+    if (xy[0] !== ".") stagedFileCount += 1;
+    if (xy[1] !== ".") unstagedFileCount += 1;
+    // A rename/copy entry ("2") stores its original path as a second
+    // NUL-terminated field, which must not be counted as its own record.
+    if (kind === "2") index += 1;
+  }
+
+  return { stagedFileCount, unstagedFileCount, untrackedFileCount, conflictedFileCount };
+}
+
 function splitNullSeparatedPaths(input: string, truncated: boolean): string[] {
   const parts = input.split("\0");
   if (parts.length === 0) return [];
@@ -2846,6 +2896,74 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     };
   });
 
+  const worktreeChanges: GitVcsDriver.GitVcsDriver["Service"]["worktreeChanges"] = Effect.fn(
+    "worktreeChanges",
+  )(function* (input) {
+    const repositoryPaths = yield* resolveRepositoryPaths(input.cwd).pipe(
+      Effect.catchTags({
+        GitCommandError: (error) =>
+          isMissingGitCwdError(error) ? Effect.succeed(null) : Effect.fail(error),
+      }),
+    );
+    if (repositoryPaths === null) {
+      return { worktrees: [], skippedPaths: [...input.worktreePaths] };
+    }
+
+    // Every requested path must belong to this repository. Without the check a
+    // caller could read `git status` from any directory on the machine.
+    const knownWorktreeListResult = yield* executeGit(
+      "GitVcsDriver.worktreeChanges.worktreeList",
+      path.basename(repositoryPaths.gitCommonDir) === ".git"
+        ? path.dirname(repositoryPaths.gitCommonDir)
+        : repositoryPaths.gitCommonDir,
+      ["--git-dir", repositoryPaths.gitCommonDir, "worktree", "list", "--porcelain", "-z"],
+      { timeoutMs: 30_000, allowNonZeroExit: true, maxOutputBytes: 16 * 1024 * 1024 },
+    );
+    const knownPaths = new Set(
+      (knownWorktreeListResult.exitCode === 0
+        ? parseGraphWorktrees(knownWorktreeListResult.stdout)
+        : []
+      ).map((entry) => path.normalize(path.resolve(entry.path))),
+    );
+
+    const requested = input.worktreePaths.map(
+      (requestedPath) => [requestedPath, path.normalize(path.resolve(requestedPath))] as const,
+    );
+    const permitted = requested.filter(([, resolved]) => knownPaths.has(resolved));
+    const skippedPaths = requested
+      .filter(([, resolved]) => !knownPaths.has(resolved))
+      .map(([original]) => original);
+
+    const results = yield* Effect.forEach(
+      permitted,
+      ([original, resolved]) =>
+        executeGitWithStableDiagnostics(
+          "GitVcsDriver.worktreeChanges.status",
+          resolved,
+          ["status", "--porcelain=2", "-z"],
+          { timeoutMs: 30_000, allowNonZeroExit: true, maxOutputBytes: 16 * 1024 * 1024 },
+        ).pipe(
+          Effect.map((result) =>
+            result.exitCode === 0
+              ? { path: original, ...parseWorktreeChangeCounts(result.stdout) }
+              : null,
+          ),
+          Effect.orElseSucceed(() => null),
+        ),
+      // Matches VcsStatusBroadcaster's status concurrency: several `git status`
+      // calls at once on a cold cache contend badly on Windows.
+      { concurrency: 3 },
+    );
+
+    return {
+      worktrees: results.filter((entry) => entry !== null),
+      skippedPaths: [
+        ...skippedPaths,
+        ...permitted.filter((_, index) => results[index] === null).map(([original]) => original),
+      ],
+    };
+  });
+
   const createWorktree: GitVcsDriver.GitVcsDriver["Service"]["createWorktree"] = Effect.fn(
     "createWorktree",
   )(function* (input) {
@@ -3169,6 +3287,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     readConfigValue,
     listRefs,
     graphSnapshot,
+    worktreeChanges,
     createWorktree: (input) => withListRefsInvalidation(input.cwd, createWorktree(input)),
     fetchPullRequestBranch: (input) =>
       withListRefsInvalidation(input.cwd, fetchPullRequestBranch(input)),

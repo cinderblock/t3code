@@ -7,6 +7,12 @@ const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const GIT_LIST_BRANCHES_MAX_LIMIT = 200;
 export const GIT_GRAPH_MAX_LIMIT = 500;
 export const GIT_GRAPH_DEFAULT_LIMIT = 200;
+/**
+ * Each path costs one `git status` subprocess, so this caps the blast radius of
+ * a single request. See `VcsStatusBroadcaster` for why unbounded status fanout
+ * is a hazard in this codebase.
+ */
+export const GIT_WORKTREE_CHANGES_MAX_PATHS = 32;
 
 // Domain Types
 
@@ -153,6 +159,22 @@ export const VcsGraphSnapshotInput = Schema.Struct({
   refresh: Schema.optional(Schema.Boolean),
 });
 export type VcsGraphSnapshotInput = typeof VcsGraphSnapshotInput.Type;
+
+/**
+ * Uncommitted-change counts for specific worktrees.
+ *
+ * Deliberately not folded into {@link VcsGraphSnapshotInput}: the caller passes
+ * the exact worktrees it wants counted, so the cost of this call is visible at
+ * the call site rather than scaling silently with however many worktrees a
+ * machine has accumulated.
+ */
+export const VcsWorktreeChangesInput = Schema.Struct({
+  cwd: TrimmedNonEmptyStringSchema,
+  worktreePaths: Schema.Array(TrimmedNonEmptyStringSchema).check(
+    Schema.isMaxLength(GIT_WORKTREE_CHANGES_MAX_PATHS),
+  ),
+});
+export type VcsWorktreeChangesInput = typeof VcsWorktreeChangesInput.Type;
 
 export const VcsCreateWorktreeInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
@@ -339,6 +361,35 @@ export const VcsGraphSnapshotResult = Schema.Struct({
   nextCursor: Schema.NullOr(NonNegativeInt),
 });
 export type VcsGraphSnapshotResult = typeof VcsGraphSnapshotResult.Type;
+
+/**
+ * File counts only, no line counts: `git status --porcelain=2` yields these in
+ * one subprocess per worktree, whereas insertions/deletions would need two more
+ * `git diff --numstat` calls each. The row's change list computes line counts
+ * when it is actually opened.
+ */
+export const VcsWorktreeChangeCounts = Schema.Struct({
+  path: TrimmedNonEmptyStringSchema,
+  /** Entries with an index status: what a commit would currently capture. */
+  stagedFileCount: NonNegativeInt,
+  /** Entries with a working-tree status, i.e. modified since the index. */
+  unstagedFileCount: NonNegativeInt,
+  untrackedFileCount: NonNegativeInt,
+  /** Unmerged entries; a row showing these must not offer a plain diff. */
+  conflictedFileCount: NonNegativeInt,
+});
+export type VcsWorktreeChangeCounts = typeof VcsWorktreeChangeCounts.Type;
+
+export const VcsWorktreeChangesResult = Schema.Struct({
+  worktrees: Schema.Array(VcsWorktreeChangeCounts),
+  /**
+   * Paths that were requested but could not be read — removed worktrees, or
+   * paths outside the permitted roots. Surfaced rather than silently dropped so
+   * the client can tell "no changes" apart from "not checked".
+   */
+  skippedPaths: Schema.Array(TrimmedNonEmptyStringSchema),
+});
+export type VcsWorktreeChangesResult = typeof VcsWorktreeChangesResult.Type;
 
 export const VcsCreateWorktreeResult = Schema.Struct({
   worktree: VcsWorktree,

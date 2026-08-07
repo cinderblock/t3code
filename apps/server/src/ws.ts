@@ -1841,6 +1841,10 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.vcsGraphSnapshot, gitWorkflow.graphSnapshot(input), {
             "rpc.aggregate": "vcs",
           }),
+        [WS_METHODS.vcsWorktreeChanges]: (input) =>
+          observeRpcEffect(WS_METHODS.vcsWorktreeChanges, gitWorkflow.worktreeChanges(input), {
+            "rpc.aggregate": "vcs",
+          }),
         [WS_METHODS.vcsCreateWorktree]: (input) =>
           observeRpcEffect(
             WS_METHODS.vcsCreateWorktree,
