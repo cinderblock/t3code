@@ -163,6 +163,40 @@ rewrite makes worse. `fork-divergence-review.md` already notes merge pain is
 concentrated in four hot files (`ChatView.tsx` 69 upstream commits in 3 months,
 `ws.ts` 57, `ChatComposer.tsx` 41, `server.ts` 39).
 
+## Verification of the F5 recommendation (2026-08-07, read-only)
+
+F5 was recommended on the strength of `fork-divergence-review.md` alone. It has now
+been independently traced end-to-end and **is real**:
+
+1. `UsageHistoryChart.tsx:152-158` — when `referenceWindow.resetsAt` is null,
+   `resetMs` is `NaN`, so `startMs = nowMs - windowHours * 3600_000` and
+   `since = new Date(startMs).toISOString()` takes a **new millisecond-precision
+   value on every render**.
+2. `:284` passes `since` into `SeriesLine`.
+3. `SeriesLine` `:67-71` calls
+   `usageEnvironment.usageHistory({ environmentId, input: { accountKey, windowId, since } })`.
+4. `client-runtime/src/state/usage.ts:144-148` — `usageHistory` is a
+   `createEnvironmentRpcQueryAtomFamily` with `staleTimeMs: 60_000`. The family is
+   keyed on `input`, so a changing `since` mints a new atom every render and the
+   60s stale window **never applies**.
+
+**Detail the original F5 note missed:** the RPC is issued per `SeriesLine`, not per
+chart — one per window in the group. The storm multiplies by window count.
+
+**Correction to an overstatement of mine:** I previously suggested this compounds
+badly with F25 (`getHistory` has no LIMIT, `since` defaults to epoch — both
+confirmed at `UsageBroadcaster.ts:421-440`). It compounds less than I implied.
+`Migrations/fork/001_UsageSamples.ts:37-38` creates
+`idx_fork_usage_samples_window ON fork_usage_samples(account_key, window_id, captured_at)`,
+which serves both the predicate and the `ORDER BY captured_at ASC`, and
+`HISTORY_RETENTION_DAYS = 90` bounds the table. So the per-query DB cost is modest;
+the real cost is **RPC round-trip volume**, not table scans. F25 remains worth
+fixing, but it is not the amplifier.
+
+**F8 also confirmed verbatim** — `QueuedMessageService.ts` `cancel` is
+`WHERE id = ${input.id} AND status = 'pending'`, so dismissing a _failed_ row
+updates zero rows while the RPC reports success.
+
 ## Recommended sequence (not started)
 
 The strangler-fig path already exists and works: `native/resource-monitor` is Rust
