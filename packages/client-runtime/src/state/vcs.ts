@@ -281,6 +281,13 @@ export function createVcsEnvironmentAtoms<R, E>(
       tag: WS_METHODS.vcsGraphSnapshot,
       staleTimeMs: 5_000,
     }),
+    // Costs one `git status` per requested worktree, so it is fetched only
+    // while the graph panel is on screen and never on a timer.
+    worktreeChanges: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:vcs:worktree-changes",
+      tag: WS_METHODS.vcsWorktreeChanges,
+      staleTimeMs: 5_000,
+    }),
     status: createEnvironmentSubscriptionAtomFamily(runtime, {
       label: "environment-data:vcs:status",
       subscribe: (input: EnvironmentRpcInput<typeof WS_METHODS.subscribeVcsStatus>) =>

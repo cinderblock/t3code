@@ -5819,7 +5819,11 @@ function ChatViewContent(props: ChatViewProps) {
       </Suspense>
     ) : activeRightPanelSurface?.kind === "gitGraph" ? (
       <Suspense fallback={null}>
-        <GitGraphPanel environmentId={environmentId} cwd={gitCwd} />
+        <GitGraphPanel
+          environmentId={environmentId}
+          cwd={gitCwd}
+          activeWorktreePath={activeThread?.worktreePath ?? null}
+        />
       </Suspense>
     ) : activeRightPanelSurface?.kind === "plan" ? (
       <PlanSidebar

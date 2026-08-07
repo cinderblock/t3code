@@ -1,4 +1,4 @@
-import type { VcsGraphRef } from "@t3tools/contracts";
+import type { VcsGraphRef, VcsGraphWorktree, VcsWorktreeChangeCounts } from "@t3tools/contracts";
 
 /**
  * Lane colours are identity, not data — they only need to be tellable apart.
@@ -79,6 +79,84 @@ export function splitVisibleGraphRefs(
   // past the budget it was given.
   const visible = refs.slice(0, Math.max(0, max - 1));
   return { visible, overflowCount: refs.length - visible.length };
+}
+
+/**
+ * A synthetic row for uncommitted work, sitting above the commit graph.
+ *
+ * Unstaged sorts above staged, which sits above HEAD — the same order the
+ * changes themselves travel in, so reading top-to-bottom follows a change from
+ * edited, through staged, into history.
+ */
+export interface GitGraphWorktreeRow {
+  readonly key: string;
+  readonly kind: "unstaged" | "staged";
+  readonly worktreePath: string;
+  /** Branch name where there is one, else the directory name. */
+  readonly label: string;
+  readonly fileCount: number;
+  readonly untrackedFileCount: number;
+  readonly conflictedFileCount: number;
+  readonly isActiveWorktree: boolean;
+}
+
+/** Last path segment, tolerating both separators since paths cross platforms. */
+export function worktreeDirectoryName(worktreePath: string): string {
+  const segments = worktreePath.split(/[\\/]/).filter((segment) => segment.length > 0);
+  return segments[segments.length - 1] ?? worktreePath;
+}
+
+export function buildWorktreeRows(input: {
+  readonly worktrees: ReadonlyArray<VcsGraphWorktree>;
+  readonly changes: ReadonlyArray<VcsWorktreeChangeCounts>;
+  /** The worktree the current thread is working in; sorts first. */
+  readonly activeWorktreePath: string | null;
+}): ReadonlyArray<GitGraphWorktreeRow> {
+  const changesByPath = new Map(input.changes.map((entry) => [entry.path, entry]));
+
+  const ordered = input.worktrees.toSorted((left, right) => {
+    const leftRank = left.path === input.activeWorktreePath ? 0 : left.isPrimary ? 1 : 2;
+    const rightRank = right.path === input.activeWorktreePath ? 0 : right.isPrimary ? 1 : 2;
+    return leftRank !== rightRank ? leftRank - rightRank : left.path.localeCompare(right.path);
+  });
+
+  const rows: GitGraphWorktreeRow[] = [];
+  for (const worktree of ordered) {
+    const counts = changesByPath.get(worktree.path);
+    if (!counts) continue;
+    const label = worktree.refName ?? worktreeDirectoryName(worktree.path);
+    const isActiveWorktree = worktree.path === input.activeWorktreePath;
+
+    // Untracked files are uncommitted work too, so they belong on the unstaged
+    // row even though git reports them separately.
+    const unstagedTotal =
+      counts.unstagedFileCount + counts.untrackedFileCount + counts.conflictedFileCount;
+    if (unstagedTotal > 0) {
+      rows.push({
+        key: `${worktree.path}:unstaged`,
+        kind: "unstaged",
+        worktreePath: worktree.path,
+        label,
+        fileCount: unstagedTotal,
+        untrackedFileCount: counts.untrackedFileCount,
+        conflictedFileCount: counts.conflictedFileCount,
+        isActiveWorktree,
+      });
+    }
+    if (counts.stagedFileCount > 0) {
+      rows.push({
+        key: `${worktree.path}:staged`,
+        kind: "staged",
+        worktreePath: worktree.path,
+        label,
+        fileCount: counts.stagedFileCount,
+        untrackedFileCount: 0,
+        conflictedFileCount: 0,
+        isActiveWorktree,
+      });
+    }
+  }
+  return rows;
 }
 
 const MINUTE_MS = 60_000;

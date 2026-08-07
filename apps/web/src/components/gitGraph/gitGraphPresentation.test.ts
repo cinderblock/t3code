@@ -1,13 +1,15 @@
-import type { VcsGraphRef } from "@t3tools/contracts";
+import type { VcsGraphRef, VcsGraphWorktree, VcsWorktreeChangeCounts } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  buildWorktreeRows,
   formatCommitAge,
   GIT_GRAPH_LANE_COLORS,
   groupGraphRefsByOid,
   laneColor,
   shortOid,
   splitVisibleGraphRefs,
+  worktreeDirectoryName,
 } from "./gitGraphPresentation";
 
 const ref = (
@@ -130,6 +132,131 @@ describe("splitVisibleGraphRefs", () => {
 
     expect(visible).toEqual([]);
     expect(overflowCount).toBe(0);
+  });
+});
+
+describe("buildWorktreeRows", () => {
+  const worktree = (path: string, overrides: Partial<VcsGraphWorktree> = {}): VcsGraphWorktree => ({
+    path,
+    refName: "main",
+    headOid: "a".repeat(40),
+    isPrimary: false,
+    ...overrides,
+  });
+  const counts = (
+    path: string,
+    overrides: Partial<VcsWorktreeChangeCounts> = {},
+  ): VcsWorktreeChangeCounts => ({
+    path,
+    stagedFileCount: 0,
+    unstagedFileCount: 0,
+    untrackedFileCount: 0,
+    conflictedFileCount: 0,
+    ...overrides,
+  });
+
+  it("orders unstaged above staged, matching the direction changes travel", () => {
+    const rows = buildWorktreeRows({
+      worktrees: [worktree("/repo")],
+      changes: [counts("/repo", { stagedFileCount: 2, unstagedFileCount: 3 })],
+      activeWorktreePath: null,
+    });
+
+    expect(rows.map((row) => row.kind)).toEqual(["unstaged", "staged"]);
+    expect(rows[0]!.fileCount).toBe(3);
+    expect(rows[1]!.fileCount).toBe(2);
+  });
+
+  it("omits a row that would show zero files", () => {
+    const rows = buildWorktreeRows({
+      worktrees: [worktree("/repo")],
+      changes: [counts("/repo", { stagedFileCount: 1 })],
+      activeWorktreePath: null,
+    });
+
+    expect(rows.map((row) => row.kind)).toEqual(["staged"]);
+  });
+
+  it("produces nothing for a clean worktree", () => {
+    const rows = buildWorktreeRows({
+      worktrees: [worktree("/repo")],
+      changes: [counts("/repo")],
+      activeWorktreePath: null,
+    });
+
+    expect(rows).toEqual([]);
+  });
+
+  it("rolls untracked and conflicted files into the unstaged count", () => {
+    const rows = buildWorktreeRows({
+      worktrees: [worktree("/repo")],
+      changes: [
+        counts("/repo", { unstagedFileCount: 1, untrackedFileCount: 2, conflictedFileCount: 3 }),
+      ],
+      activeWorktreePath: null,
+    });
+
+    expect(rows[0]!.fileCount).toBe(6);
+    expect(rows[0]!.untrackedFileCount).toBe(2);
+    expect(rows[0]!.conflictedFileCount).toBe(3);
+  });
+
+  it("shows a worktree whose only changes are untracked files", () => {
+    const rows = buildWorktreeRows({
+      worktrees: [worktree("/repo")],
+      changes: [counts("/repo", { untrackedFileCount: 1 })],
+      activeWorktreePath: null,
+    });
+
+    expect(rows.map((row) => row.kind)).toEqual(["unstaged"]);
+  });
+
+  it("sorts the active worktree first, then the primary one", () => {
+    const rows = buildWorktreeRows({
+      worktrees: [
+        worktree("/repo", { isPrimary: true }),
+        worktree("/wt/other"),
+        worktree("/wt/active"),
+      ],
+      changes: [
+        counts("/repo", { unstagedFileCount: 1 }),
+        counts("/wt/other", { unstagedFileCount: 1 }),
+        counts("/wt/active", { unstagedFileCount: 1 }),
+      ],
+      activeWorktreePath: "/wt/active",
+    });
+
+    expect(rows.map((row) => row.worktreePath)).toEqual(["/wt/active", "/repo", "/wt/other"]);
+    expect(rows[0]!.isActiveWorktree).toBe(true);
+  });
+
+  it("skips worktrees whose changes were not reported", () => {
+    // A path in `skippedPaths` has no counts; showing it as clean would be a lie.
+    const rows = buildWorktreeRows({
+      worktrees: [worktree("/repo"), worktree("/wt/unreadable")],
+      changes: [counts("/repo", { unstagedFileCount: 1 })],
+      activeWorktreePath: null,
+    });
+
+    expect(rows.map((row) => row.worktreePath)).toEqual(["/repo"]);
+  });
+
+  it("labels a detached worktree by its directory name", () => {
+    const rows = buildWorktreeRows({
+      worktrees: [worktree("/wt/t3code-feature", { refName: null })],
+      changes: [counts("/wt/t3code-feature", { unstagedFileCount: 1 })],
+      activeWorktreePath: null,
+    });
+
+    expect(rows[0]!.label).toBe("t3code-feature");
+  });
+});
+
+describe("worktreeDirectoryName", () => {
+  it("handles both path separators and a trailing slash", () => {
+    expect(worktreeDirectoryName("C:\\Users\\me\\repo")).toBe("repo");
+    expect(worktreeDirectoryName("/home/me/repo")).toBe("repo");
+    expect(worktreeDirectoryName("/home/me/repo/")).toBe("repo");
   });
 });
 
