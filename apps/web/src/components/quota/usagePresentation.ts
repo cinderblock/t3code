@@ -1,4 +1,4 @@
-import type { AccountUsageState } from "@t3tools/client-runtime/state/usage";
+import type { AccountUsageState } from "@t3tools/client-runtime/state/quota";
 import type { ModelSelection, UsageWindow } from "@t3tools/contracts";
 
 /**

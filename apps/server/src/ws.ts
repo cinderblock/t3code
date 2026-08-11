@@ -94,7 +94,7 @@ import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
-import * as UsageBroadcaster from "./usage/UsageBroadcaster.ts";
+import * as UsageBroadcaster from "./quota/UsageBroadcaster.ts";
 import * as QueuedMessageService from "./queue/QueuedMessageService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";

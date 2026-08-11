@@ -105,7 +105,7 @@ import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriver from "./vcs/VcsDriver.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
-import * as UsageBroadcaster from "./usage/UsageBroadcaster.ts";
+import * as UsageBroadcaster from "./quota/UsageBroadcaster.ts";
 import * as QueuedMessageService from "./queue/QueuedMessageService.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";

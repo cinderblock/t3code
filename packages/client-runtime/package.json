@@ -123,9 +123,9 @@
       "types": "./src/state/threads.ts",
       "default": "./src/state/threads.ts"
     },
-    "./state/usage": {
-      "types": "./src/state/usage.ts",
-      "default": "./src/state/usage.ts"
+    "./state/quota": {
+      "types": "./src/state/quota.ts",
+      "default": "./src/state/quota.ts"
     },
     "./state/thread-sort": {
       "types": "./src/state/threadSort.ts",

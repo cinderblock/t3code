@@ -9,7 +9,7 @@ import {
   primaryAccountUsageAtom,
   primaryQueuedMessagesAtom,
   usageEnvironment,
-} from "../../state/usage";
+} from "../../state/quota";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import {

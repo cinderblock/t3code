@@ -215,7 +215,7 @@ import {
   primaryAccountUsageAtom,
   primaryQueuedMessagesAtom,
   usageEnvironment,
-} from "../state/usage";
+} from "../state/quota";
 import { vcsEnvironment } from "../state/vcs";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
@@ -243,7 +243,7 @@ import {
   shouldShowProviderStatusBanner,
 } from "./chat/ProviderStatusBanner";
 import { QueuedMessagesPanel } from "./chat/QueuedMessagesPanel";
-import { UsageStatusBar } from "./usage/UsageStatusBar";
+import { UsageStatusBar } from "./quota/UsageStatusBar";
 import { ThreadErrorBanner } from "./chat/ThreadErrorBanner";
 import { resolveThreadPr } from "./ThreadStatusIndicators";
 import { ComposerBannerStack, type ComposerBannerStackItem } from "./chat/ComposerBannerStack";

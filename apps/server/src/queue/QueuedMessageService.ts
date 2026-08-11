@@ -40,7 +40,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
-import { UsageBroadcaster } from "../usage/UsageBroadcaster.ts";
+import { UsageBroadcaster } from "../quota/UsageBroadcaster.ts";
 
 const REACTOR_TICK = Duration.seconds(15);
 /** A window read as ≤ this percent counts as freshly reset. */

@@ -71,7 +71,7 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
-import * as UsageBroadcaster from "./usage/UsageBroadcaster.ts";
+import * as UsageBroadcaster from "./quota/UsageBroadcaster.ts";
 import * as EventLoopLagMonitor from "./observability/EventLoopLagMonitor.ts";
 import * as CpuProfiler from "./observability/CpuProfiler.ts";
 import * as QueuedMessageService from "./queue/QueuedMessageService.ts";

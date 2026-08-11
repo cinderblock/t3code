@@ -1,4 +1,4 @@
-import type { AccountUsageState } from "@t3tools/client-runtime/state/usage";
+import type { AccountUsageState } from "@t3tools/client-runtime/state/quota";
 import type { QueuedMessageTrigger } from "@t3tools/contracts";
 import { useState } from "react";
 import { cn } from "~/lib/utils";

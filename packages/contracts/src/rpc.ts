@@ -170,7 +170,7 @@ import {
   AccountUsageStreamEvent,
   UsageHistoryInput,
   UsageHistoryResult,
-} from "./usage.ts";
+} from "./quota.ts";
 import {
   QueuedMessage,
   QueuedMessageCancelInput,

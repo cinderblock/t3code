@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
 
 import { cn } from "~/lib/utils";
-import { usageEnvironment } from "../../state/usage";
+import { usageEnvironment } from "../../state/quota";
 import { formatPercent, seriesSlotClassForWindow, windowShortLabel } from "./usagePresentation";
 
 const CHART_WIDTH = 640;

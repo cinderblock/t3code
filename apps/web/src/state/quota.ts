@@ -1,5 +1,5 @@
-import { createUsageEnvironmentAtoms } from "@t3tools/client-runtime/state/usage";
-import type { AccountUsageState } from "@t3tools/client-runtime/state/usage";
+import { createUsageEnvironmentAtoms } from "@t3tools/client-runtime/state/quota";
+import type { AccountUsageState } from "@t3tools/client-runtime/state/quota";
 import type { QueuedMessage } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";

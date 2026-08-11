@@ -1,13 +1,13 @@
 import { useAtomValue } from "@effect/atom-react";
 import { ChevronDownIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { AccountUsageState } from "@t3tools/client-runtime/state/usage";
+import type { AccountUsageState } from "@t3tools/client-runtime/state/quota";
 import type { UsageWindow } from "@t3tools/contracts";
 
 import { cn } from "~/lib/utils";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { primaryEnvironmentIdAtom } from "../../state/primaryEnvironment";
-import { primaryAccountUsageAtom, primaryQueuedMessagesAtom } from "../../state/usage";
+import { primaryAccountUsageAtom, primaryQueuedMessagesAtom } from "../../state/quota";
 import { UsageHistoryChart } from "./UsageHistoryChart";
 import {
   emphasizedWeeklyWindowId,

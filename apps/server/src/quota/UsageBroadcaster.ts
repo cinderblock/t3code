@@ -90,7 +90,7 @@ export class UsageBroadcaster extends Context.Service<
     /** Ask the poller to re-poll everything as soon as possible. */
     readonly pollSoon: Effect.Effect<void>;
   }
->()("t3/usage/UsageBroadcaster") {}
+>()("t3/quota/UsageBroadcaster") {}
 
 const toUsageError = (message: string) => (cause: unknown) =>
   new AccountUsageError({ message, cause });

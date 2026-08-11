@@ -25,7 +25,7 @@ export * from "./project.ts";
 export * from "./filesystem.ts";
 export * from "./assets.ts";
 export * from "./review.ts";
-export * from "./usage.ts";
+export * from "./quota.ts";
 export * from "./queuedMessage.ts";
 export * from "./preview.ts";
 export * from "./previewAutomation.ts";
