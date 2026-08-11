@@ -15,9 +15,9 @@ import { DynamicColorIOS, Platform, Pressable, ScrollView, StyleSheet } from "re
 import { useResolveClassNames } from "uniwind";
 
 import { AppText as Text } from "./components/AppText";
+import { getCompactBrandHeaderOptions } from "./components/CompactBrandTitle";
 import { ArchivedThreadsRouteScreen } from "./features/archive/ArchivedThreadsRouteScreen";
 import { useAgentNotificationNavigation } from "./features/agent-awareness/notificationNavigation";
-import { ClerkSettingsSheetDetentProvider } from "./features/cloud/ClerkSettingsSheetDetent";
 import { ConnectOnboardingRouteScreen } from "./features/cloud/ConnectOnboardingRouteScreen";
 import { useConnectOnboardingNavigation } from "./features/cloud/connectOnboardingNavigation";
 import { ThreadFilesTreeScreen, ThreadFileScreen } from "./features/files/ThreadFilesRouteScreen";
@@ -46,6 +46,8 @@ import { SettingsClientStorageRouteScreen } from "./features/settings/SettingsCl
 import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteScreen";
 import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnvironmentsRouteScreen";
 import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRouteScreen";
+import { SettingsProjectGroupingRouteScreen } from "./features/settings/SettingsProjectGroupingRouteScreen";
+import { UsageRouteScreen } from "./features/usage/UsageRouteScreen";
 import { SettingsRouteScreen } from "./features/settings/SettingsRouteScreen";
 import { ShowcaseCaptureCoordinator } from "./features/showcase/ShowcaseCaptureCoordinator";
 import {
@@ -131,7 +133,7 @@ const LEGAL_DOCUMENT_HEADER_OPTIONS: AppScreenOptions = {
   presentation: "fullScreenModal",
 };
 
-const SettingsSheetStack = createNativeStackNavigator({
+const SettingsContentStack = createNativeStackNavigator({
   initialRouteName: "Settings",
   screenOptions: {
     ...GLASS_HEADER_OPTIONS,
@@ -174,6 +176,13 @@ const SettingsSheetStack = createNativeStackNavigator({
         title: "Appearance",
       },
     }),
+    SettingsProjectGrouping: createNativeStackScreen({
+      screen: SettingsProjectGroupingRouteScreen,
+      linking: "project-grouping",
+      options: {
+        title: "Project Grouping",
+      },
+    }),
     SettingsClientStorage: createNativeStackScreen({
       screen: SettingsClientStorageRouteScreen,
       linking: "client-storage",
@@ -181,20 +190,37 @@ const SettingsSheetStack = createNativeStackNavigator({
         title: "Client Storage",
       },
     }),
+    SettingsUsage: createNativeStackScreen({
+      screen: UsageRouteScreen,
+      linking: "usage",
+      options: {
+        title: "Usage",
+      },
+    }),
+  },
+});
+
+// The outer stack never owns visible chrome. Settings routes render inside a
+// nested stack whose native header remains mounted, while Clerk owns auth chrome.
+// Keeping bar visibility invariant avoids iOS 26's headerless-to-headered jump.
+const SettingsSheetStack = createNativeStackNavigator({
+  initialRouteName: "SettingsContent",
+  screenOptions: {
+    headerShown: false,
+  },
+  screens: {
+    SettingsContent: createNativeStackScreen({
+      screen: SettingsContentStack,
+      linking: "",
+    }),
     SettingsAuth: createNativeStackScreen({
       screen: SettingsAuthRouteScreen,
       linking: "auth",
-      options: {
-        title: "Sign in",
-      },
     }),
     SettingsWaitlist: createNativeStackScreen({
       // Keep the old deep link working after the Connect GA launch.
       screen: SettingsAuthRouteScreen,
       linking: "waitlist",
-      options: {
-        title: "Sign in",
-      },
     }),
   },
 });
@@ -330,11 +356,9 @@ function RootStackLayout(props: {
     <HardwareKeyboardCommandProvider pathname={pathname}>
       <ThreadOutboxDrainWorker />
       <ShowcaseCaptureCoordinator pathname={pathname} />
-      <ClerkSettingsSheetDetentProvider initiallyExpanded={false}>
-        <AdaptiveWorkspaceLayout pathname={workspacePathname}>
-          {props.children}
-        </AdaptiveWorkspaceLayout>
-      </ClerkSettingsSheetDetentProvider>
+      <AdaptiveWorkspaceLayout pathname={workspacePathname}>
+        {props.children}
+      </AdaptiveWorkspaceLayout>
     </HardwareKeyboardCommandProvider>
   );
 }
@@ -392,7 +416,7 @@ export const RootStack = createNativeStackNavigator({
         ...GLASS_HEADER_OPTIONS,
         contentStyle: { backgroundColor: "transparent" },
         headerBackVisible: false,
-        title: "Threads",
+        ...getCompactBrandHeaderOptions(),
       },
     }),
     Thread: createNativeStackScreen({

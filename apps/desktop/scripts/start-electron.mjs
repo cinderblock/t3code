@@ -15,9 +15,11 @@ function resolveUserDataDir() {
   const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
   const name = isDevelopment ? "t3code-dev" : "t3code";
   const home = NodeOS.homedir();
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher script has no Effect runtime.
   if (process.platform === "win32") {
     return NodePath.join(process.env.APPDATA ?? NodePath.join(home, "AppData", "Roaming"), name);
   }
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher script has no Effect runtime.
   if (process.platform === "darwin") {
     return NodePath.join(home, "Library", "Application Support", name);
   }

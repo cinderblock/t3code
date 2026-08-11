@@ -30,7 +30,7 @@ import * as RpcSession from "../rpc/session.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
 
-const RETRY_DELAYS_MS = [1_000, 2_000, 4_000, 8_000, 16_000] as const;
+const RETRY_DELAYS_MS = [3_000, 4_000, 8_000, 16_000] as const;
 // Generous so a busy-but-alive backend (e.g. a burst of git-status work right after a reconnect)
 // can finish connection setup instead of timing out and reconnecting into a bootstrap spiral.
 const CONNECTION_ESTABLISHMENT_TIMEOUT = "30 seconds";
@@ -362,6 +362,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const intent = yield* Ref.make(initialIntent);
   const signals = yield* Queue.unbounded<SupervisorSignal>();
   const resetRetryState = yield* Ref.make(false);
+  // Set when a foreground wake probe fails or times out: the user is actively
+  // returning to the app on a dead transport, so the follow-up reconnect skips
+  // the first backoff rung instead of sleeping.
+  const wakeProbeFailed = yield* Ref.make(false);
   const state = yield* SubscriptionRef.make<SupervisorConnectionState>(
     !initialIntent.desired
       ? availableState(initialIntent, 0)
@@ -568,6 +572,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
                 ),
               );
               if (probeEvent._tag === "ProbeCompleted") {
+                if (Exit.isFailure(probeEvent.exit)) {
+                  yield* Ref.set(wakeProbeFailed, true);
+                }
                 yield* probeEvent.exit;
                 break;
               }
@@ -807,6 +814,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       // conservative direction: a slow-to-establish attempt is not a hot-loop risk either.
       const attemptMs = (yield* Clock.currentTimeMillis) - attemptStartedAt;
       const productive = outcome.established && attemptMs >= PRODUCTIVE_CONNECTION_MS;
+      // Consumed on every iteration so a stale marker can never leak into a
+      // later, unrelated failure.
+      const failedWakeProbe = yield* Ref.getAndSet(wakeProbeFailed, false);
       if (outcome.established) {
         generation = nextGeneration;
         if (outcome.stable) {
@@ -840,6 +850,16 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         if (applicationActivated) {
           resetRetryLadder();
         }
+        continue;
+      }
+
+      if (failedWakeProbe) {
+        // The wake probe found a dead transport while the user is returning to
+        // the app, so reconnect immediately instead of sleeping the first
+        // backoff rung. Only this first attempt skips the ladder; if it fails
+        // too, normal backoff resumes.
+        resetRetryLadder();
+        yield* setState(connectingState(yield* Ref.get(intent), generation, 1, error));
         continue;
       }
 

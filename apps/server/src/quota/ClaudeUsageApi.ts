@@ -63,8 +63,11 @@ export type ClaudeUsageApiError =
   | ClaudeUsageRateLimited
   | ClaudeUsageFetchFailed;
 
-const decodeJsonStringExit = Schema.decodeUnknownExit(Schema.UnknownFromJsonString);
-const encodeJsonString = Schema.encodeSync(Schema.UnknownFromJsonString);
+// effect beta.103 replaced the pre-applied `Schema.UnknownFromJsonString` with the
+// general `Schema.fromJsonString(schema)` combinator.
+const UnknownFromJsonString = Schema.fromJsonString(Schema.Unknown);
+const decodeJsonStringExit = Schema.decodeUnknownExit(UnknownFromJsonString);
+const encodeJsonString = Schema.encodeSync(UnknownFromJsonString);
 
 const asRecord = (value: unknown): Record<string, unknown> | null =>
   typeof value === "object" && value !== null && !Array.isArray(value)

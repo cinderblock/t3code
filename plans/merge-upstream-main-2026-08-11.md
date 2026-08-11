@@ -124,29 +124,120 @@ are eliminated by the pre-merge rename. Remaining 11:
 
 ## Plan / steps
 
-1. [ ] Record pre-merge tip; safety snapshot.
-2. [ ] Rename fork usage → quota, fix importers, restore `Migrations.ts` to
-       upstream bytes. Typecheck. Commit as its own change.
-3. [ ] `git merge upstream/main`; resolve the 11 conflicts.
-4. [ ] `pnpm install` (lockfile), `pnpm typecheck`, lint, tests.
-5. [ ] Commit the merge with a substantive message (per fork convention, the
-       merge commit body documents each non-obvious resolution).
-6. [ ] DB repair: `scripts/fix-fork-migration-rows.ts` dry-run → show → `--apply`.
-7. [ ] Build desktop + smoke test.
+1. [x] Record pre-merge tip; safety tag `pre-merge-2026-08-11` at `f7c3ba0db`.
+2. [x] Rename fork usage → quota, fix importers. Typecheck green. Committed as
+       `b5c6fb315`.
+3. [x] `git merge upstream/main`; resolved all 11 conflicts.
+4. [x] `pnpm install`, `pnpm typecheck` (0 errors, 15 packages), `pnpm lint`
+       (exit 0).
+5. [ ] Commit the merge.
+6. [ ] Run the test suite.
+7. [ ] DB repair: `scripts/fix-fork-migration-rows.ts` dry-run → show → `--apply`.
+8. [ ] Build desktop + smoke test.
+9. [ ] Rename the local branch to `master` (user asked mid-merge, 2026-08-11) and
+       decide what happens to the stale local `main` and to the origin branch.
 
 ## Findings / gotchas
+
+### `packages/shared/src/shell.ts` was a fake binary conflict (FIXED)
+
+Git reported `warning: Cannot merge binary files` and refused a text merge,
+leaving our side in the worktree with **zero conflict markers** — easy to mistake
+for "merged fine".
+
+Cause: the fork's side contained **two raw NUL bytes**, at line 109, inside a
+template literal used as a cache key:
+
+```ts
+const cacheKey = `${platform}<NUL>${command}<NUL>${readEnvPath(env) ?? ""}`;
+```
+
+Not corruption — deliberate NUL-as-separator, but written as literal bytes rather
+than escapes. Base and upstream both have zero NULs. Two bytes in a 23 KB file
+made git classify the whole thing as binary.
+
+Fix: replaced the raw bytes with `\0` escapes (semantically identical string), then
+ran `git merge-file` on the three stages by hand. It merged with **zero
+conflicts** — the entire conflict was the NUL artifact. Both sides' code coexists:
+the fork's sync `resolveSpawnExecutableWithNode` + Map cache, and upstream's new
+Effect-based `CommandResolutionCache` / `windowsPathExtensions` /
+`CommandResolutionError`.
+
+Corroboration that `\0` is the right call: upstream independently needed the same
+separator and wrote it `String.fromCharCode(0)` — deliberately avoiding a raw byte
+in source. `file` now reports the merged result as ASCII text, so this file will
+merge normally from here on.
+
+**Lesson worth generalising:** if a merge reports a binary conflict on a source
+file, check for stray NULs before assuming encoding damage — and never assume a
+conflicted file with no `<<<<<<<` markers was merged.
 
 - `grep -r` reports `apps/web/src/components/chat/ChatComposer.tsx` as a "Binary
   file". **False alarm** — `file` says UTF-8 text, there are no NUL bytes, and
   `git check-attr` gives `text: auto, eol: lf`. It is a 126 KB single file that
   trips grep's binary heuristic. Merge it normally; no encoding repair needed.
 
+## Conflict resolutions
+
+| file | resolution |
+| ---- | ---------- |
+| `packages/shared/src/shell.ts` | Fake binary conflict from 2 raw NUL bytes — see Findings. Escaped them, hand-merged, zero real conflicts. |
+| `packages/client-runtime/package.json` | Union: fork's `./state/quota` export + upstream's `./state/subagentRuntime`. |
+| `apps/server/src/vcs/GitVcsDriverCore.ts` | Union of one import each. |
+| `apps/server/src/project/ProjectFaviconResolver.ts` | Kept the fork's extracted `walkForFavicon` + TTL cache + resolve timeout; grafted upstream's explicit `faviconPath` override, placed **ahead of the cache** because it is a per-call argument while the cache is keyed on `projectCwd` alone. |
+| `oxlint-plugin-t3code/test/utils.ts` | Took upstream. Upstream upstreamed the fork's own Windows fix (#5066) and derives the oxlint entry via `require.resolve` instead of hardcoding the pnpm layout. Fork change superseded. |
+| `apps/desktop/src/window/DesktopApplicationMenu.test.ts` | Kept both tests (fork's Ctrl+W guard, upstream's zoom routing), with the fork's test rewritten onto upstream's new `configureMenu` helper. |
+| `apps/web/src/components/chat/ChatComposer.tsx` | Kept the fork's `ClockIcon`; dropped `ListTodoIcon`, whose only consumer upstream removed. |
+| `packages/client-runtime/src/connection/supervisor.ts` | Took **upstream's** `RETRY_DELAYS_MS` (base was `[1s…]`, so the fork never chose it; upstream deliberately raised the floor to 3s, which suits the fork's anti-storm intent anyway). Kept the fork's **30s** `CONNECTION_ESTABLISHMENT_TIMEOUT` (upstream left it at 15s; the fork raised it). Kept both the fork's `attemptMs`/`productive` timing and upstream's `failedWakeProbe` read. In the backoff branch, upstream's wake-probe fast path runs first and short-circuits; the fork's ladder decay + diagnostic then govern ordinary backoff. |
+| `apps/web/rightPanelStore.ts`, `RightPanelTabs.tsx`, `ChatView.tsx` | Union of the fork's `gitGraph` surface with upstream's `pull-request` and `agents` surfaces. **Dropped `"plan"`** — see below. Fork's `gitGraph` tab icon restyled to `size-3` to match upstream's new sizing. |
+
+### `"plan"` was dropped deliberately
+
+The `plan` right-panel surface came from the **merge base**, not the fork. Upstream
+removed it in this range (storage v9 — plans render inline in the transcript) and
+ships a migration that strips persisted `plan` surfaces. Every piece of state it
+depended on (`PlanSidebar` import, `autoOpenPlanSidebar`, `sidebarProposedPlan`,
+`planSidebarLabel`) had already auto-merged away, because upstream deleted those
+lines and the fork had not touched them. Keeping the JSX branch would have
+referenced undefined bindings. Note `interactionMode === "plan"` is a *different*
+feature (composer Plan/Build mode) and is untouched.
+
+## Post-merge fixes required
+
+- `RightPanelTabs.tsx`: the fork's "History" surface card needed `badgeCount: 0`;
+  upstream added a badge to the card list and sets it on every entry.
+- `routes/_chat.pull-requests.tsx`: upstream's new PR-list page renders
+  `RightPanelTabs` and so had to be given the fork's `onAddGitGraph` /
+  `gitGraphAvailable` props, stubbed `() => undefined` / `false` exactly like the
+  peer surfaces that page does not support.
+- `quota/ClaudeUsageApi.ts`: Effect beta.102 → **beta.103** replaced
+  `Schema.UnknownFromJsonString` with the general
+  `Schema.fromJsonString(schema)`. Now `Schema.fromJsonString(Schema.Unknown)`.
+- Upstream added an oxlint rule `t3code(namespace-node-imports)` that fork-only
+  files predate. Renamed `NodeFs`→`NodeFS`, `NodeOs`→`NodeOS`,
+  `NodeFs`→`NodeFSP` (node:fs/promises), and switched
+  `scripts/fix-fork-migration-rows.ts` to `import * as NodeSqlite`.
+  `apps/desktop/scripts/start-electron.mjs` got the same
+  `oxlint-disable-next-line t3code/no-global-process-runtime` its sibling scripts
+  in that directory already use.
+
+Remaining lint output is **3 warnings, all pre-existing fork code**, none merge
+regressions: `no-array-reverse` in ChatView (safe — spread-then-reverse) and
+`prefer-set-has` in the two fork migrations. `pnpm lint` exits 0.
+
 ## Progress log
 
 - [x] Fetched upstream, established divergence and conflict set.
 - [x] Confirmed the usage collision is add/add on both sides at the merge base.
 - [x] User decisions taken on rename-to-quota and on the DB repair.
-- [ ] (everything else)
+- [x] Renamed fork usage → quota (`b5c6fb315`).
+- [x] Merged upstream/main, resolved all 11 conflicts.
+- [x] `pnpm install`, typecheck (0 errors), lint (exit 0).
+- [ ] Merge commit.
+- [ ] Test suite.
+- [ ] Live-DB migration repair.
+- [ ] Desktop build + smoke test.
+- [ ] Branch rename to `master`.
 
 ## Things not to do
 

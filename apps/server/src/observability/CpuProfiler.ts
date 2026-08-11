@@ -30,7 +30,7 @@
 // equivalent, so the rule does not flag it (adding one is itself a warning).
 import * as NodeInspector from "node:inspector";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - one-shot diagnostic write, outside the app's FileSystem layer
-import * as NodeFs from "node:fs/promises";
+import * as NodeFSP from "node:fs/promises";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - path join for the same one-shot write
 import * as NodePath from "node:path";
 
@@ -84,8 +84,8 @@ export const layer = Layer.effectDiscard(
         const result = (yield* post(session, "Profiler.stop")) as { readonly profile: unknown };
         const file = NodePath.join(dir, `server-${process.pid}-startup.cpuprofile`);
         yield* Effect.promise(() =>
-          NodeFs.mkdir(dir, { recursive: true }).then(() =>
-            NodeFs.writeFile(file, JSON.stringify(result.profile)),
+          NodeFSP.mkdir(dir, { recursive: true }).then(() =>
+            NodeFSP.writeFile(file, JSON.stringify(result.profile)),
           ),
         );
         session.disconnect();

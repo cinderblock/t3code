@@ -34,10 +34,10 @@
  */
 
 // @effect-diagnostics-next-line nodeBuiltinImport:off - diagnostic sink must not depend on the app's FileSystem layer or its logger
-import * as NodeFs from "node:fs";
+import * as NodeFS from "node:fs";
 // node:os needs no suppression (no Effect equivalent, so the rule ignores it);
 // adding one is itself a TS377000 warning that fails typecheck.
-import * as NodeOs from "node:os";
+import * as NodeOS from "node:os";
 
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
@@ -76,7 +76,7 @@ function readCpuSnapshot(): CpuSnapshot {
   const self = process.cpuUsage();
   let busyMs = 0;
   let totalMs = 0;
-  for (const cpu of NodeOs.cpus()) {
+  for (const cpu of NodeOS.cpus()) {
     const { user, nice, sys, irq, idle } = cpu.times;
     busyMs += user + nice + sys + irq;
     totalMs += user + nice + sys + irq + idle;
@@ -108,7 +108,7 @@ function appendDiagnostic(record: Record<string, unknown>): void {
   const file = process.env.T3_DIAGNOSTICS_FILE?.trim();
   if (!file) return;
   try {
-    NodeFs.appendFileSync(file, `${JSON.stringify(record)}\n`);
+    NodeFS.appendFileSync(file, `${JSON.stringify(record)}\n`);
   } catch {
     // Never let diagnostics break the process they are observing.
   }
@@ -182,7 +182,7 @@ export const layer = Layer.effectDiscard(
         // machine was contended and this process was starved.
         selfCpuPct: cpu.selfCpuPct,
         systemCpuPct: cpu.systemCpuPct,
-        cpuCount: NodeOs.cpus().length,
+        cpuCount: NodeOS.cpus().length,
         ...annotations,
       });
       yield* Effect.logWarning(message).pipe(Effect.annotateLogs(annotations));

@@ -34,8 +34,8 @@ const makeRuntimeSqliteLayer = Effect.fn("makeRuntimeSqliteLayer")(function* (
 const setup = Layer.effectDiscard(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* sql`PRAGMA journal_mode = WAL;`;
     yield* sql`PRAGMA foreign_keys = ON;`;
+    yield* sql`PRAGMA journal_mode = WAL;`;
     yield* runMigrations();
     // Fork-owned migrations track their own high-water mark in a separate table;
     // see ForkMigrations.ts. Runs second so it may depend on upstream tables.
@@ -68,5 +68,8 @@ export const SqlitePersistenceMemory = Layer.provideMerge(
 );
 
 export const layerConfig = Layer.unwrap(
-  Effect.map(Effect.service(ServerConfig), ({ dbPath }) => makeSqlitePersistenceLive(dbPath)),
+  Effect.gen(function* () {
+    const { dbPath } = yield* ServerConfig;
+    return makeSqlitePersistenceLive(dbPath);
+  }),
 );

@@ -25,8 +25,8 @@
 
 // @effect-diagnostics nodeBuiltinImport:off - standalone `node scripts/...` utility, no Effect runtime
 // @effect-diagnostics globalConsole:off - its output IS the user interface; Effect.log would need a runtime
-import { DatabaseSync } from "node:sqlite";
-import * as NodeFs from "node:fs";
+import * as NodeSqlite from "node:sqlite";
+import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
@@ -44,12 +44,12 @@ function defaultDatabasePaths(): ReadonlyArray<string> {
 }
 
 function repair(dbPath: string, apply: boolean): boolean {
-  if (!NodeFs.existsSync(dbPath)) {
+  if (!NodeFS.existsSync(dbPath)) {
     console.log(`- ${dbPath}\n    skipped: no such database`);
     return false;
   }
 
-  const db = new DatabaseSync(dbPath, { readOnly: !apply });
+  const db = new NodeSqlite.DatabaseSync(dbPath, { readOnly: !apply });
   try {
     const tracked = db
       .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`)

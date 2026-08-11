@@ -5,7 +5,7 @@ for (const stream of [process.stdout, process.stderr]) {
 }
 
 // @effect-diagnostics-next-line nodeBuiltinImport:off - crash-triage renderer log writes synchronously outside the Effect runtime
-import * as NodeFs from "node:fs";
+import * as NodeFS from "node:fs";
 import * as NodeHttpClient from "@effect/platform-node/NodeHttpClient";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -47,12 +47,14 @@ import * as DesktopLocalEnvironmentAuth from "./backend/DesktopLocalEnvironmentA
 import * as DesktopNetworkInterfaces from "./backend/DesktopNetworkInterfaces.ts";
 import * as DesktopEnvironment from "./app/DesktopEnvironment.ts";
 import * as DesktopLifecycle from "./app/DesktopLifecycle.ts";
+import * as DesktopLinuxUrlHandler from "./app/DesktopLinuxUrlHandler.ts";
 import * as DesktopShutdown from "./app/DesktopShutdown.ts";
 import * as DesktopObservability from "./app/DesktopObservability.ts";
 import * as DesktopServerExposure from "./backend/DesktopServerExposure.ts";
 import * as DesktopClientSettings from "./settings/DesktopClientSettings.ts";
 import * as DesktopSavedEnvironments from "./settings/DesktopSavedEnvironments.ts";
 import * as DesktopAppSettings from "./settings/DesktopAppSettings.ts";
+import * as DesktopPreReadyPlatform from "./app/DesktopPreReadyPlatform.ts";
 import * as DesktopShellEnvironment from "./shell/DesktopShellEnvironment.ts";
 import * as DesktopSshEnvironment from "./ssh/DesktopSshEnvironment.ts";
 import * as DesktopSshPasswordPrompts from "./ssh/DesktopSshPasswordPrompts.ts";
@@ -185,6 +187,7 @@ const desktopLocalEnvironmentAuthLayer = DesktopLocalEnvironmentAuth.layer.pipe(
 const desktopApplicationLayer = Layer.mergeAll(
   DesktopLifecycle.layer,
   DesktopApplicationMenu.layer,
+  DesktopLinuxUrlHandler.layer,
   DesktopShellEnvironment.layer,
   desktopSshLayer,
 ).pipe(
@@ -199,16 +202,20 @@ const desktopClerkLayer = DesktopClerk.layer.pipe(
   Layer.provideMerge(ElectronApp.layer),
 );
 
+const desktopApplicationRuntimeLayer = desktopApplicationLayer.pipe(
+  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(NodeHttpClient.layerUndici),
+  Layer.provideMerge(NetService.layer),
+  Layer.provideMerge(electronLayer),
+);
+
+// Acquire strict pre-ready setup before Clerk, whose userData resolution can
+// yield and let Electron emit ready.
 const desktopRuntimeLayer = desktopClerkLayer.pipe(
   Layer.flatMap((clerkContext) =>
-    desktopApplicationLayer.pipe(
-      Layer.provideMerge(Layer.succeedContext(clerkContext)),
-      Layer.provideMerge(NodeServices.layer),
-      Layer.provideMerge(NodeHttpClient.layerUndici),
-      Layer.provideMerge(NetService.layer),
-      Layer.provideMerge(electronLayer),
-    ),
+    desktopApplicationRuntimeLayer.pipe(Layer.provideMerge(Layer.succeedContext(clerkContext))),
   ),
+  Layer.provideMerge(DesktopPreReadyPlatform.layer),
 );
 
 // Surface renderer-side errors (window.onerror, unhandledrejection, console.error/warn)
@@ -222,8 +229,8 @@ const desktopRuntimeLayer = desktopClerkLayer.pipe(
     try {
       // @effect-diagnostics-next-line globalDate:off - sync timestamp for the crash-triage log outside the Effect runtime
       const line = JSON.stringify({ ts: new Date().toISOString(), ...(payload as object) }) + "\n";
-      NodeFs.mkdirSync(NodePath.dirname(rendererLogPath), { recursive: true });
-      NodeFs.appendFileSync(rendererLogPath, line);
+      NodeFS.mkdirSync(NodePath.dirname(rendererLogPath), { recursive: true });
+      NodeFS.appendFileSync(rendererLogPath, line);
     } catch {}
   });
 }
