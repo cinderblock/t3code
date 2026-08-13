@@ -212,6 +212,39 @@ describe("parseGraphRefs", () => {
     );
   });
 
+  it("resolves the remote a remote ref belongs to", () => {
+    // Split on the first slash and `upstream/feature/x` would report the remote
+    // as `upstream` and the branch as `feature/x` — right here, but wrong for a
+    // remote whose own name contains a slash. git's remote list decides.
+    const stdout = [
+      `refs/remotes/origin/main${FIELD}${"a".repeat(40)}${FIELD}${FIELD}`,
+      `refs/remotes/upstream/feature/nested${FIELD}${"b".repeat(40)}${FIELD}${FIELD}`,
+      `refs/heads/main${FIELD}${"a".repeat(40)}${FIELD}${FIELD}`,
+      `refs/tags/v1.0${FIELD}${"c".repeat(40)}${FIELD}${FIELD}`,
+    ].join("\n");
+
+    const refs = parseGraphRefs(stdout, { ...context, remoteNames: ["origin", "upstream"] });
+
+    assert.deepStrictEqual(
+      refs.map((ref) => [ref.name, ref.remoteName]),
+      [
+        ["origin/main", "origin"],
+        ["upstream/feature/nested", "upstream"],
+        ["main", null],
+        ["v1.0", null],
+      ],
+    );
+  });
+
+  it("leaves remoteName null when the remote is not in git's remote list", () => {
+    const stdout = `refs/remotes/unknown/main${FIELD}${"a".repeat(40)}${FIELD}${FIELD}`;
+
+    const refs = parseGraphRefs(stdout, { ...context, remoteNames: ["origin"] });
+
+    assert.strictEqual(refs[0]!.kind, "remote");
+    assert.strictEqual(refs[0]!.remoteName, null);
+  });
+
   it("peels an annotated tag to the commit it wraps", () => {
     const tagObject = "d".repeat(40);
     const commit = "e".repeat(40);

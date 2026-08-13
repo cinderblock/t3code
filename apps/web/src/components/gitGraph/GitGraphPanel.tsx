@@ -15,13 +15,24 @@ import {
   buildWorktreeRows,
   formatCommitAge,
   groupGraphRefsByOid,
+  remoteChipColors,
   shortOid,
   splitVisibleGraphRefs,
   type GitGraphWorktreeRow,
 } from "./gitGraphPresentation";
 
+/**
+ * Every ref renders as a pill. Remote pills are tinted per remote, so
+ * `origin/main` and `upstream/main` are distinguishable without reading the
+ * whole truncated name.
+ */
 function RefChip(props: { graphRef: VcsGraphRef }) {
   const { graphRef } = props;
+  const remoteColors =
+    graphRef.kind === "remote" && graphRef.remoteName !== null
+      ? remoteChipColors(graphRef.remoteName)
+      : null;
+
   return (
     <span
       className={cn(
@@ -34,10 +45,19 @@ function RefChip(props: { graphRef: VcsGraphRef }) {
           ? "border-primary/50 bg-primary/15 font-medium text-primary"
           : graphRef.kind === "tag"
             ? "border-warning/40 bg-warning/10 text-warning-foreground"
-            : graphRef.kind === "remote"
-              ? "border-border bg-muted/60 text-muted-foreground"
-              : "border-border bg-muted text-foreground",
+            : remoteColors
+              ? "text-foreground"
+              : graphRef.kind === "remote"
+                ? // A remote whose name git did not resolve; still a pill, just
+                  // without an identity colour.
+                  "border-border bg-muted/60 text-foreground"
+                : "border-border bg-muted text-foreground",
       )}
+      style={
+        remoteColors
+          ? { borderColor: remoteColors.border, backgroundColor: remoteColors.background }
+          : undefined
+      }
     >
       {graphRef.name}
     </span>

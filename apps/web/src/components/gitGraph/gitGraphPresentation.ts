@@ -30,6 +30,44 @@ export function shortOid(oid: string): string {
   return oid.slice(0, 7);
 }
 
+/**
+ * Hues for per-remote ref pills. Separate from the lane palette so a pill's
+ * colour is never mistaken for a lane's — they mean different things.
+ */
+const REMOTE_HUES = [250, 140, 25, 290, 70, 190, 330, 105] as const;
+
+/** FNV-1a. Any stable hash works; this one is short and has no dependencies. */
+function hashString(value: string): number {
+  let hash = 2_166_136_261;
+  for (let index = 0; index < value.length; index++) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16_777_619);
+  }
+  return hash >>> 0;
+}
+
+export interface RemoteChipColors {
+  readonly border: string;
+  readonly background: string;
+}
+
+/**
+ * A stable colour per remote, so `origin/main` and `upstream/main` are tellable
+ * apart at a glance.
+ *
+ * Only the border and a low-alpha background are tinted; the label keeps the
+ * theme's own foreground colour. A mid-lightness hue used as small text would
+ * fall below a comfortable contrast ratio on a light background, and this has
+ * to work in both themes without a per-theme palette.
+ */
+export function remoteChipColors(remoteName: string): RemoteChipColors {
+  const hue = REMOTE_HUES[hashString(remoteName) % REMOTE_HUES.length]!;
+  return {
+    border: `oklch(0.65 0.16 ${hue} / 0.55)`,
+    background: `oklch(0.65 0.16 ${hue} / 0.14)`,
+  };
+}
+
 /** Ranks refs so the labels a reader scans for sit leftmost on the row. */
 function refSortKey(ref: VcsGraphRef): number {
   if (ref.current) return 0;

@@ -406,6 +406,7 @@ export function parseGraphRefs(
         name,
         kind: "local",
         oid,
+        remoteName: null,
         current: context.currentBranch !== null && name === context.currentBranch,
         isDefault: name === context.defaultBranch,
         worktreePath: context.worktreePathByBranch.get(name) ?? null,
@@ -417,6 +418,7 @@ export function parseGraphRefs(
         name: fullRefName.slice("refs/tags/".length),
         kind: "tag",
         oid,
+        remoteName: null,
         current: false,
         isDefault: false,
         worktreePath: null,
@@ -431,6 +433,7 @@ export function parseGraphRefs(
       name,
       kind: "remote",
       oid,
+      remoteName: parsedRemoteRef?.remoteName ?? null,
       current: false,
       isDefault:
         context.defaultBranch !== null &&

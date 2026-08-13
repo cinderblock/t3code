@@ -317,6 +317,12 @@ export const VcsGraphRef = Schema.Struct({
   name: TrimmedNonEmptyStringSchema,
   kind: VcsGraphRefKind,
   oid: TrimmedNonEmptyStringSchema,
+  /**
+   * Which remote a `remote` ref belongs to, null otherwise. Resolved server-side
+   * against `git remote` rather than by splitting `name` on the first slash,
+   * because both remote names and branch names may contain slashes.
+   */
+  remoteName: Schema.NullOr(TrimmedNonEmptyStringSchema),
   /** True for the branch checked out in the worktree the request was made from. */
   current: Schema.Boolean,
   isDefault: Schema.Boolean,

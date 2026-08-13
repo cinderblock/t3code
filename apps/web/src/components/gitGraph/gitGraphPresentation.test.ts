@@ -7,6 +7,7 @@ import {
   GIT_GRAPH_LANE_COLORS,
   groupGraphRefsByOid,
   laneColor,
+  remoteChipColors,
   shortOid,
   splitVisibleGraphRefs,
   worktreeDirectoryName,
@@ -16,6 +17,7 @@ const ref = (
   overrides: Partial<VcsGraphRef> & Pick<VcsGraphRef, "name" | "kind">,
 ): VcsGraphRef => ({
   oid: "a".repeat(40),
+  remoteName: null,
   current: false,
   isDefault: false,
   worktreePath: null,
@@ -39,6 +41,30 @@ describe("laneColor", () => {
 describe("shortOid", () => {
   it("abbreviates to seven characters", () => {
     expect(shortOid("0123456789abcdef")).toBe("0123456");
+  });
+});
+
+describe("remoteChipColors", () => {
+  it("is stable for the same remote", () => {
+    expect(remoteChipColors("origin")).toEqual(remoteChipColors("origin"));
+  });
+
+  it("gives different remotes different colours", () => {
+    expect(remoteChipColors("origin").border).not.toBe(remoteChipColors("upstream").border);
+  });
+
+  it("tints only the border and background, leaving label colour to the theme", () => {
+    const colors = remoteChipColors("origin");
+
+    expect(Object.keys(colors).toSorted()).toEqual(["background", "border"]);
+    // Low-alpha fill keeps the pill readable on both light and dark surfaces.
+    expect(colors.background).toContain("/ 0.14");
+  });
+
+  it("produces a colour for any remote name, including odd ones", () => {
+    for (const name of ["origin", "upstream", "fork", "", "a".repeat(200), "remote/with/slash"]) {
+      expect(remoteChipColors(name).border).toMatch(/^oklch\(/);
+    }
   });
 });
 
