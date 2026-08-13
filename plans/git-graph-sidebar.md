@@ -452,6 +452,33 @@ localStorage and an IndexedDB store (`t3code:connection-runtime`), so a client
 pointed at the old environment shows stale projects and fails to connect. Clear
 both, then pair again with a fresh token.
 
+### Ref pills (2026-08-14, `1aae4582d`)
+
+Requested change: every ref gets a pill, and each remote gets its own colour.
+
+- `VcsGraphRef.remoteName` is new. The remote is resolved server-side against
+  `git remote`, not by splitting the ref name on the first slash — that gets
+  `upstream/feature/nested` right by luck and a slash-containing remote name
+  wrong. A ref whose remote git cannot resolve still renders a pill, uncoloured.
+- `remoteChipColors(remoteName)` hashes (FNV-1a) into a hue palette kept
+  separate from the lane palette, so a pill colour is never confused for a lane.
+- **Only border and a 0.14-alpha fill are tinted**; the label keeps the theme
+  foreground. A mid-lightness hue as small text is below comfortable contrast on
+  light backgrounds, and this must work in both themes without a per-theme palette.
+- Verified by measuring computed styles in the live panel: `upstream/*` pills
+  resolve to `oklch(0.65 0.16 250 / 0.55)`, current branch to the primary blue,
+  tags to the warning amber, locals to the muted border. This repo has 888
+  `upstream` refs but only 3 `origin`, so no origin pill appeared in the first
+  200 commits — cross-remote distinctness is covered by unit test instead.
+
+### The branch was renamed out from under this work (2026-08-14)
+
+`debug/crash-investigation` was renamed to `master` by another session, after it
+merged upstream/main (236 commits) on top of these commits. **Nothing was lost** —
+all ten commits verified as ancestors of `master` with
+`git merge-base --is-ancestor`. If the plan's branch references look wrong, this
+is why. Do not "fix" the branch name; `master` is the intended primary name.
+
 ### Next: Phase 4
 
 Synthetic worktree rows (`vcs.rowChanges` for staged/unstaged, batched per-worktree
