@@ -107,7 +107,7 @@ Client-settings template: `confirmThreadArchive` —
    policy; add a pure unit test for the origin comparison.
 8. **Checks.** Typecheck / lint / test, then commit.
 
-**Current step: 1 — reading the remaining Manager internals before editing.**
+**All steps complete.** Landed in commit `4d5195a1b`.
 
 ## Gotchas identified so far
 
@@ -138,6 +138,54 @@ Client-settings template: `confirmThreadArchive` —
   `packages/shared/src/preview.ts:40`) — that is the rejected "anything non-localhost"
   option.
 
+## What landed
+
+| Concern                                               | File                                                                       |
+| ----------------------------------------------------- | -------------------------------------------------------------------------- |
+| The decision, pure and testable                       | `apps/desktop/src/preview/ExternalLinkPolicy.ts` (+ `.test.ts`, 10 cases)  |
+| Enforcement (`will-navigate`, `setWindowOpenHandler`) | `apps/desktop/src/preview/Manager.ts`                                      |
+| Per-tab value + `setExternalLinkBehavior` op          | `apps/desktop/src/preview/Manager.ts`                                      |
+| IPC channel / method / preload                        | `apps/desktop/src/ipc/channels.ts`, `ipc/methods/preview.ts`, `preload.ts` |
+| Setting + IPC schemas                                 | `packages/contracts/src/settings.ts`, `packages/contracts/src/ipc.ts`      |
+| Per-tab override store                                | `apps/web/src/browser/previewExternalLinkOverrides.ts`                     |
+| Override retired on tab close                         | `apps/web/src/browser/desktopTabLifetime.ts`                               |
+| Resolve global vs override, push to main              | `apps/web/src/components/preview/PreviewView.tsx`                          |
+| "External links" submenu                              | `apps/web/src/components/preview/PreviewMoreMenu.tsx`                      |
+| Global setting row + search entry                     | `apps/web/src/components/settings/SettingsPanels.tsx`, `settingsSearch.ts` |
+
+## Notes from implementation
+
+- `will-navigate` is main-frame-only in Electron 41 and carries a `details` object
+  (`url`, `isMainFrame`); the positional `(event, url, isInPlace, isMainFrame, …)` args
+  are deprecated. Used `details`, still guarded on `isMainFrame`.
+- Enforcement reads a **plain `Map`**, not a `Ref`. `will-navigate` must call
+  `preventDefault()` synchronously inside the listener; there is no opportunity to run
+  an Effect first. (Note `forwardShortcut` nearby _does_ `preventDefault()` after a
+  `yield* Ref.get` — that only works because `runFork` runs a fully-synchronous fiber to
+  completion before returning. Fragile; not copied here.)
+- New tests use `vite-plus/test`, not `vitest` — importing `vitest` directly fails
+  typecheck in this repo.
+- Adding `useClientSettings` to `PreviewView` pulled `~/state/server` into
+  `PreviewView.test.tsx`, whose `~/state/session` mock exposes only
+  `readPreparedConnection`. Fixed by mocking `~/hooks/useSettings` in that suite.
+
+## Verification
+
+- `pnpm typecheck` — clean across the monorepo.
+- `pnpm lint` — clean (3 pre-existing warnings in untouched files).
+- `@t3tools/web` tests — 238 files / 2254 tests pass.
+- `@t3tools/contracts` tests — 18 files / 241 tests pass.
+- `@t3tools/desktop` tests — new policy suite passes; 17 failures remain in
+  `DesktopEnvironment`, `DesktopAppIdentity`, `DesktopAssets`,
+  `DesktopConnectionCatalogStore`, `DesktopSavedEnvironments`,
+  `DesktopBackendConfiguration` and `electron-launcher`. All are Windows `\` vs `/`
+  path-separator assertions in files this change does not touch — pre-existing.
+- `pnpm fmt:check` — clean for every file in this change. Four plan docs elsewhere in
+  `plans/` are unformatted; they belong to other in-flight work and were left alone.
+
+**Not verified by running the app.** The policy has unit coverage, but nobody has
+clicked a real cross-origin link in a built desktop app yet.
+
 ## Progress log
 
 - [x] Investigated current behavior; confirmed no `will-navigate` on the guest and that
@@ -145,7 +193,17 @@ Client-settings template: `confirmThreadArchive` —
 - [x] Confirmed no existing setting of any kind for external-link behavior.
 - [x] Confirmed the hover-only address-bar button is the only current escape hatch.
 - [x] Chose policy + both setting surfaces with the user.
-- [ ] Steps 1-8 above.
+- [x] Steps 1-8: contracts, IPC, main-process enforcement, preload, renderer, settings
+      UI, tests, checks. Committed as `4d5195a1b`.
+
+## Possible follow-ups
+
+- A `context-menu` handler on the preview guest, giving a per-link "Open Link in System
+  Browser" / "Copy Link Address". Nothing registers `context-menu` on the guest today —
+  `DesktopWindow.ts:462-508` covers the React renderer only.
+- The address-bar "Open in system browser" button is still hover-only
+  (`PreviewChromeRow.tsx`), so it is invisible on a touch screen. Worth promoting into
+  the three-dot menu.
 
 ## Open questions for the user
 
