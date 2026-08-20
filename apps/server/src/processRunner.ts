@@ -1,3 +1,4 @@
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -11,6 +12,7 @@ import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import * as ProcessSpawnObserver from "./processSpawnObserver.ts";
 import {
   collectUint8StreamText,
   decodeUtf8,
@@ -404,11 +406,69 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
   } satisfies ProcessRunOutput;
 });
 
+/**
+ * Record every completed run against the spawn observer.
+ *
+ * Kept as a wrapper rather than folded into `runProcessCore` so the timing spans the whole
+ * operation the caller waited on, including the timeout wrapper — a run that times out is
+ * exactly the case worth seeing in a storm report.
+ */
+const observeRun = (
+  observer: ProcessSpawnObserver.ProcessSpawnObserver["Service"],
+  input: ProcessRunInput,
+  effect: Effect.Effect<ProcessRunOutput, ProcessRunError>,
+): Effect.Effect<ProcessRunOutput, ProcessRunError> =>
+  Effect.gen(function* () {
+    const startedAtMs = yield* Clock.currentTimeMillis;
+
+    const finish = (outcome: ProcessSpawnObserver.ProcessSpawnOutcome, exitCode: number | null) =>
+      Effect.gen(function* () {
+        const finishedAtMs = yield* Clock.currentTimeMillis;
+        yield* observer.record({
+          command: input.command,
+          subcommand: ProcessSpawnObserver.pickSubcommand(input.args),
+          cwd: input.spawnCwd ?? input.cwd ?? null,
+          durationMs: finishedAtMs - startedAtMs,
+          exitCode,
+          outcome,
+          finishedAtMs,
+        });
+      });
+
+    return yield* effect.pipe(
+      Effect.tap((output) =>
+        finish(
+          output.timedOut ? "timeout" : output.code === 0 ? "ok" : "non-zero-exit",
+          output.code,
+        ),
+      ),
+      Effect.tapError((error) =>
+        finish(
+          error._tag === "ProcessTimeoutError"
+            ? "timeout"
+            : error._tag === "ProcessSpawnError"
+              ? "spawn-error"
+              : "error",
+          null,
+        ),
+      ),
+    );
+  });
+
 export const make = Effect.fn("ProcessRunner.make")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  // Looked up optionally so tests can substitute a no-op, but defaulting to the live observer
+  // rather than requiring it: several layers build their own `ProcessRunner`, and a spawn that
+  // went unrecorded because of how a layer happened to be wired is a hole in exactly the
+  // measurement this exists to take. The live observer's store is process-wide, so every
+  // `ProcessRunner` contributes to one view.
+  const providedObserver = yield* Effect.serviceOption(ProcessSpawnObserver.ProcessSpawnObserver);
+  const observer = Option.isSome(providedObserver)
+    ? providedObserver.value
+    : yield* ProcessSpawnObserver.make();
 
   const run: ProcessRunner["Service"]["run"] = (input) =>
-    finalizeRunProcess(runProcessCore(spawner, input), input);
+    observeRun(observer, input, finalizeRunProcess(runProcessCore(spawner, input), input));
 
   return ProcessRunner.of({
     run,

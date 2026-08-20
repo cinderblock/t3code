@@ -22,6 +22,28 @@ const git = (cwd: string, args: ReadonlyArray<string>) =>
     });
   }).pipe(Effect.provide(ProcessRunner.layer));
 
+interface SpawnCounts {
+  revParse: number;
+  remote: number;
+}
+
+/** Wraps the real runner so a test can assert how many subprocesses a resolve actually costs. */
+const makeCountingProcessRunnerLayer = (counts: SpawnCounts) =>
+  Layer.effect(
+    ProcessRunner.ProcessRunner,
+    Effect.gen(function* () {
+      const inner = yield* ProcessRunner.make();
+      return ProcessRunner.ProcessRunner.of({
+        run: (input) =>
+          Effect.gen(function* () {
+            if (input.args.includes("rev-parse")) counts.revParse += 1;
+            if (input.args.includes("remote")) counts.remote += 1;
+            return yield* inner.run(input);
+          }),
+      });
+    }),
+  );
+
 const makeRepositoryIdentityResolverTestLayer = (options: {
   readonly positiveCacheTtl?: Duration.Input;
   readonly negativeCacheTtl?: Duration.Input;
@@ -231,5 +253,45 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
         ),
       ),
     ),
+  );
+
+  // Regression guard for the spawn storm: the work-tree root lookup used to run on every
+  // resolve, so the identity cache below it was paid for with a `git rev-parse` subprocess per
+  // call. At ~14 projects re-resolved on each projection snapshot that was the single largest
+  // source of subprocess churn on the machine. See plans/process-spawn-storm.md.
+  it.effect("resolves the work-tree root once per directory rather than on every call", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-spawn-count-test-",
+      });
+
+      yield* git(cwd, ["init"]);
+      yield* git(cwd, ["remote", "add", "origin", "git@github.com:T3Tools/t3code.git"]);
+
+      const counts: SpawnCounts = { revParse: 0, remote: 0 };
+
+      yield* Effect.gen(function* () {
+        const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+        for (const _attempt of [1, 2, 3, 4, 5]) {
+          const identity = yield* resolver.resolve(cwd);
+          expect(identity?.canonicalKey).toBe("github.com/t3tools/t3code");
+        }
+      }).pipe(
+        Effect.provide(
+          Layer.effect(
+            RepositoryIdentityResolver.RepositoryIdentityResolver,
+            RepositoryIdentityResolver.make({
+              cacheCapacity: 16,
+              negativeCacheTtl: Duration.seconds(60),
+              positiveCacheTtl: Duration.seconds(60),
+            }),
+          ).pipe(Layer.provide(makeCountingProcessRunnerLayer(counts))),
+        ),
+      );
+
+      expect(counts.revParse).toBe(1);
+      expect(counts.remote).toBe(1);
+    }),
   );
 });
