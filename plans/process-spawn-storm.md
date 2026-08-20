@@ -230,25 +230,104 @@ Aggregates trace NDJSON by span name (rate, avg/p50/p95/max, total wall time) an
 whose p95/p50 ratio indicates queueing rather than slow work. Complements `slow-spans.py`,
 which lists individual slow spans.
 
-## Still open — the dependency bug is not fixed
+## Prior art — checked 2026-08-20, and it changes the reporting plan
 
-Finding 3 (Effect's double `taskkill` on non-zero exit, through `cmd.exe`) is **untouched**.
-The fix above removes ~86% of the spawns that feed it, which should keep the feedback loop
-from igniting, but the amplifier is still armed for any other command that exits non-zero.
-Options, in increasing order of intrusiveness:
+**Do not file either finding as new without reading this section.** Both were already known in
+part. Corrects an earlier draft of this plan that recommended a fresh Effect report.
 
-1. Report upstream to Effect. The fix there is small and obvious: don't kill a process that
-   already exited, and use `execFile("taskkill", [...])` instead of `exec` so the kill doesn't
-   route through `cmd.exe` (that alone halves the process cost of each kill).
-2. Add a `patches/@effect__platform-node-shared@*.patch` locally — the repo already patches 15
-   packages, so the mechanism is established.
+### Finding 2 was reported and closed — reopening is explicitly invited
 
-Recommendation: do (1) first since it is upstream's bug and a clean report, and only reach for
-(2) if storms recur after the resolver fix ships.
+**pingdotgg/t3code#2037** (`mei-the-dev`, closed 2026-06-20 as COMPLETED) names the exact
+defect. Its section 4 is titled "`resolveRepositoryIdentityCacheKey` is uncached" and its
+"Suggested Fix 1 — Cache `resolveRepositoryIdentityCacheKey` (quick win)" is the fix we
+independently landed.
+
+It was closed by `juliusmarminge` (MEMBER) in a repo-wide sweep:
+
+> The replay and client-connection architecture and VCS status enrichment path were rewritten,
+> so `replayEvents` no longer follows the synchronous per-event path analyzed here. The narrow
+> cache proposal also no longer represents the current bottleneck.
+> This was closed as part of a large repo-wide maintenance sweep. If you think it's still
+> relevant, please reopen.
+
+Both halves of that are now measurably wrong, and the closing comment invites the correction:
+the analysed _caller_ (`replayEvents`) was indeed rewritten, but the uncached key survived the
+rewrite and reappeared under `ProjectionSnapshotQuery.resolveRepositoryIdentitiesForProjects`.
+It is not a narrow proposal and it is the current bottleneck — 86% of all subprocess spawns.
+
+That is a much stronger position than a new issue: it answers a maintainer's stated reason for
+closing, with numbers.
+
+### Finding 3 is already reported, already fixed upstream, and blocked on a version pin
+
+**pingdotgg/t3code#2537** (`samvdst`, OPEN, 6 comments) reports the same `cmd.exe` / `conhost`
+flashes, with Process Monitor captures of 43 `cmd.exe /d /s /c "taskkill /pid N /T /F"` in a
+one-second window. `CDVolvik` (contributor) traced it to `NodeChildProcessSpawner` and opened
+**Effect-TS/effect#7154**, which is **MERGED** (2026-08-09).
+
+Verified against the merge commit `e74c302afe0368e5d3f15d18c10fc54cf33f9003` and the published
+tarball:
+
+- #7154 replaces `NodeChildProcess.exec` with
+  `NodeChildProcess.execFile("taskkill", [...], { windowsHide: true })` and adds `windowsHide`
+  to spawn. **One kill now costs 1 process instead of 4.**
+- **`@effect/platform-node-shared@4.0.0-beta.107`** (published 2026-08-10) contains it.
+  `pnpm-workspace.yaml` pins the whole `@effect/*` catalog to **`4.0.0-beta.103`**
+  (2026-08-04), so t3code does not have it. CDVolvik's warning stands: four betas, not
+  assumed drop-in.
+
+**What #7154 does NOT fix, and is still unreported anywhere:** the kill happens _at all_ for a
+process that already exited, and happens **twice**. Verified present at the merge commit and in
+beta.107:
+
+- `childProcess.on("exit", code => { if (code !== 0 ...) killProcessGroupOnExit(...) })`
+  — merge commit line 514
+- the `acquireRelease` finalizer, whose `if (exited)` branch re-kills for the same condition
+  — merge commit line ~489
+
+So after #7154 an ordinary non-zero exit still spawns two `taskkill` processes to tear down a
+PID that is already gone. Down from ~8 processes to ~2, but still redundant work on a hot path.
+**This is the only genuinely novel piece of finding 3.**
+
+### Other open issues in the same neighbourhood
+
+- **#4773** (OPEN) `Local backend becomes CPU-bound and unresponsive during idle VCS/provider
+refreshes` — same symptom, different trigger (Sidebar V2 driving duplicate `vcs.listRefs`).
+- **#7076** (OPEN) `Overlapping VCS status refreshes multiply Git and network work` — no shared
+  in-flight refresh per working directory.
+- **#7536** (OPEN) `Uncached project favicon discovery amplifies reconnect hydration...` —
+  the favicon defect, still open upstream. **Our fork already fixed it in `401da737f`**, so
+  that fix is portable if we want to offer it.
+- **#4182**, **#1986** (CLOSED) — earlier Windows-CPU and slow-toast reports.
+
+## Reporting plan (drafts in `plans/upstream-reports.md`)
+
+Where each piece belongs, given the prior art above:
+
+| finding                                   | destination                                                      | why                                                                                                            |
+| ----------------------------------------- | ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| 2 — uncached work-tree root               | **reopen pingdotgg/t3code#2037** with a comment, then a small PR | maintainer invited reopening; our data refutes the stated close reason                                         |
+| 3 — `cmd.exe` per kill                    | **comment on pingdotgg/t3code#2537**                             | already reported and fixed upstream; the useful addition is that beta.107 has the fix, plus the perf dimension |
+| 3b — killing an already-exited PID, twice | **new Effect-TS/effect issue**                                   | genuinely unreported; survives #7154                                                                           |
+| favicon (`401da737f`)                     | optional PR against **#7536**                                    | we already fixed it locally                                                                                    |
+
+Notes on venue: `CONTRIBUTING.md` says _"If you are thinking about a non-trivial change, open
+an issue first"_ and warns that external PRs are labelled `vouch:unvouched` and may be closed
+or ignored. It explicitly favours _"small, focused bug fixes"_ and _"small performance
+improvements"_ — which is exactly the shape of the resolver fix (one file, one cache).
+
+**Discord is support, not the tracker.** `README.md` line 108 offers it only as
+_"Need support?"_, while `CONTRIBUTING.md` routes changes through issues. Keep the technical
+record on GitHub so it is searchable and linkable; a Discord message is worth posting only as
+a pointer to the issue, never as a second copy of the analysis. Splitting the detail across
+both is how it gets lost.
 
 ## Open questions for the user
 
-1. Report finding 3 (double-taskkill on non-zero exit) upstream to Effect, and finding 2 to
-   pingdotgg/t3code? Both are clean, self-contained reproductions. Recommendation: yes for
-   Effect — it is a pure dependency bug with an obvious fix (don't kill a process that already
-   exited; and use `execFile` instead of `exec` to skip cmd.exe).
+1. Reopen #2037 versus filing fresh? Recommendation: **reopen** — a maintainer's own words
+   invite it, and answering a stated close reason with measurements is stronger than a new
+   issue that looks like a duplicate of a closed one.
+2. Offer the favicon fix (`401da737f`) against #7536 as well, or keep it on the fork?
+3. Propose the `beta.103 → beta.107` catalog bump on #2537, or leave that to maintainers? It
+   touches every `@effect/*` package, so it is not the "small, focused" change CONTRIBUTING
+   asks for — recommend flagging it, not PRing it.
