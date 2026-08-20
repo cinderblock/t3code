@@ -140,8 +140,8 @@ Commits: `49e26ab64` (fix + instrumentation), `2aea7c04a` (investigation notes).
 >
 > ## Why it matters
 >
-> A non-zero exit is an ordinary outcome for probing commands, not an error path. `git rev-parse
---show-toplevel` exits 128 in any non-repository directory; `git remote -v`, `gh`, and version
+> A non-zero exit is an ordinary outcome for probing commands, not an error path.
+> `git rev-parse --show-toplevel` exits 128 in any non-repository directory; `git remote -v`, `gh`, and version
 > probes behave similarly. Each such call therefore spawns extra processes on Windows, where
 > process creation is expensive.
 >
