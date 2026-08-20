@@ -175,7 +175,8 @@ Client-settings template: `confirmThreadArchive` —
 - `pnpm lint` — clean (3 pre-existing warnings in untouched files).
 - `@t3tools/web` tests — 238 files / 2254 tests pass.
 - `@t3tools/contracts` tests — 18 files / 241 tests pass.
-- `@t3tools/desktop` tests — new policy suite passes; 17 failures remain in
+- `@t3tools/desktop` `Manager.test.ts` + `ExternalLinkPolicy.test.ts` — 52 tests pass.
+- `@t3tools/desktop` full suite — 17 failures remain in
   `DesktopEnvironment`, `DesktopAppIdentity`, `DesktopAssets`,
   `DesktopConnectionCatalogStore`, `DesktopSavedEnvironments`,
   `DesktopBackendConfiguration` and `electron-launcher`. All are Windows `\` vs `/`
@@ -183,8 +184,33 @@ Client-settings template: `confirmThreadArchive` —
 - `pnpm fmt:check` — clean for every file in this change. Four plan docs elsewhere in
   `plans/` are unformatted; they belong to other in-flight work and were left alone.
 
-**Not verified by running the app.** The policy has unit coverage, but nobody has
-clicked a real cross-origin link in a built desktop app yet.
+### Attempted live GUI verification — blocked by the single-instance lock
+
+`pnpm build:desktop` succeeds, and the built `dist-electron/main.cjs` does contain the
+new code (`will-navigate`, `preview-set-external-link-behavior`,
+`externalNavigationTarget`).
+
+Launching it to click a real link did **not** work, and the reason is worth recording:
+
+```
+T3CODE_HOME=/tmp/t3code-extlink-verify pnpm start:desktop   # exits 0, no window, no new process
+```
+
+The app holds Electron's single-instance lock (`apps/desktop/src/app/DesktopClerk.ts:133-136`);
+a secondary instance calls `electronApp.quit` and interrupts bootstrap before
+`whenReady`. **`T3CODE_HOME` does not bypass this** — it isolates state, not the lock. So
+while any T3 Code is running, a second launch just fires `second-instance` on the
+primary (which reveals its window) and exits.
+
+Consequence: a live click-through requires quitting the running T3 Code first. That was
+not done here because the user's own session was live in it.
+
+**So: not verified by clicking a link in a running app.** What _is_ verified is the
+listener wiring, via `Manager.test.ts` -> "external links", which installs the real
+manager against a fake guest `WebContents` and invokes the handlers the manager
+registered. That covers cross-origin -> `openExternal` + `preventDefault`, same-origin
+passthrough, subframe passthrough, the per-tab override, both window-open branches, and
+the unknown-tab error. The remaining unknown is Electron itself behaving as documented.
 
 ## Progress log
 
@@ -195,6 +221,17 @@ clicked a real cross-origin link in a built desktop app yet.
 - [x] Chose policy + both setting surfaces with the user.
 - [x] Steps 1-8: contracts, IPC, main-process enforcement, preload, renderer, settings
       UI, tests, checks. Committed as `4d5195a1b`.
+
+## How to finish verifying (30 seconds, needs T3 Code closed)
+
+1. Quit every running T3 Code (the single-instance lock above).
+2. `pnpm build:desktop && pnpm start:desktop`
+3. Open a preview on any page with an off-site link — the thread's preview panel,
+   address bar → `example.com`, then click "More information..." (which points at
+   `iana.org`).
+4. Expected: the system browser opens `iana.org` and the panel **stays** on
+   `example.com`. Then ⋮ → External links → "Open in preview" and click again — it
+   should now navigate in-panel.
 
 ## Possible follow-ups
 

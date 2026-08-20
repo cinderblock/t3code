@@ -64,6 +64,7 @@ const {
   fromId,
   getFocusedWebContents,
   mkdir,
+  openExternal,
   showItemInFolder,
   webviewSend,
   writeFile,
@@ -74,6 +75,7 @@ const {
   fromId: vi.fn((_id?: number) => null),
   getFocusedWebContents: vi.fn(() => null),
   mkdir: vi.fn((_path: string) => undefined),
+  openExternal: vi.fn(async (_url: string) => undefined),
   showItemInFolder: vi.fn(),
   webviewSend: vi.fn(),
   writeFile: vi.fn((_path: string, _data: Uint8Array) => undefined),
@@ -89,6 +91,7 @@ vi.mock("electron", () => ({
     createFromPath,
   },
   shell: {
+    openExternal,
     showItemInFolder,
   },
   session: {
@@ -475,6 +478,208 @@ describe("PreviewManager", () => {
       }),
     ),
   );
+
+  /**
+   * Drives the listeners the manager actually installs on the guest, rather
+   * than the pure policy (covered in ExternalLinkPolicy.test.ts). What is
+   * being checked here is the wiring: that `will-navigate` is registered at
+   * all, that it cancels the in-panel navigation, and that the window-open
+   * handler stops collapsing cross-origin popups back into the webview.
+   */
+  describe("external links", () => {
+    const CURRENT_URL = "http://localhost:5173/app";
+
+    interface LinkHarness {
+      readonly wc: never;
+      readonly loadURL: ReturnType<typeof vi.fn>;
+      readonly willNavigate: () => (event: unknown) => void;
+      readonly windowOpen: () => (details: { readonly url: string }) => unknown;
+    }
+
+    const makeLinkWebContents = (id: number): LinkHarness => {
+      const listeners = new Map<string, (event: unknown) => void>();
+      const loadURL = vi.fn(async () => undefined);
+      let windowOpenHandler: ((details: { readonly url: string }) => unknown) | null = null;
+      const wc = {
+        id,
+        isDestroyed: () => false,
+        isDevToolsOpened: () => false,
+        getType: () => "webview",
+        getURL: () => CURRENT_URL,
+        getTitle: () => "App",
+        isLoading: () => false,
+        getZoomFactor: () => 1,
+        setZoomFactor: vi.fn(),
+        loadURL,
+        on: vi.fn((event: string, listener: (event: unknown) => void) => {
+          listeners.set(event, listener);
+        }),
+        off: vi.fn(),
+        ipc: { on: vi.fn(), off: vi.fn() },
+        send: webviewSend,
+        navigationHistory: { canGoBack: () => false, canGoForward: () => false },
+        setWindowOpenHandler: vi.fn((handler: (details: { readonly url: string }) => unknown) => {
+          windowOpenHandler = handler;
+        }),
+        debugger: {
+          isAttached: () => false,
+          attach: vi.fn(),
+          sendCommand: vi.fn(async () => undefined),
+          on: vi.fn(),
+          off: vi.fn(),
+        },
+      };
+      return {
+        wc: wc as never,
+        loadURL,
+        willNavigate: () => {
+          const listener = listeners.get("will-navigate");
+          if (!listener) throw new Error("will-navigate listener was never registered");
+          return listener;
+        },
+        windowOpen: () => {
+          if (!windowOpenHandler) throw new Error("window open handler was never registered");
+          return windowOpenHandler;
+        },
+      };
+    };
+
+    const navigationEvent = (url: string, isMainFrame = true) => ({
+      url,
+      isMainFrame,
+      preventDefault: vi.fn(),
+    });
+
+    const attach = (manager: PreviewManager.PreviewManager["Service"], tabId: string) =>
+      Effect.gen(function* () {
+        const harness = makeLinkWebContents(42);
+        fromId.mockReturnValue(harness.wc);
+        yield* manager.createTab(tabId);
+        yield* manager.registerWebview(tabId, 42);
+        yield* Effect.yieldNow;
+        return harness;
+      });
+
+    effectIt.effect("sends a cross-origin link click to the system browser by default", () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          openExternal.mockClear();
+          const harness = yield* attach(manager, "tab_links_external");
+
+          const event = navigationEvent("https://github.com/anthropics");
+          harness.willNavigate()(event);
+          yield* Effect.yieldNow;
+          yield* Effect.yieldNow;
+
+          expect(event.preventDefault).toHaveBeenCalled();
+          expect(openExternal).toHaveBeenCalledWith("https://github.com/anthropics");
+        }),
+      ),
+    );
+
+    effectIt.effect("lets a same-origin link click navigate in the panel", () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          openExternal.mockClear();
+          const harness = yield* attach(manager, "tab_links_same_origin");
+
+          const event = navigationEvent("http://localhost:5173/settings");
+          harness.willNavigate()(event);
+          yield* Effect.yieldNow;
+          yield* Effect.yieldNow;
+
+          expect(event.preventDefault).not.toHaveBeenCalled();
+          expect(openExternal).not.toHaveBeenCalled();
+        }),
+      ),
+    );
+
+    effectIt.effect("leaves a subframe navigation alone", () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          openExternal.mockClear();
+          const harness = yield* attach(manager, "tab_links_subframe");
+
+          const event = navigationEvent("https://ads.example.com/frame", false);
+          harness.willNavigate()(event);
+          yield* Effect.yieldNow;
+          yield* Effect.yieldNow;
+
+          expect(event.preventDefault).not.toHaveBeenCalled();
+          expect(openExternal).not.toHaveBeenCalled();
+        }),
+      ),
+    );
+
+    effectIt.effect("honours a per-tab override back to in-app", () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          openExternal.mockClear();
+          const harness = yield* attach(manager, "tab_links_override");
+
+          yield* manager.setExternalLinkBehavior("tab_links_override", "in-app");
+
+          const event = navigationEvent("https://github.com/anthropics");
+          harness.willNavigate()(event);
+          yield* Effect.yieldNow;
+          yield* Effect.yieldNow;
+
+          expect(event.preventDefault).not.toHaveBeenCalled();
+          expect(openExternal).not.toHaveBeenCalled();
+        }),
+      ),
+    );
+
+    effectIt.effect("sends a cross-origin popup to the system browser instead of the panel", () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          openExternal.mockClear();
+          const harness = yield* attach(manager, "tab_links_popup");
+
+          expect(harness.windowOpen()({ url: "https://github.com/anthropics" })).toEqual({
+            action: "deny",
+          });
+          yield* Effect.yieldNow;
+          yield* Effect.yieldNow;
+
+          expect(openExternal).toHaveBeenCalledWith("https://github.com/anthropics");
+          expect(harness.loadURL).not.toHaveBeenCalled();
+        }),
+      ),
+    );
+
+    effectIt.effect("still collapses a same-origin popup into the current webview", () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          openExternal.mockClear();
+          const harness = yield* attach(manager, "tab_links_popup_same_origin");
+
+          expect(harness.windowOpen()({ url: "http://localhost:5173/popup" })).toEqual({
+            action: "deny",
+          });
+          yield* Effect.yieldNow;
+          yield* Effect.yieldNow;
+
+          expect(harness.loadURL).toHaveBeenCalledWith("http://localhost:5173/popup");
+          expect(openExternal).not.toHaveBeenCalled();
+        }),
+      ),
+    );
+
+    effectIt.effect("rejects setting a behavior on an unknown tab", () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const exit = yield* Effect.exit(manager.setExternalLinkBehavior("tab_missing", "in-app"));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isSuccess(exit)) return;
+          expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
+            _tag: "PreviewTabNotFoundError",
+            tabId: "tab_missing",
+          });
+        }),
+      ),
+    );
+  });
 
   effectIt.effect("emulates prefers-color-scheme and re-applies it across webview swaps", () =>
     withManager((manager) =>
