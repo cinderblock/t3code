@@ -176,7 +176,13 @@ Client-settings template: `confirmThreadArchive` —
 - `@t3tools/web` tests — 238 files / 2254 tests pass.
 - `@t3tools/contracts` tests — 18 files / 241 tests pass.
 - `@t3tools/desktop` `Manager.test.ts` + `ExternalLinkPolicy.test.ts` — 52 tests pass.
-- `@t3tools/desktop` full suite — 17 failures remain in
+- `@t3tools/desktop` full suite — 18 failed / 446 passed (464). Neither preview test
+  file appears in the failure list. The count moved from a pre-change baseline of
+  17 failed / 440 passed (457): +7 tests (the new integration cases, all passing) and
+  one _additional_ failure, `DesktopObservability > bounds the number of retained
+backend child output chunks` — which passes on its own (6/6) and is a load-related
+  flake of the kind the `compute-budget` skill describes, not a regression.
+- Pre-existing failures in
   `DesktopEnvironment`, `DesktopAppIdentity`, `DesktopAssets`,
   `DesktopConnectionCatalogStore`, `DesktopSavedEnvironments`,
   `DesktopBackendConfiguration` and `electron-launcher`. All are Windows `\` vs `/`
