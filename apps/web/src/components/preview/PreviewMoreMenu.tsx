@@ -1,7 +1,9 @@
 "use client";
 
-import type { DesktopPreviewColorScheme } from "@t3tools/contracts";
+import type { DesktopPreviewColorScheme, PreviewExternalLinkBehavior } from "@t3tools/contracts";
 import { Minus, MoreVertical, Plus as PlusIcon, RotateCcw } from "lucide-react";
+
+import type { PreviewExternalLinkOverride } from "~/browser/previewExternalLinkOverrides";
 
 import { Button } from "~/components/ui/button";
 import {
@@ -29,6 +31,18 @@ const COLOR_SCHEME_OPTIONS: ReadonlyArray<{
   { value: "dark", label: "Dark" },
 ];
 
+/**
+ * The override radio group uses "default" as a real value rather than an
+ * absent selection, so the menu always shows which of the three states the
+ * tab is in — including "no override, following the setting".
+ */
+const EXTERNAL_LINK_OVERRIDE_DEFAULT = "default";
+
+const EXTERNAL_LINK_BEHAVIOR_LABELS: Record<PreviewExternalLinkBehavior, string> = {
+  "system-browser": "Open in system browser",
+  "in-app": "Open in preview",
+};
+
 interface Props {
   /** Active preview tab id. Tab-targeting actions are disabled without it. */
   tabId: string | null;
@@ -42,6 +56,12 @@ interface Props {
   zoomFactor: number;
   /** Emulated `prefers-color-scheme` for the guest page. */
   colorScheme: DesktopPreviewColorScheme;
+  /** This tab's external-link exception, or `null` to follow the setting. */
+  externalLinkOverride: PreviewExternalLinkOverride;
+  /** The global setting, shown so "Use default" says what it resolves to. */
+  externalLinkDefault: PreviewExternalLinkBehavior;
+  /** Set or clear this tab's exception. `null` clears it. */
+  onExternalLinkOverrideChange: (next: PreviewExternalLinkBehavior | null) => void;
   /** Fixed viewport modes expose the device toolbar and resize rails. */
   deviceToolbarVisible: boolean;
   /** Switches between fill-panel mode and a fixed responsive viewport. */
@@ -62,6 +82,9 @@ export function PreviewMoreMenu({
   hasWebContents,
   zoomFactor,
   colorScheme,
+  externalLinkOverride,
+  externalLinkDefault,
+  onExternalLinkOverrideChange,
   deviceToolbarVisible,
   onToggleDeviceToolbar,
   nativePictureInPicture,
@@ -107,6 +130,41 @@ export function PreviewMoreMenu({
         <MenuItem onClick={onToggleDeviceToolbar} disabled={tabDisabled}>
           {deviceToolbarVisible ? "Hide device toolbar" : "Show device toolbar"}
         </MenuItem>
+        <MenuSub>
+          <MenuSubTrigger disabled={!tabId}>External links</MenuSubTrigger>
+          <MenuSubPopup className="min-w-56">
+            <MenuRadioGroup
+              value={externalLinkOverride ?? EXTERNAL_LINK_OVERRIDE_DEFAULT}
+              onValueChange={(value) => {
+                onExternalLinkOverrideChange(
+                  value === EXTERNAL_LINK_OVERRIDE_DEFAULT
+                    ? null
+                    : (value as PreviewExternalLinkBehavior),
+                );
+              }}
+            >
+              <MenuRadioItem value={EXTERNAL_LINK_OVERRIDE_DEFAULT}>
+                {`Use default (${EXTERNAL_LINK_BEHAVIOR_LABELS[externalLinkDefault].toLowerCase()})`}
+              </MenuRadioItem>
+              <MenuRadioItem value="system-browser">
+                {EXTERNAL_LINK_BEHAVIOR_LABELS["system-browser"]}
+              </MenuRadioItem>
+              <MenuRadioItem value="in-app">
+                {EXTERNAL_LINK_BEHAVIOR_LABELS["in-app"]}
+              </MenuRadioItem>
+            </MenuRadioGroup>
+            <MenuSeparator />
+            {/*
+              Spelled out rather than hidden behind a hover tooltip: the scope
+              of the rule is the whole point, and it is easy to read this as
+              "all links" otherwise.
+            */}
+            <p className="px-2 py-1.5 text-xs text-muted-foreground">
+              Applies to links that leave the current site. Links within the site, the address bar,
+              and agent navigation always stay in the preview.
+            </p>
+          </MenuSubPopup>
+        </MenuSub>
         <MenuSub>
           <MenuSubTrigger disabled={tabDisabled}>Appearance</MenuSubTrigger>
           <MenuSubPopup className="min-w-32">

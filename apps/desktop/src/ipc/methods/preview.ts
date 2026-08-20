@@ -14,6 +14,7 @@ import {
   DesktopPreviewRegisterWebviewInputSchema,
   DesktopPreviewScreenshotArtifactSchema,
   DesktopPreviewSetColorSchemeInputSchema,
+  DesktopPreviewSetExternalLinkBehaviorInputSchema,
   DesktopPreviewTabInputSchema,
   DesktopPreviewWebviewConfigSchema,
   PreviewAnnotationSubmissionResultSchema,
@@ -146,6 +147,18 @@ export const setColorScheme = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.preview.setColorScheme")(function* ({ tabId, colorScheme }) {
     const manager = yield* PreviewManager.PreviewManager;
     yield* manager.setColorScheme(tabId, colorScheme);
+  }),
+});
+export const setExternalLinkBehavior = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.PREVIEW_SET_EXTERNAL_LINK_BEHAVIOR_CHANNEL,
+  payload: DesktopPreviewSetExternalLinkBehaviorInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.setExternalLinkBehavior")(function* ({
+    tabId,
+    behavior,
+  }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.setExternalLinkBehavior(tabId, behavior);
   }),
 });
 export const openDevTools = tabMethod(
@@ -367,6 +380,7 @@ export const methods = [
   resetZoom,
   hardReload,
   setColorScheme,
+  setExternalLinkBehavior,
   openDevTools,
   clearCookies,
   clearCache,

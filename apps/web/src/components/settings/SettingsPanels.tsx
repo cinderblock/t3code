@@ -1938,6 +1938,36 @@ export function GeneralSettingsPanel() {
         />
 
         <SettingsRow
+          {...searchableSetting("preview-external-links")}
+          description="In the preview browser, hand links that leave the current site to your system browser instead of following them in the panel. Links within the site, the address bar, and agent navigation always stay in the preview. Individual tabs can override this from the preview's ⋮ menu."
+          resetAction={
+            settings.previewExternalLinkBehavior !==
+            DEFAULT_UNIFIED_SETTINGS.previewExternalLinkBehavior ? (
+              <SettingResetButton
+                label="external link handling"
+                onClick={() =>
+                  updateSettings({
+                    previewExternalLinkBehavior:
+                      DEFAULT_UNIFIED_SETTINGS.previewExternalLinkBehavior,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.previewExternalLinkBehavior === "system-browser"}
+              onCheckedChange={(checked) =>
+                updateSettings({
+                  previewExternalLinkBehavior: checked ? "system-browser" : "in-app",
+                })
+              }
+              aria-label="Open external links in your system browser"
+            />
+          }
+        />
+
+        <SettingsRow
           {...searchableSetting("provider-update-checks")}
           description="Check installed provider CLIs for newer available versions."
           resetAction={

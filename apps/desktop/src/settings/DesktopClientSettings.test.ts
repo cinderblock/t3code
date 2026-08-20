@@ -30,6 +30,7 @@ const clientSettings: ClientSettings = {
   fontSmoothing: true,
   glassOpacity: 80,
   planModeEnabled: false,
+  previewExternalLinkBehavior: "system-browser",
   providerModelPreferences: {},
   sidebarAutoSettleAfterDays: 3,
   sidebarProjectGroupingMode: "repository_path",

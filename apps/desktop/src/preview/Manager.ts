@@ -26,7 +26,9 @@ import type {
   PreviewAutomationStatus,
   PreviewAutomationTypeInput,
   PreviewAutomationWaitForInput,
+  PreviewExternalLinkBehavior,
 } from "@t3tools/contracts";
+import { DEFAULT_PREVIEW_EXTERNAL_LINK_BEHAVIOR } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { BrowserWindow, type Session, clipboard, nativeImage, shell, webContents } from "electron";
@@ -59,6 +61,7 @@ import {
   HUMAN_INPUT_CHANNEL,
   START_PICK_CHANNEL,
 } from "./GuestProtocol.ts";
+import { externalNavigationTarget } from "./ExternalLinkPolicy.ts";
 import { isPreviewAnnotationPayload } from "./PickedElementPayload.ts";
 import { playwrightInjectedRuntimeInstallExpression } from "./PlaywrightInjectedRuntime.ts";
 import { makePreviewAutomationKeySequence } from "./PreviewKeyboard.ts";
@@ -504,6 +507,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     { readonly semaphore: Semaphore.Semaphore; users: number }
   >();
   const tabLifecycleGenerations = new Map<string, number>();
+  // Per-tab "where do cross-origin link clicks go", pushed down by the
+  // renderer, which owns the global setting and the per-tab override. A plain
+  // Map rather than a Ref because `will-navigate` has to decide and call
+  // `preventDefault()` synchronously, inside the listener, before any Effect
+  // could be run to read one. Absent entries fall back to the shipped default,
+  // so a tab behaves correctly during the window between attaching the guest
+  // and the renderer pushing its first value.
+  const externalLinkBehaviors = new Map<string, PreviewExternalLinkBehavior>();
 
   const attempt = <A>(errorContext: PreviewOperationContext, evaluate: () => A) =>
     Effect.try({
@@ -1372,6 +1383,35 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         ],
       });
     });
+    const openExternally = (url: string): void => {
+      runFork(
+        attemptPromise({ operation: "openExternalLink", tabId, webContentsId: wc.id }, () =>
+          shell.openExternal(url),
+        ).pipe(Effect.ignore),
+      );
+    };
+    /**
+     * `Some(href)` when this navigation belongs in the system browser. Reads
+     * the tab's live URL rather than a cached snapshot so the comparison is
+     * against wherever the tab actually is right now.
+     */
+    const externalTargetFor = (navigationUrl: string): Option.Option<string> =>
+      externalNavigationTarget({
+        behavior: externalLinkBehaviors.get(tabId) ?? DEFAULT_PREVIEW_EXTERNAL_LINK_BEHAVIOR,
+        currentUrl: wc.getURL(),
+        navigationUrl,
+      });
+    const willNavigate = (
+      event: Electron.Event<Electron.WebContentsWillNavigateEventParams>,
+    ): void => {
+      if (!event.isMainFrame) return;
+      const target = externalTargetFor(event.url);
+      if (Option.isNone(target)) return;
+      // Cancel the in-panel navigation and hand the URL to the OS. The panel
+      // stays on the page the user was reading.
+      event.preventDefault();
+      openExternally(target.value);
+    };
     const beforeInput = (event: Electron.Event, input: Electron.Input): void => {
       if (isPreviewRefreshShortcut(input)) {
         event.preventDefault();
@@ -1393,6 +1433,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.off("did-start-loading", sync);
         wc.off("did-stop-loading", sync);
         wc.off("did-fail-load", failed as never);
+        wc.off("will-navigate", willNavigate);
         wc.off("before-input-event", beforeInput);
         wc.ipc.off(HUMAN_INPUT_CHANNEL, humanInput);
       }).pipe(Effect.ignore),
@@ -1406,7 +1447,16 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.on("did-stop-loading", sync);
         wc.on("did-fail-load", failed as never);
         wc.ipc.on(HUMAN_INPUT_CHANNEL, humanInput);
+        wc.on("will-navigate", willNavigate);
         wc.setWindowOpenHandler(({ url }) => {
+          // A popup the page asked for. Under the system-browser policy a
+          // cross-origin one goes to the OS; otherwise it collapses into the
+          // current webview, since the preview panel has no popup surface.
+          const target = externalTargetFor(url);
+          if (Option.isSome(target)) {
+            openExternally(target.value);
+            return { action: "deny" };
+          }
           runFork(
             attemptPromise({ operation: "openPreviewWindow", tabId, webContentsId: wc.id }, () =>
               wc.loadURL(url),
@@ -1503,6 +1553,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       ] as const;
     });
     if (Option.isNone(tab)) return;
+    externalLinkBehaviors.delete(tabId);
     const closedTab = tab.value;
     if (closedTab.webContentsId != null) {
       yield* Effect.all(
@@ -1984,6 +2035,16 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         );
       }
     }).pipe(Effect.ignore);
+
+  const setExternalLinkBehavior = Effect.fn("PreviewManager.setExternalLinkBehavior")(function* (
+    tabId: string,
+    behavior: PreviewExternalLinkBehavior,
+  ) {
+    if (!(yield* SynchronizedRef.get(tabsRef)).has(tabId)) {
+      return yield* new PreviewTabNotFoundError({ tabId });
+    }
+    externalLinkBehaviors.set(tabId, behavior);
+  });
 
   const setColorScheme = Effect.fn("PreviewManager.setColorScheme")(function* (
     tabId: string,
@@ -3310,6 +3371,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     saveRecording,
     setAnnotationTheme,
     setColorScheme,
+    setExternalLinkBehavior,
     setMainWindow,
     startRecording,
     closePictureInPicture,
@@ -3606,6 +3668,16 @@ export class PreviewManager extends Context.Service<
       tabId: string,
       colorScheme: DesktopPreviewColorScheme,
     ) => Effect.Effect<void, PreviewManagerError>;
+    /**
+     * Set what a cross-origin, page-initiated navigation does in this tab.
+     * The renderer resolves the global setting against any per-tab override
+     * and pushes the result; enforcement lives in `will-navigate` and the
+     * window-open handler.
+     */
+    readonly setExternalLinkBehavior: (
+      tabId: string,
+      behavior: PreviewExternalLinkBehavior,
+    ) => Effect.Effect<void, PreviewManagerError>;
     readonly openDevTools: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly clearCookies: () => Effect.Effect<void, PreviewManagerError>;
     readonly clearCache: () => Effect.Effect<void, PreviewManagerError>;
@@ -3703,6 +3775,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     resetZoom: operations.resetZoom,
     hardReload: operations.hardReload,
     setColorScheme: operations.setColorScheme,
+    setExternalLinkBehavior: operations.setExternalLinkBehavior,
     openDevTools: operations.openDevTools,
     clearCookies: Effect.fn("PreviewManager.clearCookies")(function* () {
       yield* browserSession

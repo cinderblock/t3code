@@ -1,6 +1,7 @@
 import { previewBridge } from "~/components/preview/previewBridge";
 
 import { stopBrowserRecording } from "./browserRecording";
+import { usePreviewExternalLinkOverrideStore } from "./previewExternalLinkOverrides";
 
 interface DesktopTabLease {
   references: number;
@@ -59,6 +60,9 @@ export function acquireDesktopTab(tabId: string): AcquiredDesktopTab {
         const latest = leases.get(tabId);
         if (!latest || latest.references > 0) return;
         leases.delete(tabId);
+        // The tab is genuinely going away (not just being switched away
+        // from), so its external-link override retires with it.
+        usePreviewExternalLinkOverrideStore.getState().clearTab(tabId);
         void enqueueDesktopTabOperation(tabId, async () => {
           await stopBrowserRecording(tabId).catch(() => null);
           await previewBridge?.closeTab(tabId);

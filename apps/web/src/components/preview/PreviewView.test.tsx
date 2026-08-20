@@ -41,6 +41,14 @@ vi.mock("~/state/session", () => ({
   readPreparedConnection: mocks.readPreparedConnection,
 }));
 
+// Stubbed rather than pulled in for real: the real module reaches
+// `~/state/server` -> `~/state/session`, which is mocked down to the one
+// export this suite needs.
+vi.mock("~/hooks/useSettings", () => ({
+  useClientSettings: (select: (settings: Record<string, unknown>) => unknown) =>
+    select({ previewExternalLinkBehavior: "system-browser" }),
+}));
+
 vi.mock("~/composerDraftStore", () => ({
   useComposerDraftStore: (
     select: (store: { addPreviewAnnotation: () => void; addImage: () => void }) => unknown,

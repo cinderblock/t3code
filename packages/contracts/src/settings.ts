@@ -111,6 +111,19 @@ export const DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE: EnvironmentIdentificationM
 export const FontFamilyPreference = Schema.String.check(Schema.isMaxLength(200));
 export type FontFamilyPreference = typeof FontFamilyPreference.Type;
 
+/**
+ * What the in-app browser does when a page navigates away from the origin the
+ * tab is currently on — a link click to a different site, or a `target=_blank`
+ * popup. `system-browser` hands the URL to the OS default browser and leaves
+ * the panel where it was; `in-app` follows the link inside the panel.
+ *
+ * Only page/user-initiated navigation is subject to this. Address-bar submits
+ * and agent-driven navigations always load in-panel regardless.
+ */
+export const PreviewExternalLinkBehavior = Schema.Literals(["in-app", "system-browser"]);
+export type PreviewExternalLinkBehavior = typeof PreviewExternalLinkBehavior.Type;
+export const DEFAULT_PREVIEW_EXTERNAL_LINK_BEHAVIOR: PreviewExternalLinkBehavior = "system-browser";
+
 export const ClientSettingsSchema = Schema.Struct({
   confirmThreadArchive: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
@@ -177,6 +190,9 @@ export const ClientSettingsSchema = Schema.Struct({
   // old keys, so everyone, including prior beta opt-outs, resets to the new
   // default sidebar.
   legacySidebarEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  previewExternalLinkBehavior: PreviewExternalLinkBehavior.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_PREVIEW_EXTERNAL_LINK_BEHAVIOR)),
+  ),
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
   ),
@@ -792,6 +808,7 @@ export const ClientSettingsPatch = Schema.Struct({
   ),
   planModeEnabled: Schema.optionalKey(Schema.Boolean),
   legacySidebarEnabled: Schema.optionalKey(Schema.Boolean),
+  previewExternalLinkBehavior: Schema.optionalKey(PreviewExternalLinkBehavior),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(

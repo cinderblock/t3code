@@ -92,6 +92,7 @@ import { AuthAccessTokenResult, AuthSessionState, AuthWebSocketTicketResult } fr
 import { AdvertisedEndpoint } from "./remoteAccess.ts";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import type { ClientSettings } from "./settings.ts";
+import { PreviewExternalLinkBehavior } from "./settings.ts";
 import type {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
@@ -950,6 +951,11 @@ export const DesktopPreviewSetColorSchemeInputSchema = Schema.Struct({
   colorScheme: DesktopPreviewColorSchemeSchema,
 });
 
+export const DesktopPreviewSetExternalLinkBehaviorInputSchema = Schema.Struct({
+  tabId: DesktopPreviewTabIdSchema,
+  behavior: PreviewExternalLinkBehavior,
+});
+
 export const DesktopPreviewAnnotationThemeInputSchema = Schema.Struct({
   theme: DesktopPreviewAnnotationThemeSchema,
 });
@@ -1082,6 +1088,13 @@ export interface DesktopPreviewBridge {
    * override). Persists per tab and is re-applied across webview swaps.
    */
   setColorScheme: (tabId: string, colorScheme: DesktopPreviewColorScheme) => Promise<void>;
+  /**
+   * Choose what a cross-origin, page-initiated navigation does in this tab:
+   * follow it in-panel, or hand it to the OS default browser. The renderer
+   * owns the preference (global setting plus an optional per-tab override) and
+   * pushes the resolved value down; main only enforces it.
+   */
+  setExternalLinkBehavior: (tabId: string, behavior: PreviewExternalLinkBehavior) => Promise<void>;
   /** Open the guest webview's DevTools (detached). */
   openDevTools: (tabId: string) => Promise<void>;
   /** Drop cookies + storage data for the preview partition (all tabs). */

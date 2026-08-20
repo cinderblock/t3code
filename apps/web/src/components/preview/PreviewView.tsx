@@ -5,6 +5,7 @@ import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime"
 import {
   FILL_PREVIEW_VIEWPORT,
   type PreviewAnnotationPayload,
+  type PreviewExternalLinkBehavior,
   type PreviewViewportSetting,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -44,7 +45,13 @@ import {
   subscribeBrowserViewportChange,
 } from "~/browser/browserViewportActions";
 import { resolveResponsiveBrowserViewportSize } from "~/browser/browserViewportLayout";
+import {
+  resolvePreviewExternalLinkBehavior,
+  usePreviewExternalLinkOverride,
+  usePreviewExternalLinkOverrideStore,
+} from "~/browser/previewExternalLinkOverrides";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
+import { useClientSettings } from "~/hooks/useSettings";
 import { PreviewUnreachable } from "./PreviewUnreachable";
 import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { shouldShowPreviewEmptyState } from "./previewEmptyStateLogic";
@@ -147,6 +154,35 @@ export function PreviewView({
   const panelRect = useBrowserSurfaceStore((state) =>
     runtimeTabId ? (state.byTabId[runtimeTabId]?.rect ?? null) : null,
   );
+
+  // External-link policy: the global preference, narrowed by an optional
+  // per-tab override from the three-dot menu. Main only ever sees the result.
+  const globalExternalLinkBehavior = useClientSettings<PreviewExternalLinkBehavior>(
+    (settings) => settings.previewExternalLinkBehavior,
+  );
+  const externalLinkOverride = usePreviewExternalLinkOverride(runtimeTabId);
+  const externalLinkBehavior = resolvePreviewExternalLinkBehavior(
+    externalLinkOverride,
+    globalExternalLinkBehavior,
+  );
+  const setExternalLinkOverride = usePreviewExternalLinkOverrideStore((state) => state.setOverride);
+  const handleExternalLinkOverrideChange = useCallback(
+    (next: PreviewExternalLinkBehavior | null) => {
+      if (!runtimeTabId) return;
+      setExternalLinkOverride(runtimeTabId, next);
+    },
+    [runtimeTabId, setExternalLinkOverride],
+  );
+  const hasWebContents = desktopOverlay?.hasWebContents ?? false;
+  useEffect(() => {
+    // Re-push after every (re)attach as well as on change: the desktop side
+    // drops its entry when a tab closes, and a fresh guest starts on the
+    // shipped default until told otherwise.
+    if (!previewBridge || !runtimeTabId || !hasWebContents) return;
+    void previewBridge
+      .setExternalLinkBehavior(runtimeTabId, externalLinkBehavior)
+      .catch(() => undefined);
+  }, [externalLinkBehavior, hasWebContents, runtimeTabId]);
 
   const navUrl = navStatus._tag === "Success" ? navStatus.url : null;
   const navTitle = navStatus._tag === "Success" ? navStatus.title : null;
@@ -687,9 +723,12 @@ export function PreviewView({
           previewBridge ? (
             <PreviewMoreMenu
               tabId={runtimeTabId}
-              hasWebContents={desktopOverlay?.hasWebContents ?? false}
+              hasWebContents={hasWebContents}
               zoomFactor={desktopOverlay?.zoomFactor ?? 1}
               colorScheme={desktopOverlay?.colorScheme ?? "system"}
+              externalLinkOverride={externalLinkOverride}
+              externalLinkDefault={globalExternalLinkBehavior}
+              onExternalLinkOverrideChange={handleExternalLinkOverrideChange}
               deviceToolbarVisible={viewport._tag !== "fill"}
               onToggleDeviceToolbar={handleToggleDeviceToolbar}
               nativePictureInPicture={desktopOverlay?.pictureInPicture ?? false}
