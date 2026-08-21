@@ -278,7 +278,27 @@ if ($needsBuild -and $Config.Build -eq 'never') {
   # hide it again before the app launches.
   if ($Config.HideConsole -and -not $DryRun) { Set-ConsoleVisible $true }
   Write-Host "  build   : stale ($reason) - rebuilding..." -ForegroundColor Yellow
-  & pnpm build:desktop
+  # The build is the heaviest thing this launcher does, and it runs elevated on
+  # a six-core laptop that is also playing music. `vp run` defaults to four
+  # concurrent tasks and each one spawns its own multithreaded bundler, so left
+  # alone this takes the whole machine -- capping vp's concurrency alone would
+  # not help, because the parallelism that hurts is threads underneath it.
+  #
+  # --low drops the process tree to BelowNormal; Windows children inherit the
+  # priority class at creation, so the bundler and compiler workers come with
+  # it. The slot claim stops it colliding with another session's heavy run.
+  #
+  # Only the BUILD is lowered, never the app -- an editor at BelowNormal would
+  # feel worse than a slow build ever does.
+  #
+  # Best effort: a missing broker must not make this launcher unable to build.
+  $broker = Join-Path $env:USERPROFILE '.claude\bin\cpu-slots.mjs'
+  if ((Test-Path $broker) -and (Get-Command node -ErrorAction SilentlyContinue)) {
+    & node $broker run --slots 2 --low --label 't3code build:desktop' -- pnpm build:desktop
+  } else {
+    Write-Host '  build   : cpu-slots broker unavailable - building at normal priority' -ForegroundColor DarkYellow
+    & pnpm build:desktop
+  }
   if ($LASTEXITCODE -ne 0) { throw "build:desktop failed ($LASTEXITCODE)" }
   $didBuild = $true
   # After the build, so a wiped dist-electron can't take the stamp with it.
