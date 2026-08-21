@@ -153,6 +153,40 @@ don't crash status refresh under load.
 its own children only account for ~1.6 s of that — the rest is queueing, i.e. finding 1, not
 favicon work. Do not re-diagnose favicons.
 
+## 2026-08-21 15:55 — CONFIRMED FIXED, measured on the live system
+
+The fix shipped in `49e26ab64` was previously only proven by a unit test. It is now confirmed
+in production against the same instrument used to find it (`scripts/span-profile.py`), on a
+build that had been running ~35 minutes.
+
+| span                                         | before (2026-08-20, 146 s window) | after (2026-08-21, 330 s window) |
+| -------------------------------------------- | --------------------------------- | -------------------------------- |
+| `RepositoryIdentityResolver.resolveCacheKey` | 551 calls, 3.8/s, avg 1509 ms     | **0 calls**                      |
+| `RepositoryIdentityResolver.resolve`         | 551 calls, 3.8/s, avg 1769 ms     | **0 calls**                      |
+| `processRunner.runProcessCore`               | 637 calls, **4.4/s**, avg 929 ms  | 86 calls, **0.26/s**, avg 91 ms  |
+| `processRunner.collectText`                  | 1272 calls, 8.7/s, avg 837 ms     | 172 calls, 0.52/s, avg 83 ms     |
+| `ws.rpc.assets.createUrl`                    | 504 calls, 3.4/s, avg 3634 ms     | **0 calls**                      |
+
+**Subprocess spawn rate fell 94% (4.4/s → 0.26/s) and per-spawn duration fell 90%.**
+
+The starvation signature — the thing that actually produced the toast — is gone:
+
+| signal                      | before               | after                |
+| --------------------------- | -------------------- | -------------------- |
+| `sql.execute` p50 / p95     | 0.2 ms / **646 ms**  | 0.1 ms / **1.4 ms**  |
+| `sql.execute` max           | 3038 ms              | **33 ms**            |
+| `sql.transaction` p50 / p95 | 0.4 ms / **1336 ms** | 0.3 ms / **26.9 ms** |
+
+`sql.execute` p95 improved by a factor of **460**. An in-process SQLite query is behaving like
+an in-process SQLite query again, which is what the whole diagnosis rested on. The
+`processSpawnObserver` storm warning has never fired since it was installed.
+
+So the original complaint in this thread — "Some requests are slow", climbing to ~256 and
+repeating — is **resolved and verified**, not merely quiet.
+
+The still-unresolved lost-threads problem is a separate fault with a separate plan; see
+`environment-isolation-fault.md`. Do not conflate them.
+
 ## Things not to do
 
 - Don't blame the favicon resolver again — measured, it is fixed (finding 7).
