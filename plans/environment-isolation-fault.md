@@ -185,6 +185,53 @@ was not the only one. Note one risk it introduced: past the 2.5 s grace, if the 
 snapshot has not arrived, the landing now renders `NoProjectsHero` instead of waiting. If "no
 projects" ever flashes on a healthy machine, that is this, and the grace needs raising.
 
+## 2026-08-21 14:40 — the reproduction produced silence, and silence was ambiguous
+
+User reproduced the fault on the build carrying the failure-only diagnostics. **Zero
+`shell-stream` records.** That was a negative result, but not a usable one.
+
+Verified the instrumentation really was loaded, so the silence is not a packaging mistake:
+
+- client bundle `query-yhoUdFt6.js` built 14:07, contains `shell-view-shrank`
+- app loaded ~14:08:08 (`msSinceLoad` 6573 at 21:08:15 UTC), ran to at least 14:32
+- renderer.log for the window holds 4 records, all `connection-ping` pongs
+- the server was busy on shell work throughout: `resolveThreadShell` ×141,
+  `refreshThreadShellSummary` ×110 in the 21:08:10→21:37:03 UTC trace window
+- a thread was created and persisted at 21:32 (`e5216507`), so the system was live
+
+### Why silence could not be read
+
+The diagnostics only fired on failure, so no record was consistent with two opposite worlds:
+the stream delivered everything cleanly, or it delivered nothing at all.
+
+**The server trace cannot break the tie either, and this is worth remembering:**
+`orchestration.subscribeShell` and `orchestration.subscribeThread` appear **nowhere** in
+`server.trace.ndjson`. That is not evidence of absence — an Effect span is emitted when it
+_ends_, and a healthy long-lived subscription has not ended. Earlier in the day, when
+reconnects were frequent, `ws.rpc.orchestration.subscribeThread` did appear (n=21, avg 69 s),
+precisely because those subscriptions were dying.
+
+### Closed the blind spot
+
+`shell-subscribed` (every subscribe/resubscribe: resumed-or-fresh, cursor, cached thread count)
+and `shell-applied` (heartbeat on the first applied item and every tenth, with sequence and
+current counts). Rate limited because renderer.log is unrotated and append-only.
+
+Next recurrence reads directly:
+
+| observation                                             | meaning                                                       |
+| ------------------------------------------------------- | ------------------------------------------------------------- |
+| no `shell-subscribed`                                   | the subscription never opened                                 |
+| `shell-subscribed`, no `shell-applied`                  | it opened and nothing came down it                            |
+| `shell-applied` counts healthy while the UI shows fewer | loss is downstream of the reducer, in the atoms or the render |
+| `shell-view-shrank`                                     | the reducer itself removed them                               |
+
+### Also ruled out this round
+
+- `threadRefsEqual` and `arrayElementsEqual` (`state/entities.ts:109,123`) — the memoized
+  identity guards behind the thread-list atoms. Both compare length **and** element identity
+  correctly, so a stale-array freeze is not the mechanism.
+
 ## Things not to do
 
 - Don't delete the gate outright — it prevents the landing navigating to the wrong project.
