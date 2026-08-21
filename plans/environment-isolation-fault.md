@@ -126,6 +126,65 @@ BlackHole for a Noook thread. Candidates, unproven:
 - [ ] Confirm with the user whether "response never arrives" survives the fix
 - [ ] If it survives: add resume instrumentation before guessing further
 
+## 2026-08-21 14:00 — it came back after ~20 minutes, and the gate was not the whole story
+
+The gate fix held on first load, then threads started going missing again. Ruled out, with
+evidence, in this order:
+
+| layer        | evidence                                                                          | verdict             |
+| ------------ | --------------------------------------------------------------------------------- | ------------------- |
+| Server       | 2 failed spans (`readFile`) out of **10,194** since restart                       | healthy             |
+| Data         | 7 threads updated in the last 20 min; none deleted, archived, settled, or snoozed | healthy             |
+| Local socket | **zero** ping-timeouts and zero closes on Noook since the 13:25 restart           | healthy             |
+| Remote       | all 31 closes today are BlackHole, on its 30.8 min metronome                      | irrelevant to Noook |
+
+So the threads exist server-side and the connection carrying them never dropped. **The client's
+shell view is silently diverging from the server.** Noook pong latency in this window ran
+664–3274 ms against the hardcoded 5000 ms kill, so the margin is thin but was never crossed.
+
+### A hypothesis that looked right and is wrong — do not retry it
+
+`applyShellStreamEvent` has no gap detection: an event whose sequence is far ahead of the
+cached snapshot is applied and the cursor jumps, apparently skipping everything between. That
+looks exactly like "threads go missing", and it is tempting.
+
+It is wrong. `computeSnapshotSequence` (`ProjectionSnapshotQuery.ts:233`) is a **min across
+`REQUIRED_SNAPSHOT_PROJECTORS` of `lastAppliedSequence`** — the global orchestration event-log
+sequence. Most logged events are not shell-relevant, so **gaps are the normal case**. Adding
+`sequence + 1` gap detection would force a resnapshot on almost every event.
+
+### What was added instead
+
+`packages/client-runtime/src/state/shellStreamDiagnostics.ts`, wired into `applyItem`.
+
+The shell path previously reported **nothing** when it lost fidelity: `applyShellStreamEvent`
+silently returns the previous snapshot for a stale event, and `applyItem` silently returns when
+an event arrives with no cached snapshot. Three conditions are now reported to `renderer.log`
+via the same crash-log bridge as the connection diagnostics:
+
+- `shell-view-shrank` — the thread or project count went **down**
+- `shell-event-discarded` — an event at or behind the cached cursor was ignored
+- `shell-event-dropped` — an event arrived with no snapshot to apply it to
+
+Each carries both sequences and both counts. Deliberately quiet otherwise; a sequence jump
+alone is explicitly **not** reported, for the reason above.
+
+Next time threads vanish, `grep '"source":"shell-stream"' renderer.log` distinguishes:
+the view shrank (reducer removed them), the cursor wedged (a run of discards), or the events
+never arrived at all (silence — which would point at the server stream or the subscription).
+
+### Deliberately not fixed blind
+
+No second speculative fix was shipped. The gate fix was justified by reading the code; this one
+is not yet, and a wrong guess here corrupts the thread list rather than merely delaying it.
+
+### Status of the earlier gate fix
+
+Still correct and still worth keeping — an unbounded conjunctive gate is a real fault. It just
+was not the only one. Note one risk it introduced: past the 2.5 s grace, if the local shell
+snapshot has not arrived, the landing now renders `NoProjectsHero` instead of waiting. If "no
+projects" ever flashes on a healthy machine, that is this, and the grace needs raising.
+
 ## Things not to do
 
 - Don't delete the gate outright — it prevents the landing navigating to the wrong project.

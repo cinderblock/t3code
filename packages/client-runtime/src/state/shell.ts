@@ -24,6 +24,7 @@ import { subscribeDynamic } from "../rpc/client.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { ShellSnapshotLoader } from "./shellSnapshotHttp.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
+import { emitShellStreamDiagnostic } from "./shellStreamDiagnostics.ts";
 import type { EnvironmentCatalogState } from "./connections.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 
@@ -149,6 +150,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     }
 
     const current = yield* SubscriptionRef.get(state);
+    const previousSnapshot = Option.getOrNull(current.snapshot);
     const nextSnapshot =
       item.kind === "snapshot"
         ? item.snapshot
@@ -159,6 +161,25 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
                 ? applyShellStreamEvent(snapshot, item)
                 : snapshot,
           });
+
+    // Report the ways this view can silently stop matching the server. See
+    // shellStreamDiagnostics.ts — threads have gone missing here while every other layer was
+    // provably healthy, and none of these paths previously left any trace.
+    yield* emitShellStreamDiagnostic({
+      environmentId,
+      itemKind: item.kind,
+      itemSequence: item.kind === "snapshot" ? null : item.sequence,
+      previousSequence: previousSnapshot?.snapshotSequence ?? null,
+      nextSequence: nextSnapshot?.snapshotSequence ?? null,
+      previousThreadCount: previousSnapshot?.threads.length ?? null,
+      nextThreadCount: nextSnapshot?.threads.length ?? null,
+      previousProjectCount: previousSnapshot?.projects.length ?? null,
+      nextProjectCount: nextSnapshot?.projects.length ?? null,
+      discardedAsStale:
+        item.kind !== "snapshot" && previousSnapshot !== null && nextSnapshot === previousSnapshot,
+      droppedWithoutSnapshot: item.kind !== "snapshot" && previousSnapshot === null,
+    });
+
     if (nextSnapshot === null) {
       return;
     }
