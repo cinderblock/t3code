@@ -22,7 +22,14 @@ export default defineConfig({
   },
   staged: {
     // Formatter only for now — no lint or typecheck on commit.
-    "*": "vp fmt",
+    //
+    // --no-error-on-unmatched-pattern because the "*" glob also matches files
+    // oxfmt has no formatter for — scripts/*.ps1, scripts/*.vbs. When EVERY
+    // staged file is one of those, oxfmt exits 2 with "Expected at least one
+    // target file" and the commit is refused. The launcher scripts only ever
+    // committed cleanly because they happened to be staged alongside a .md.
+    // Formatting is unaffected: a run with real targets still formats them.
+    "*": "vp fmt --no-error-on-unmatched-pattern",
   },
   fmt: {
     ignorePatterns: [
