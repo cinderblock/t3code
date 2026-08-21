@@ -232,6 +232,40 @@ Next recurrence reads directly:
   identity guards behind the thread-list atoms. Both compare length **and** element identity
   correctly, so a stale-array freeze is not the mechanism.
 
+## 2026-08-21 15:37 — stable, with a healthy baseline captured for the first time
+
+App running since 15:20 on the build carrying the positive signals. User reports it stable.
+Confirmed against the log rather than taken on impression:
+
+```
+shell-subscribed  22:20:27  env=a379f331 (remote)  resumed=true   cursor=107589   cachedThreads=47
+shell-subscribed  22:20:33  env=ab3781d7 (local)   resumed=false  cursor=1058296  cachedThreads=326
+shell-applied     22:37:39  env=ab3781d7  kind=thread-upserted  n=250  seq=1060358  threads=328  projects=98
+```
+
+- **29 records: 27 `shell-applied`, 2 `shell-subscribed`, zero failures.** No
+  `shell-view-shrank`, no `shell-event-discarded`, no `shell-event-dropped`.
+- Local environment applied **250 items in ~17 minutes**, sequence advancing monotonically,
+  thread count steady at **328** and projects at **98**.
+- Both environments subscribed cleanly; the local one took a fresh authoritative snapshot
+  (`resumed=false`) rather than resuming a cursor.
+
+**This is a baseline, not a proof of fix.** The fault was always intermittent, and it was never
+caught in the act with instrumentation attached. Two changes are in flight that could plausibly
+account for it — the bounded environment gate and, indirectly, the resolver spawn fix — but
+neither has been demonstrated to be the cause. Treat the bug as unconfirmed-fixed.
+
+What is genuinely new is that a recurrence is now diagnosable in one grep, against known-good
+numbers: threads=328, projects=98, roughly 15 applied items per minute.
+
+### Incidental observation worth a look later
+
+250 applied items in 17 minutes, essentially all `thread-upserted`, while the thread count never
+moved. The server is pushing ~15 thread updates a minute that change nothing about list
+membership — almost certainly `updated_at` churn. Harmless to correctness, but it is real
+per-client work on a 4.9 GB database, and it is the same family of avoidable load as
+`process-spawn-storm.md`. Not chased here.
+
 ## Things not to do
 
 - Don't delete the gate outright — it prevents the landing navigating to the wrong project.
