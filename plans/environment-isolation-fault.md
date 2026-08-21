@@ -266,6 +266,44 @@ membership — almost certainly `updated_at` churn. Harmless to correctness, but
 per-client work on a 4.9 GB database, and it is the same family of avoidable load as
 `process-spawn-storm.md`. Not chased here.
 
+## 2026-08-21 15:50 — repo checks run in full, and a pre-existing red suite found
+
+Ran the repo's own checks rather than only the targeted ones, to qualify this work properly.
+
+| check                                                    | result                                    |
+| -------------------------------------------------------- | ----------------------------------------- |
+| `vp run -r --concurrency-limit 2 typecheck` (whole repo) | **clean**                                 |
+| `apps/web` tests                                         | **239 files / 2258 tests pass**           |
+| `packages/client-runtime` tests                          | 45 files pass, **3 files / 9 tests fail** |
+
+### The 9 failures are pre-existing and are NOT from this work
+
+They fail identically with `--maxWorkers=1` in isolation, so they are not load flakes.
+
+Proof they are unrelated to the shell-stream diagnostics added here: `session.test.ts`,
+`supervisor.test.ts` and `remote.test.ts` contain **zero** references to `state/shell` or
+`shellStreamDiagnostics`, and nothing under `src/rpc/` or `src/connection/` imports either.
+There is no import path from the change to the failures.
+
+They come from the fork's own connection instrumentation. Verified against upstream:
+
+| file                                | fork divergence                |
+| ----------------------------------- | ------------------------------ |
+| `src/rpc/session.ts`                | +122 / -4                      |
+| `src/rpc/session.test.ts`           | **byte-identical to upstream** |
+| `src/connection/supervisor.ts`      | +198 / -20                     |
+| `src/connection/supervisor.test.ts` | +67                            |
+| `src/connection/errors.ts`          | identical to upstream          |
+
+The assertion is a shape mismatch — an actual `ConnectionTransientError` failing to match
+`{ reason: 'transport', message: 'Test environment disconnected.' }`. So commits `cce1ec5c9`
+(ping/pong latency), `b6e36a265` (retry-ladder decay) and `edabbea6b` (network transitions)
+changed the transient-error shape without updating upstream's tests, and landed with the suite
+red.
+
+This matters beyond tidiness: that instrumentation is exactly what the lost-threads
+investigation has been reading. Spun out as its own task rather than folded in here.
+
 ## Things not to do
 
 - Don't delete the gate outright — it prevents the landing navigating to the wrong project.
