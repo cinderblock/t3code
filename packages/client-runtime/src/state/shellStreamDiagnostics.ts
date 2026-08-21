@@ -21,7 +21,12 @@
 import * as Effect from "effect/Effect";
 
 export interface ShellStreamDiagnostic {
-  readonly event: "shell-view-shrank" | "shell-event-discarded" | "shell-event-dropped";
+  readonly event:
+    | "shell-view-shrank"
+    | "shell-event-discarded"
+    | "shell-event-dropped"
+    | "shell-subscribed"
+    | "shell-applied";
   readonly environmentId: string;
   /** `snapshot`, `synchronized`, or the stream event's `kind`. */
   readonly itemKind: string;
@@ -123,6 +128,75 @@ export const emitShellStreamDiagnostic = (transition: ShellTransition): Effect.E
         source: "shell-stream",
         message: `${record.event}: ${record.environmentId}`,
         data: record,
+      });
+    } catch {
+      // A diagnostic must never break the stream it is observing.
+    }
+  });
+
+/**
+ * Rate limiter for the positive signal.
+ *
+ * The failure-only diagnostics above proved insufficient: a reproduction produced complete
+ * silence, and silence could not distinguish "the stream delivered everything cleanly" from
+ * "the stream delivered nothing at all". A heartbeat makes absence readable. The shell stream
+ * runs at roughly five items a minute, so the first item plus every tenth is plenty to show
+ * liveness without turning `renderer.log` into a firehose.
+ */
+export function shouldReportApplied(appliedCount: number): boolean {
+  return appliedCount === 1 || appliedCount % 10 === 0;
+}
+
+export interface ShellAppliedReport {
+  readonly environmentId: string;
+  readonly itemKind: string;
+  readonly appliedCount: number;
+  readonly itemSequence: number | null;
+  readonly nextSequence: number | null;
+  readonly nextThreadCount: number | null;
+  readonly nextProjectCount: number | null;
+}
+
+/** Heartbeat: the stream is alive and this is what the view looks like right now. */
+export const emitShellAppliedDiagnostic = (report: ShellAppliedReport): Effect.Effect<void> =>
+  Effect.sync(() => {
+    if (!shouldReportApplied(report.appliedCount)) {
+      return;
+    }
+    try {
+      crashLogBridge()?.send({
+        level: "warn",
+        source: "shell-stream",
+        message: `shell-applied: ${report.environmentId}`,
+        data: { event: "shell-applied", ...report, msSinceLoad: msSinceLoad() },
+      });
+    } catch {
+      // A diagnostic must never break the stream it is observing.
+    }
+  });
+
+export interface ShellSubscribedReport {
+  readonly environmentId: string;
+  /** Resuming from a cached cursor, or asking for a complete snapshot. */
+  readonly resumed: boolean;
+  readonly cursorSequence: number | null;
+  readonly cachedThreadCount: number | null;
+}
+
+/**
+ * The subscription was (re)established.
+ *
+ * Without this there is no way to tell whether the shell stream was ever opened. A live
+ * subscription emits no server span until it ends, so the server trace cannot answer it either.
+ */
+export const emitShellSubscribedDiagnostic = (report: ShellSubscribedReport): Effect.Effect<void> =>
+  Effect.sync(() => {
+    try {
+      crashLogBridge()?.send({
+        level: "warn",
+        source: "shell-stream",
+        message: `shell-subscribed: ${report.environmentId}`,
+        data: { event: "shell-subscribed", ...report, msSinceLoad: msSinceLoad() },
       });
     } catch {
       // A diagnostic must never break the stream it is observing.

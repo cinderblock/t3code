@@ -24,7 +24,11 @@ import { subscribeDynamic } from "../rpc/client.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { ShellSnapshotLoader } from "./shellSnapshotHttp.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
-import { emitShellStreamDiagnostic } from "./shellStreamDiagnostics.ts";
+import {
+  emitShellAppliedDiagnostic,
+  emitShellStreamDiagnostic,
+  emitShellSubscribedDiagnostic,
+} from "./shellStreamDiagnostics.ts";
 import type { EnvironmentCatalogState } from "./connections.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
 
@@ -136,6 +140,8 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       ),
     );
 
+  const appliedCount = { value: 0 };
+
   const applyItem = Effect.fn("EnvironmentShellState.applyItem")(function* (
     item: OrchestrationShellStreamItem,
   ) {
@@ -183,6 +189,17 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     if (nextSnapshot === null) {
       return;
     }
+
+    appliedCount.value += 1;
+    yield* emitShellAppliedDiagnostic({
+      environmentId,
+      itemKind: item.kind,
+      appliedCount: appliedCount.value,
+      itemSequence: item.kind === "snapshot" ? null : item.sequence,
+      nextSequence: nextSnapshot.snapshotSequence,
+      nextThreadCount: nextSnapshot.threads.length,
+      nextProjectCount: nextSnapshot.projects.length,
+    });
 
     const waiting = yield* Ref.get(awaitingCompletion);
     yield* SubscriptionRef.set(state, {
@@ -246,6 +263,19 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
             current = yield* SubscriptionRef.get(state);
           }
         }
+
+        yield* emitShellSubscribedDiagnostic({
+          environmentId,
+          resumed: canResume && Option.isSome(current.snapshot),
+          cursorSequence: Option.match(current.snapshot, {
+            onNone: () => null,
+            onSome: (snapshot) => snapshot.snapshotSequence,
+          }),
+          cachedThreadCount: Option.match(current.snapshot, {
+            onNone: () => null,
+            onSome: (snapshot) => snapshot.threads.length,
+          }),
+        });
 
         // If the authoritative refresh failed, omit the cached cursor so the
         // socket fallback sends a complete snapshot for this new session.

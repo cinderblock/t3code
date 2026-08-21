@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { classifyShellTransition, type ShellTransition } from "./shellStreamDiagnostics.ts";
+import {
+  classifyShellTransition,
+  shouldReportApplied,
+  type ShellTransition,
+} from "./shellStreamDiagnostics.ts";
 
 const transition = (overrides: Partial<ShellTransition> = {}): ShellTransition => ({
   environmentId: "Noook",
@@ -66,5 +70,25 @@ describe("classifyShellTransition", () => {
     expect(
       classifyShellTransition(transition({ previousThreadCount: null, nextThreadCount: 0 })),
     ).toBeNull();
+  });
+});
+
+describe("shouldReportApplied", () => {
+  // A failure-only diagnostic went completely silent through a reproduction, and silence could
+  // not distinguish a clean stream from a dead one. The heartbeat exists to make absence mean
+  // something, so the first item must always report.
+  it("always reports the first applied item", () => {
+    expect(shouldReportApplied(1)).toBe(true);
+  });
+
+  it("reports every tenth item thereafter", () => {
+    expect(shouldReportApplied(10)).toBe(true);
+    expect(shouldReportApplied(20)).toBe(true);
+  });
+
+  it("stays quiet in between so the log does not become a firehose", () => {
+    expect(shouldReportApplied(2)).toBe(false);
+    expect(shouldReportApplied(9)).toBe(false);
+    expect(shouldReportApplied(11)).toBe(false);
   });
 });
