@@ -8,12 +8,9 @@ import { sortScopedProjectsForSidebar } from "../components/Sidebar.logic";
 import { Button } from "../components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
 import { SidebarInset } from "../components/ui/sidebar";
+import { useEnvironmentsSettled } from "../hooks/useEnvironmentsSettled";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
-import {
-  useAllEnvironmentShellsBootstrapped,
-  useProjects,
-  useThreadShells,
-} from "../state/entities";
+import { useProjects, useThreadShells } from "../state/entities";
 import { useEnvironments } from "../state/environments";
 import { APP_DISPLAY_NAME } from "~/branding";
 import { hasCloudPublicConfig } from "~/cloud/publicConfig";
@@ -39,7 +36,7 @@ function ChatIndexRouteView() {
 function IndexDraftLanding() {
   const projects = useProjects();
   const threads = useThreadShells();
-  const bootstrapped = useAllEnvironmentShellsBootstrapped();
+  const bootstrapped = useEnvironmentsSettled();
   const handleNewThread = useNewThreadHandler();
   const startingRef = useRef(false);
   const [startState, setStartState] = useState({ failed: false, retryRequest: 0 });
