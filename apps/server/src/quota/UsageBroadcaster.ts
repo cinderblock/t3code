@@ -5,11 +5,15 @@
  * Accounts are keyed by the resolved Claude home directory: multiple
  * provider instances that share one login (one `~/.claude`) share one
  * account and one poll loop. The poll cadence honors per-account backoff
- * (exponential, capped) and a hard floor on 429 so a broken endpoint is
- * never hammered. The last good snapshot is retained through failures.
+ * (exponential, capped) for genuine failures, while a 429 — an ordinary
+ * condition on an endpoint whose budget is shared with every other client
+ * signed in as this account — retries at a flat floor instead. The last good
+ * snapshot is retained through failures.
  *
  * Samples from every successful poll land in `fork_usage_samples` (SQLite) to
- * feed the expanded history chart.
+ * feed the expanded history chart, and the whole snapshot in
+ * `fork_usage_snapshots` so a restart shows the last known meters instead of an
+ * empty bar.
  */
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -19,20 +23,23 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import {
   AccountUsageError,
-  type AccountUsageSnapshot,
+  AccountUsageSnapshot,
   type AccountUsageStatus,
   type AccountUsageStreamEvent,
   type AccountUsageUnavailableReason,
   type ProviderInstanceId,
   type UsageHistoryInput,
   type UsageHistoryResult,
+  type UsageWindow,
 } from "@t3tools/contracts";
 
 import { resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
@@ -53,7 +60,7 @@ const POLL_INTERVAL = Duration.minutes(2);
 const TICK_INTERVAL = Duration.seconds(30);
 const BACKOFF_BASE = Duration.minutes(2);
 const BACKOFF_MAX = Duration.minutes(30);
-/** Floor applied on HTTP 429 regardless of Retry-After. */
+/** Flat retry delay on HTTP 429; the endpoint's own Retry-After is always 0. */
 const RATE_LIMIT_FLOOR = Duration.minutes(5);
 const MAX_PLAN_FETCH_ATTEMPTS = 5;
 const HISTORY_RETENTION_DAYS = 90;
@@ -94,6 +101,49 @@ export class UsageBroadcaster extends Context.Service<
 
 const toUsageError = (message: string) => (cause: unknown) =>
   new AccountUsageError({ message, cause });
+
+const SnapshotJson = Schema.fromJsonString(AccountUsageSnapshot);
+export const encodeSnapshot = Schema.encodeSync(SnapshotJson);
+const decodeSnapshotExit = Schema.decodeUnknownExit(SnapshotJson);
+
+/**
+ * Windows from a persisted snapshot that still describe the present.
+ *
+ * A window whose reset time has passed says nothing about now — it dropped back
+ * to near zero at some moment we were not around to observe — so restoring it
+ * would put a confidently wrong number on screen. Windows the provider reported
+ * without a reset time are kept: they are all we know, and the UI marks a
+ * restored snapshot stale as soon as the first poll fails.
+ */
+export const restorableWindows = (
+  windows: ReadonlyArray<UsageWindow>,
+  nowMs: number,
+): ReadonlyArray<UsageWindow> =>
+  windows.filter((window) => {
+    if (window.resetsAt === null) return true;
+    return Option.match(DateTime.make(window.resetsAt), {
+      onNone: () => false,
+      onSome: (resetsAt) => DateTime.toEpochMillis(resetsAt) > nowMs,
+    });
+  });
+
+/**
+ * Decode one persisted row into a snapshot worth showing, or null when there is
+ * nothing left worth showing. A row that fails to decode is dropped rather than
+ * raised: it is a display convenience written by an older build, and refusing to
+ * start the poller over it would trade a cosmetic problem for a real one.
+ */
+export const restoredSnapshot = (
+  snapshotJson: string,
+  nowMs: number,
+): AccountUsageSnapshot | null => {
+  const decoded = decodeSnapshotExit(snapshotJson);
+  if (Exit.isFailure(decoded)) return null;
+  const windows = restorableWindows(decoded.value.windows, nowMs);
+  // Every window has since reset, so there is nothing true left to show.
+  if (windows.length === 0) return null;
+  return { ...decoded.value, windows };
+};
 
 export const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -203,6 +253,44 @@ export const make = Effect.gen(function* () {
       DateTime.add(now, { days: -HISTORY_RETENTION_DAYS }),
     );
     yield* sql`DELETE FROM fork_usage_samples WHERE captured_at < ${retentionCutoff}`;
+  });
+
+  /**
+   * Keep the last good snapshot on disk so a restart doesn't blank the meters.
+   * Samples alone cannot rebuild one — they carry a percentage and nothing of
+   * the severity, scope or billing kind the bars are drawn from.
+   */
+  const persistSnapshot = Effect.fn("UsageBroadcaster.persistSnapshot")(function* (
+    snapshot: AccountUsageSnapshot,
+  ) {
+    yield* sql`
+      INSERT OR REPLACE INTO fork_usage_snapshots (account_key, captured_at, snapshot_json)
+      VALUES (${snapshot.accountKey}, ${snapshot.capturedAt}, ${encodeSnapshot(snapshot)})
+    `;
+  });
+
+  /**
+   * Seed in-memory state from the persisted snapshots. Runs before the poll
+   * loop starts so a poll that succeeds immediately always wins over the
+   * restored value rather than racing it.
+   */
+  const restoreSnapshots = Effect.fn("UsageBroadcaster.restoreSnapshots")(function* () {
+    const rows = yield* sql<{ readonly snapshot_json: string }>`
+      SELECT snapshot_json FROM fork_usage_snapshots
+    `;
+    const nowMs = yield* Clock.currentTimeMillis;
+    const restored = new Map<string, AccountUsageSnapshot>();
+    for (const row of rows) {
+      const snapshot = restoredSnapshot(row.snapshot_json, nowMs);
+      if (snapshot === null) continue;
+      restored.set(snapshot.accountKey, snapshot);
+    }
+    if (restored.size === 0) return;
+    yield* Ref.set(snapshotsRef, restored);
+    // The tick loop refreshes this within a moment, but seeding it here means a
+    // client connecting first still learns the account exists.
+    yield* Ref.set(knownAccountKeysRef, Array.from(restored.keys()));
+    yield* Effect.logDebug("Restored persisted usage snapshots", { accounts: restored.size });
   });
 
   const publishSnapshot = Effect.fn("UsageBroadcaster.publishSnapshot")(function* (
@@ -321,9 +409,9 @@ export const make = Effect.gen(function* () {
         capturedAt,
         windows: parsed.windows,
       };
-      yield* persistSamples(snapshot).pipe(
+      yield* Effect.andThen(persistSamples(snapshot), persistSnapshot(snapshot)).pipe(
         Effect.catch((cause) =>
-          Effect.logWarning("Failed to persist usage samples", { detail: String(cause) }),
+          Effect.logWarning("Failed to persist usage", { detail: String(cause) }),
         ),
       );
       yield* publishSnapshot(snapshot);
@@ -344,7 +432,14 @@ export const make = Effect.gen(function* () {
       | { _tag?: string; retryAfterSeconds?: number | null; message?: string }
       | undefined;
     const tag = failure?._tag;
-    const consecutiveErrors = state.consecutiveErrors + 1;
+    const rateLimited = tag === "ClaudeUsageRateLimited";
+    // A 429 says the account's shared budget for this endpoint is momentarily
+    // spent — it is not evidence that anything here is unhealthy, so it must not
+    // feed the exponential ladder. Counting it did: hours of ordinary rate
+    // limiting pushed the retry out to BACKOFF_MAX, and at one attempt every 30
+    // minutes the poller essentially stopped asking, staying dark long after the
+    // budget had room again.
+    const consecutiveErrors = rateLimited ? state.consecutiveErrors : state.consecutiveErrors + 1;
     const backoffMs = Math.min(
       Duration.toMillis(BACKOFF_BASE) * Math.pow(2, Math.min(consecutiveErrors, 6)),
       Duration.toMillis(BACKOFF_MAX),
@@ -355,10 +450,12 @@ export const make = Effect.gen(function* () {
       reason = "no-credentials";
     } else if (tag === "ClaudeTokenRejected") {
       reason = "token-rejected";
-    } else if (tag === "ClaudeUsageRateLimited") {
+    } else if (rateLimited) {
       reason = "rate-limited";
+      // The endpoint answers `Retry-After: 0`, which is no guidance at all, so
+      // the floor is what actually governs the cadence.
       const retryAfterMs = (failure?.retryAfterSeconds ?? 0) * 1000;
-      delayMs = Math.max(backoffMs, retryAfterMs, Duration.toMillis(RATE_LIMIT_FLOOR));
+      delayMs = Math.max(retryAfterMs, Duration.toMillis(RATE_LIMIT_FLOOR));
     }
     const failureMs = yield* Clock.currentTimeMillis;
     yield* setPollState(account.accountKey, {
@@ -393,6 +490,12 @@ export const make = Effect.gen(function* () {
       }
     }
   });
+
+  yield* restoreSnapshots().pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Failed to restore persisted usage snapshots", { detail: String(cause) }),
+    ),
+  );
 
   yield* tick.pipe(
     Effect.catchCause((cause) =>

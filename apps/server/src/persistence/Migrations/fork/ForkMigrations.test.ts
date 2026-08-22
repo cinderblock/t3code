@@ -51,11 +51,12 @@ it.effect("fork migrations track a high-water mark separate from upstream's", ()
         [
           [1, "UsageSamples"],
           [2, "QueuedMessages"],
+          [3, "UsageSnapshots"],
         ],
       );
       // Fork ids restart at 1, well below upstream's, which is only safe because
       // they live in a different table.
-      assert.isAbove(upstream[0]!.migration_id, 2);
+      assert.isAbove(upstream[0]!.migration_id, 3);
     }),
   ),
 );
@@ -69,9 +70,11 @@ it.effect("fork migrations create fork-prefixed tables on a fresh database", () 
       const tables = yield* tableNames;
       assert.include(tables, "fork_usage_samples");
       assert.include(tables, "fork_queued_messages");
+      assert.include(tables, "fork_usage_snapshots");
       // Unprefixed names are reserved for upstream, so they must not reappear.
       assert.notInclude(tables, "usage_samples");
       assert.notInclude(tables, "queued_messages");
+      assert.notInclude(tables, "usage_snapshots");
     }),
   ),
 );
@@ -163,6 +166,28 @@ it.effect("fork migrations adopt legacy unprefixed tables, preserving their rows
   ),
 );
 
+it.effect("a database stopped at an earlier fork migration picks up the rest", () =>
+  withDatabase(
+    Effect.gen(function* () {
+      yield* runMigrations();
+
+      // Every existing install is here: it ran the fork migrations that existed
+      // when it last started, and must adopt newer ones on the next start.
+      const before = yield* runForkMigrations({ toMigrationInclusive: 2 });
+      assert.strictEqual(before.length, 2);
+      assert.notInclude(yield* tableNames, "fork_usage_snapshots");
+
+      const after = yield* runForkMigrations();
+
+      assert.deepStrictEqual(
+        after.map(([id, name]) => [id, name]),
+        [[3, "UsageSnapshots"]],
+      );
+      assert.include(yield* tableNames, "fork_usage_snapshots");
+    }),
+  ),
+);
+
 it.effect("fork migrations are idempotent across repeated runs", () =>
   withDatabase(
     Effect.gen(function* () {
@@ -170,7 +195,7 @@ it.effect("fork migrations are idempotent across repeated runs", () =>
       const first = yield* runForkMigrations();
       const second = yield* runForkMigrations();
 
-      assert.strictEqual(first.length, 2);
+      assert.strictEqual(first.length, 3);
       assert.strictEqual(second.length, 0);
     }),
   ),
