@@ -227,6 +227,7 @@ export function PreviewMoreMenu({
               type="button"
               onClick={callTab(bridge.resetZoom)}
               aria-label="Reset zoom"
+              className="[:hover,[data-pressed]]:bg-foreground/10"
               disabled={tabDisabled}
             >
               <RotateCcw />

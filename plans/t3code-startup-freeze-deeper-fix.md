@@ -204,13 +204,13 @@ minutes.
 
 ### Ruled out by measurement
 
-| Hypothesis | Evidence against |
-| --- | --- |
-| `navigator.onLine` flapping tearing down the socket | **`network-changed: 0`** — connectivity never reported offline |
-| Health-probe timeouts (the original theory) | **zero `health-check-slow` records**, ever |
-| Backend process death / restart loop | single PID, zero `sinceStartupMs` regressions |
-| Auth credential rejection | zero rejections in the trace |
-| Stalls directly causing the closes | worst pre-close stall only 1.7s, far below any timeout — and with stalls at 29% duty cycle, finding one in any 6s window is expected by chance. **This correlation is not evidence.** |
+| Hypothesis                                          | Evidence against                                                                                                                                                                      |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `navigator.onLine` flapping tearing down the socket | **`network-changed: 0`** — connectivity never reported offline                                                                                                                        |
+| Health-probe timeouts (the original theory)         | **zero `health-check-slow` records**, ever                                                                                                                                            |
+| Backend process death / restart loop                | single PID, zero `sinceStartupMs` regressions                                                                                                                                         |
+| Auth credential rejection                           | zero rejections in the trace                                                                                                                                                          |
+| Stalls directly causing the closes                  | worst pre-close stall only 1.7s, far below any timeout — and with stalls at 29% duty cycle, finding one in any 6s window is expected by chance. **This correlation is not evidence.** |
 
 ### Where this points
 

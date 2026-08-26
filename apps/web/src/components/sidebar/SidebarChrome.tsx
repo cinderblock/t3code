@@ -4,12 +4,13 @@ import {
   GitPullRequestIcon,
   SettingsIcon,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import { memo, useCallback } from "react";
 import { Link, useCanGoBack, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
-import { usePrimaryEnvironment } from "../../state/environments";
+import { useEnvironments } from "../../state/environments";
 import {
   resolveEnvironmentIdentificationPillLabel,
   resolveSidebarStageBackdropVariant,
@@ -27,8 +28,9 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "../ui/sidebar";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SidebarProviderUpdatePill } from "./SidebarProviderUpdatePill";
-import { SidebarUpdatePill } from "./SidebarUpdatePill";
+import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUpdatePill";
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
@@ -82,7 +84,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
     <Link
       aria-label="Go to threads"
       className={cn(
-        "sidebar-brand relative z-10 ml-[var(--workspace-titlebar-content-left)] h-7 w-fit min-w-0 shrink-0 items-center gap-1 overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2",
+        "relative z-10 ml-[var(--workspace-titlebar-content-left)] hidden h-7 w-fit min-w-0 shrink-0 items-center gap-1 overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 md:flex",
         onBackdrop ? "text-white" : "text-foreground",
       )}
       to="/"
@@ -90,7 +92,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
       <T3Wordmark />
       <span
         className={cn(
-          "truncate text-sm font-medium tracking-tight",
+          "-translate-y-px truncate text-sm font-medium tracking-tight",
           onBackdrop ? "text-white/70" : "text-muted-foreground",
         )}
       >
@@ -116,21 +118,51 @@ function T3Wordmark() {
   );
 }
 
-export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
+function SidebarUtilityItem({
+  icon,
+  label,
+  onClick,
+}: {
+  icon: ReactNode;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <SidebarMenuItem className="shrink-0">
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <SidebarMenuButton aria-label={label} onClick={onClick} size="icon">
+              {icon}
+            </SidebarMenuButton>
+          }
+        />
+        <TooltipPopup side="top">{label}</TooltipPopup>
+      </Tooltip>
+    </SidebarMenuItem>
+  );
+}
+
+export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const navigate = useNavigate();
-  const { isMobile, setOpenMobile } = useSidebar();
   const canGoBack = useCanGoBack();
+  const { isMobile, setOpenMobile } = useSidebar();
   const currentFooterPage = useLocation({
     select: (location) =>
-      location.pathname === "/usage"
-        ? "usage"
-        : location.pathname === "/pull-requests"
-          ? "pull-requests"
-          : null,
+      /^\/settings(?:\/|$)/.test(location.pathname)
+        ? "settings"
+        : location.pathname === "/usage"
+          ? "usage"
+          : location.pathname === "/pull-requests"
+            ? "pull-requests"
+            : null,
   });
-  const primaryEnvironment = usePrimaryEnvironment();
-  const pullRequestsSupported =
-    primaryEnvironment?.serverConfig?.environment.capabilities.pullRequests === true;
+  const { environments } = useEnvironments();
+  // The page reads every connected server, so one of them offering pull requests is enough for
+  // the link to lead somewhere.
+  const pullRequestsSupported = environments.some(
+    (environment) => environment.serverConfig?.environment.capabilities.pullRequests === true,
+  );
   const closeMobileSidebar = useCallback(() => {
     if (isMobile) {
       setOpenMobile(false);
@@ -162,47 +194,46 @@ export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   }, [canGoBack, closeMobileSidebar, navigate]);
 
   return (
-    <SidebarFooter className="p-[var(--sidebar-content-inset)]">
-      <SidebarProviderUpdatePill />
-      <SidebarUpdatePill />
-      <SidebarMenu>
-        {currentFooterPage === "pull-requests" ? (
-          <SidebarMenuItem>
-            <SidebarMenuButton onClick={handleBackClick}>
-              <ArrowLeftIcon />
-              <span>Back</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        ) : pullRequestsSupported ? (
-          <SidebarMenuItem>
-            <SidebarMenuButton onClick={handlePullRequestsClick}>
-              <GitPullRequestIcon />
-              <span>Pull Requests</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        ) : null}
-        {currentFooterPage === "usage" ? (
-          <SidebarMenuItem>
-            <SidebarMenuButton onClick={handleBackClick}>
-              <ArrowLeftIcon />
-              <span>Back</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        ) : (
-          <SidebarMenuItem>
-            <SidebarMenuButton onClick={handleUsageClick}>
-              <ChartNoAxesColumnIcon />
-              <span>Usage</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        )}
-        <SidebarMenuItem>
-          <SidebarMenuButton onClick={handleSettingsClick}>
-            <SettingsIcon />
-            <span>Settings</span>
+    <SidebarMenu className="flex-row items-center">
+      {currentFooterPage ? (
+        <SidebarMenuItem className="min-w-0 flex-1">
+          <SidebarMenuButton onClick={handleBackClick}>
+            <ArrowLeftIcon />
+            <span>Back</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
-      </SidebarMenu>
+      ) : (
+        <>
+          <SidebarUtilityItem
+            icon={<SettingsIcon />}
+            label="Settings"
+            onClick={handleSettingsClick}
+          />
+          {pullRequestsSupported ? (
+            <SidebarUtilityItem
+              icon={<GitPullRequestIcon />}
+              label="Pull Requests"
+              onClick={handlePullRequestsClick}
+            />
+          ) : null}
+          <SidebarUtilityItem
+            icon={<ChartNoAxesColumnIcon />}
+            label="Usage"
+            onClick={handleUsageClick}
+          />
+        </>
+      )}
+      <SidebarUpdatePill />
+    </SidebarMenu>
+  );
+});
+
+export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
+  return (
+    <SidebarFooter className="p-[var(--sidebar-content-inset)]">
+      <SidebarProviderUpdatePill />
+      <SidebarUpdateArchitectureWarning />
+      <SidebarUtilityMenu />
     </SidebarFooter>
   );
 });

@@ -16,6 +16,7 @@ import {
   syncDocumentWindowControlsOverlayClass,
 } from "./lib/windowControlsOverlay";
 import { AppRoot } from "./AppRoot";
+import { clerkAppearance } from "./components/clerk/clerkAppearance";
 
 // Forward renderer-side errors to a desktop log file (main.ts writes ~/.t3/{dev,userdata}/logs/renderer.log).
 // No-op outside Electron, or if the preload didn't expose __t3CrashLog.
@@ -109,11 +110,15 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     {clerkPublishableKey && hasCloudPublicConfig() ? (
       isElectron ? (
-        <ElectronClerkProvider publishableKey={clerkPublishableKey} passkeys={passkeys}>
+        <ElectronClerkProvider
+          appearance={clerkAppearance}
+          publishableKey={clerkPublishableKey}
+          passkeys={passkeys}
+        >
           <ManagedRelayAuthProvider>{app}</ManagedRelayAuthProvider>
         </ElectronClerkProvider>
       ) : (
-        <ClerkProvider publishableKey={clerkPublishableKey}>
+        <ClerkProvider appearance={clerkAppearance} publishableKey={clerkPublishableKey}>
           <ManagedRelayAuthProvider>{app}</ManagedRelayAuthProvider>
         </ClerkProvider>
       )
