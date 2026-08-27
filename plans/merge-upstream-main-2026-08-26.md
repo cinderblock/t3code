@@ -274,6 +274,56 @@ still holds.
 Also: `git branch -f` moves a pointer, but the worktree stays on whatever branch it had checked
 out. A merge run in the worktree lands on _that_ branch, not the one just repointed.
 
+## 2026-08-27 — the merged build is runnable now, without landing on master
+
+`master` still cannot fast-forward, and the reason is narrow: the fast-forward would rewrite
+`plans/merge-upstream-main-2026-08-11.md`, which another session has uncommitted edits in.
+
+The only difference between master's copy and the branch's is **`vp fmt` re-padding a markdown
+table** — 12 lines each way, zero content change, introduced by the pre-commit hook during the
+merge commits. Git still refuses, correctly. Forcing past it would mean `git checkout --` over
+another thread's uncommitted work, which the repo's standing rules forbid outright.
+
+**So the merged build was produced in the worktree instead**, which needs none of that.
+
+### Built and verified at `C:/Users/camer/git/t3code-merge-v0.0.34`
+
+| contents                                      | check      |
+| --------------------------------------------- | ---------- |
+| fork: `repositoryRootCache` (spawn-storm fix) | present    |
+| fork: `shell-subscribed` (shell diagnostics)  | present    |
+| fork: environment settle grace (2500 ms)      | present    |
+| upstream: `apps/server` version               | **0.0.35** |
+
+`apps/server/dist/bin.mjs` grew 4.87 MB → 7.10 MB, which is upstream's 359 commits arriving.
+`apps/desktop/dist-electron/{main,preload}.cjs` built too.
+
+### Running it
+
+```
+cd C:/Users/camer/git/t3code-merge-v0.0.34
+vp run --filter @t3tools/desktop start
+```
+
+Two things to know:
+
+- **Quit the running instance first.** A single-instance lock is held by the Clerk bridge
+  (`apps/desktop/src/app/DesktopClerk.ts:133`), so a second launch focuses the existing window
+  rather than starting the new build. The instance running since 2026-08-23 is on the Aug-21
+  bundle, which predates both merges.
+- **State is shared.** Both read `~/.t3/userdata`, so threads and projects carry over and
+  nothing diverges by running from the worktree.
+
+### To land it on master later
+
+Once that plan file is free (the other session commits or drops it):
+
+```
+git -C C:/Users/camer/git/t3code merge --ff-only merge/upstream-v0.0.35
+```
+
+then rebuild in the main checkout. Until then the worktree build is the merged one.
+
 ## Things not to do
 
 - Don't rebase, and don't force-push. Both are ruled out above.
