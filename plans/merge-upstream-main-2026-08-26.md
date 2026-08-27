@@ -228,6 +228,52 @@ how it looks. Worth a visual check of the composer's queue (clock) button before
 - Fast-forward `master` to `merge/upstream-v0.0.34` when the shared checkout is quiet.
 - The worktree can be removed afterwards with `git worktree remove ../t3code-merge-v0.0.34`.
 
+## 2026-08-27 — v0.0.35 folded in. Zero conflicts.
+
+Upstream released `v0.0.35` (tip `d3c24a14b`). Merged into the same branch.
+
+**This is the payoff from not deferring again:**
+
+|                   | v0.0.34 merge                                  | v0.0.35 merge   |
+| ----------------- | ---------------------------------------------- | --------------- |
+| commits behind    | 356                                            | **3**           |
+| conflicting files | 18                                             | **0**           |
+| effort            | ~2 hours, a worktree, an aborted first attempt | one clean merge |
+
+Upstream's content: release version bumps, a macOS desktop preview CI workflow, and a
+regenerated codex app-server schema plus a new test for Codex 0.150 multi-agent events.
+
+### Checks
+
+- typecheck clean across the monorepo; lint clean
+- `effect-codex-app-server` **21/21**, including the new schema test
+- server suite reports 129 failures — **pre-existing and environmental**, the provider CLIs
+  are not installed on this machine. Unmerged master reports **118** of the same class, and the
+  three files that looked new (`GrokProvider`, `ProviderRegistry`, `ProviderInstanceRegistryLive`)
+  were run directly against master and fail there **identically, 8 for 8**. The merge adds 19
+  test files and 373 passing tests, and failed _files_ went **down**, 29 → 27.
+
+### Branch state
+
+`merge/upstream-v0.0.35` and `merge/upstream-v0.0.34` now both point at **`b9e519a55`** — same
+lineage, two names. Use `merge/upstream-v0.0.35`. It contains the v0.0.34 merge, the v0.0.35
+merge, and master's plan commits, is **0 behind upstream**, and **`master` fast-forwards to it**.
+
+```
+git -C C:/Users/camer/git/t3code merge --ff-only merge/upstream-v0.0.35
+```
+
+### Gotcha worth remembering
+
+`master` kept moving after the worktree was branched (plan-doc commits), so the merge branch
+stopped being a fast-forward target. Fixed by merging `master` _into_ the branch, which is
+additive and needs no force-push. Watch for this whenever a long-lived merge branch is in
+flight — check `git merge-base --is-ancestor master <branch>` before assuming the fast-forward
+still holds.
+
+Also: `git branch -f` moves a pointer, but the worktree stays on whatever branch it had checked
+out. A merge run in the worktree lands on _that_ branch, not the one just repointed.
+
 ## Things not to do
 
 - Don't rebase, and don't force-push. Both are ruled out above.
