@@ -163,6 +163,71 @@ the fork's `useEnvironmentsSettled()` call but take **upstream's comment**: the 
 `RightPanelTabs.tsx` is a single hunk in the surface menu — the fork's commit-graph tab must
 remain among the `SurfaceMenuItem` entries.
 
+## Attempt 2 — DONE. Merge complete on `merge/upstream-v0.0.34`
+
+Run in a dedicated worktree at `C:/Users/camer/git/t3code-merge-v0.0.34`, so the shared
+checkout was never left in a conflicted state. Merge commit **`c9e4cd010`** (parents
+`a144222c1` + `a3a8cbd60`), pushed to `origin/merge/upstream-v0.0.34`.
+
+**`master` fast-forwards to it cleanly, and it is 0 commits behind upstream.** Not fast-forwarded
+here on purpose: master lives in the shared checkout where other sessions are working, and
+moving it changes thousands of files under them.
+
+### Checks
+
+| check                        | result                                                                                           |
+| ---------------------------- | ------------------------------------------------------------------------------------------------ |
+| typecheck (monorepo, `-r`)   | clean                                                                                            |
+| lint                         | clean (warnings only, all pre-existing style)                                                    |
+| web tests                    | **2918 / 2918 passing** (285 files)                                                              |
+| server + contracts + desktop | 286 / 286 passing                                                                                |
+| client-runtime               | 9 failing — **pre-existing**, verified identical on unmerged master; merge adds 81 passing tests |
+
+### How the fork-bearing conflicts were resolved
+
+- **ProjectFaviconResolver** — upstream inlined the preamble the fork had extracted into
+  `walkForFavicon` and added a required `candidateScope` argument to `findExistingFile`. Kept
+  the fork's extraction and TTL cache; adopted upstream's `"filesystem"` scope for the saved
+  icon path, which is what lets their external-icon feature resolve an absolute path.
+- **externalLauncher** — upstream rewrote `buildAvailableEditors` around
+  `resolveUsableFileManagerCommand`, but sequentially. Kept upstream's APIs inside the fork's
+  concurrent, `EDITOR_DETECTION_TIMEOUT`-bounded shape, and kept the fork's `availableEditors`
+  cache while taking upstream's env composition.
+- **RightPanelTabs** — took upstream's data-driven surface menu and restored the fork's
+  History (commit graph) surface into it. Also had to give the fork's _existing_ History action
+  the `shortcut` upstream now requires of every entry: one member without it makes the whole
+  tuple fail `surfaceShortcutActionForKey`.
+- **ChatComposer** — upstream rewrote the footer earlier in the file and deleted this copy, so
+  keeping the fork's would have rendered **two footers**. Took the deletion and re-grafted the
+  fork's queue-draft control into upstream's footer in the same relative position. Kept
+  upstream's `onSend` (which gained `ComposerSubmissionIntent`) plus the fork's `onQueueDraft`.
+
+### The trap that cost the most time
+
+Several conflicts aligned **two unrelated additions at one position**, sharing a closing
+brace, JSDoc opener, or `});` _outside_ the conflict markers. A naive union fuses them into one
+broken declaration — and it does so **silently**, producing valid-looking text. It hit
+`contracts/ipc.ts` (twice), `contracts/settings.ts`, `settingsSearch.ts`, `PreviewView.test.tsx`,
+`preview.ts`, `preview/Manager.ts` and `SettingsPanels.tsx`.
+
+Union is only safe when each side is a _complete_ syntactic unit. Otherwise split into siblings
+and give each its own closer. Typecheck catches these, so always run it before trusting a
+union-heavy resolution.
+
+Also: a regex sweep for "orphaned JSDoc openers" produced a **false positive** inside a JSX
+comment and had to be reverted. Do not automate that repair.
+
+### Verification gap worth naming
+
+`ChatComposer` is the one resolution not proven by a test: the queue-draft control's _placement_
+inside upstream's rewritten footer is structurally correct and typechecks, but nothing asserts
+how it looks. Worth a visual check of the composer's queue (clock) button before relying on it.
+
+### Next
+
+- Fast-forward `master` to `merge/upstream-v0.0.34` when the shared checkout is quiet.
+- The worktree can be removed afterwards with `git worktree remove ../t3code-merge-v0.0.34`.
+
 ## Things not to do
 
 - Don't rebase, and don't force-push. Both are ruled out above.
