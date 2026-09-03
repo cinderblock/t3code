@@ -60,12 +60,11 @@ Likely upstream-drift, take upstream shape + re-apply fork additions:
 
 1. [x] Commit the orphaned 08-11 plan edits on master (`1ce3c0a41`).
 2. [x] Write this plan; commit on master so the branch sync picks it up.
-3. [ ] Worktree: merge `master` into the merge branch (additive; picks up the two doc
-       commits).
-4. [ ] Worktree: `git merge upstream/main`; resolve the 16 conflicts, fork-bearing
-       files first.
-5. [ ] Worktree: `pnpm install`, typecheck, lint, targeted tests; compare failures
-       against unmerged master before blaming the merge.
+3. [x] Worktree: merge `master` into the merge branch (clean).
+4. [x] Worktree: `git merge upstream/main`; resolved all 16 conflicts.
+5. [x] Worktree: `pnpm install`, typecheck (clean), lint (exit 0), full web/desktop/
+       contracts/shared/client-runtime/server suites; failures = master's
+       environmental baseline. See "Check results".
 6. [ ] Commit the merge on the branch; push branch to origin.
 7. [ ] Shared checkout: `git merge --ff-only` the branch into `master`;
        `pnpm install`.
@@ -76,7 +75,71 @@ Likely upstream-drift, take upstream shape + re-apply fork additions:
 - The 42-line plan-file diff between master and the branch was pure `vp fmt` table
   re-padding; committing the orphaned edits through the pre-commit hook re-applied the
   same padding, so the copies converge.
-- (running log below)
+
+### Upstream independently built both of the fork's perf caches
+
+- **`RepositoryIdentityResolver`** — upstream #8187 added its own `repositoryRootCache`.
+  Took upstream's layout/names and its new resolve semantic (`null` root → `null`
+  identity, no `?? cwd` fallback), but kept the fork's **negative TTL** on failed root
+  lookups where upstream uses `Duration.zero` (re-spawn on every resolve — exactly the
+  vicious cycle under load the spawn-storm fix exists for, and a permanent re-spawn for
+  non-repo project dirs). Upstream's new "retries after a failed lookup" test was
+  adapted to a TestClock + 50 ms negative TTL so it verifies retry-after-TTL instead of
+  immediate retry; the fork's own tests already pin TTL-delayed freshness at the
+  identity level, so this is consistent.
+- **`ProjectFaviconResolver`** — upstream #9080 shipped a favicon cache that supersedes
+  the fork's Map cache: keyed on `(faviconPath, cwd)` (fork's was cwd-only), split
+  positive/negative TTLs, and a re-stat on every hit so a deleted icon falls back
+  immediately. Took upstream's cache wholesale and grafted the fork's
+  `FAVICON_RESOLVE_TIMEOUT` (5 s) into the cache lookup, so a hung filesystem degrades
+  to the fallback favicon and the timeout is cached as a negative result. Deleted the
+  fork's now-contradictory test "caches resolution so a later removal still serves the
+  cached path" (upstream's re-stat behavior is strictly better and has its own test).
+
+### Other resolution notes
+
+- `ChatView`: upstream moved `ComposerBannerStack` and `ThreadSyncStatusPill` _inside_
+  `ChatComposer` (as `bannerItems`/`threadSyncPhase` props). Keeping the fork's copies
+  would have double-rendered — took the deletion, re-grafted only the fork-only
+  `QueuedMessagesPanel` into the hero ternary chain.
+- `ChatComposer` footer: the fork's `inlineTasksBadge`/`inlineStashBadge` lines were
+  dropped — upstream absorbed the stash + tasks badges with its own placements
+  (banner column / activity stack); keeping them would double-render. Only the
+  queue-draft popover was re-grafted, ahead of upstream's new attach-files button.
+- `preview/Manager`: upstream added OAuth popup support (`previewWindowOpenAction`).
+  Ordered popup-allow _before_ the fork's external-link policy in
+  `setWindowOpenHandler` — an OAuth popup completes through its opener, which the
+  system browser cannot reach; ordinary opens still obey the fork's policy.
+- `SettingsPanels`: both sides added a full `<SettingsRow>` at the same anchor sharing
+  closers — the union-fusing trap again. Split into two sibling rows
+  (proactive-panels, then preview-external-links).
+- `NodeSqliteClient` moved to `@t3tools/shared/nodeSqliteClient` (#7272);
+  `ForkMigrations.test.ts` import updated.
+- Fork test harness fixes: `Manager.test.ts` WebContents stubs needed
+  `setAudioMuted`/`isCurrentlyAudible` (upstream's registerWebview now restores audio
+  mute state). `DesktopClientSettings.test.ts` fixture needed the fork's two
+  `sidebarAutoSettle*` fields re-added.
+- Windows-proofed upstream's new favicon cache test (`path.join` instead of `/`
+  literals) so it actually verifies the cache + timeout semantics on this machine; the
+  6 other favicon test failures are the documented pre-existing `/`-vs-`\` class and
+  fail identically on unmerged master.
+
+## Check results (worktree, merged)
+
+| check                   | result                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| typecheck (15 packages) | clean                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| lint                    | exit 0, warnings only (pre-existing classes + upstream's own new code)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| web                     | **3446/3446 passing** (297 files)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| contracts               | 336/336 passing                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| desktop                 | 702/721; the 19 failures are in the same 6 files failing on unmerged master (16 there — the +3 are upstream-added tests in those same files, same environmental class)                                                                                                                                                                                                                                                                                                                                                                                              |
+| shared                  | 5 failures — the documented pre-existing relayClient/logging path class                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| client-runtime          | 9 failures — the documented pre-existing set                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| server                  | 3144/3318 passing; 165 failures across 31 files, **all environmental, none merge regressions** — verified by running the comparable 25 files on unmerged master (74 failures there, byte-for-byte same classes). Classes: provider CLIs not installed (Grok/Cursor/Codex adapters + textGeneration), POSIX-only tests upstream added in this range (`bootService` linux/darwin installers, a FIFO test in WorkspaceFileSystem, chmod-unreadable in `cli/theme`), and `/`-literal path assertions (ClaudeSkills, favicon). Upstream CI is Linux, so none fire there. |
+
+Targeted conflict-area suites all pass: RepositoryIdentityResolver 15/15 (incl. the
+TestClock-adapted retry test), ForkMigrations, Manager 86/86, DesktopClientSettings,
+contracts 336/336.
 
 ## Things not to do
 
