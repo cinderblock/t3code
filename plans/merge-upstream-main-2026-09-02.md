@@ -65,10 +65,25 @@ Likely upstream-drift, take upstream shape + re-apply fork additions:
 5. [x] Worktree: `pnpm install`, typecheck (clean), lint (exit 0), full web/desktop/
        contracts/shared/client-runtime/server suites; failures = master's
        environmental baseline. See "Check results".
-6. [ ] Commit the merge on the branch; push branch to origin.
-7. [ ] Shared checkout: `git merge --ff-only` the branch into `master`;
-       `pnpm install`.
-8. [ ] Update this plan; release contention marker.
+6. [x] Merge commit `695c34520`; plan doc `21fe16eb1`; branch pushed to
+       `origin/merge/upstream-v0.0.35`.
+7. [x] `master` fast-forwarded to `21fe16eb1` — **0 behind upstream/main, 128 ahead**.
+       `pnpm install` in the shared checkout; `master` pushed to `origin/master`;
+       `main` mirror fast-forwarded to `upstream/main`.
+8. [x] Plan updated; contention marker released; desktop rebuild kicked off from the
+       merged master.
+
+## Post-landing state (2026-09-02)
+
+- `master` = `21fe16eb1`, pushed. 0 behind `upstream/main` (`b9b1b8fdd`), 128 ahead.
+- `merge/upstream-v0.0.35` = same commit, pushed. Local `merge/upstream-v0.0.34` is
+  stale (pre-merge tip `cdada9797`) and fully merged — safe to delete whenever.
+- The dedicated worktree `C:\Users\camer\git\t3code-merge-v0.0.34` served its purpose
+  and was removed; recreate one for the next conflicted merge.
+- Follow-up worth considering: the ~165 Windows-only server test failures are all
+  environmental (provider CLIs, POSIX-only tests, `/`-literal assertions). A pass that
+  Windows-proofs the path assertions would be upstreamable and shrink the noise floor
+  for future merge verification.
 
 ## Findings / gotchas
 
