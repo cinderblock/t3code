@@ -90,32 +90,32 @@ function buildRepositoryIdentity(input: {
 /**
  * Locate the work-tree root for `cwd`, or `null` when it can't be determined.
  *
- * Returning `null` rather than falling back to `cwd` internally lets the caller cache an
- * indeterminate answer on the *negative* TTL. That matters under load: when the machine is
- * busy this `git` call is the first thing to time out, and caching its fallback as though it
- * were a confirmed root would pin the wrong identity for the full positive TTL.
+ * Returning `null` rather than falling back to `cwd` lets the caller cache an indeterminate
+ * answer on the *negative* TTL. That matters under load: when the machine is busy this `git`
+ * call is the first thing to time out, and caching its fallback as though it were a confirmed
+ * root would pin the wrong identity for the full positive TTL.
  */
-const resolveRepositoryRoot = Effect.fn("RepositoryIdentityResolver.resolveCacheKey")(function* (
-  cwd: string,
-) {
-  const processRunner = yield* ProcessRunner.ProcessRunner;
+const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.resolveCacheKey")(
+  function* (cwd: string) {
+    const processRunner = yield* ProcessRunner.ProcessRunner;
 
-  // git is a real executable on every platform — no cmd.exe shell mode, which
-  // would split paths containing spaces during cmd's re-tokenization.
-  const topLevelResult = yield* processRunner
-    .run({
-      command: "git",
-      args: ["-C", cwd, "rev-parse", "--show-toplevel"],
-      timeoutBehavior: "timedOutResult",
-    })
-    .pipe(Effect.option);
-  if (topLevelResult._tag === "None" || topLevelResult.value.code !== 0) {
-    return null;
-  }
+    // git is a real executable on every platform — no cmd.exe shell mode, which
+    // would split paths containing spaces during cmd's re-tokenization.
+    const topLevelResult = yield* processRunner
+      .run({
+        command: "git",
+        args: ["-C", cwd, "rev-parse", "--show-toplevel"],
+        timeoutBehavior: "timedOutResult",
+      })
+      .pipe(Effect.option);
+    if (topLevelResult._tag === "None" || topLevelResult.value.code !== 0) {
+      return null;
+    }
 
-  const candidate = topLevelResult.value.stdout.trim();
-  return candidate.length > 0 ? candidate : null;
-});
+    const candidate = topLevelResult.value.stdout.trim();
+    return candidate.length > 0 ? candidate : null;
+  },
+);
 
 const resolveRepositoryIdentityFromCacheKey = Effect.fn(
   "RepositoryIdentityResolver.resolveFromCacheKey",
@@ -142,14 +142,23 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   options: RepositoryIdentityResolverOptions = {},
 ) {
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const cacheCapacity = options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY;
 
-  const repositoryIdentityCache = yield* Cache.makeWith<string, RepositoryIdentity | null>(
-    (cacheKey) =>
-      resolveRepositoryIdentityFromCacheKey(cacheKey).pipe(
+  // `git rev-parse --show-toplevel` is a full subprocess spawn, and without this cache it ran
+  // on *every* resolve — so the identity cache below was paid for with a process spawn on each
+  // lookup, defeating it. Under a projection snapshot that resolves every project's workspace
+  // root this was measured at ~3.8 spawns/sec, 86% of all subprocess spawns the server made,
+  // which is enough on Windows to starve the event loop. See plans/process-spawn-storm.md.
+  // Failed lookups are cached on the negative TTL rather than retried on the next resolve:
+  // under load the lookup fails by *timing out*, and immediate retries feed the very load
+  // that caused the timeout.
+  const repositoryRootCache = yield* Cache.makeWith<string, string | null>(
+    (cwd) =>
+      resolveRepositoryIdentityCacheKey(cwd).pipe(
         Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
       ),
     {
-      capacity: options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY,
+      capacity: cacheCapacity,
       timeToLive: Exit.match({
         onSuccess: (value) =>
           value === null
@@ -160,18 +169,13 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
     },
   );
 
-  // `git rev-parse --show-toplevel` is a full subprocess spawn, and without this cache it ran
-  // on *every* resolve — so the identity cache below was paid for with a process spawn on each
-  // lookup, defeating it. Under a projection snapshot that resolves every project's workspace
-  // root this was measured at ~3.8 spawns/sec, 86% of all subprocess spawns the server made,
-  // which is enough on Windows to starve the event loop. See plans/process-spawn-storm.md.
-  const repositoryRootCache = yield* Cache.makeWith<string, string | null>(
-    (cwd) =>
-      resolveRepositoryRoot(cwd).pipe(
+  const repositoryIdentityCache = yield* Cache.makeWith<string, RepositoryIdentity | null>(
+    (cacheKey) =>
+      resolveRepositoryIdentityFromCacheKey(cacheKey).pipe(
         Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
       ),
     {
-      capacity: options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY,
+      capacity: cacheCapacity,
       timeToLive: Exit.match({
         onSuccess: (value) =>
           value === null
@@ -185,9 +189,8 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   const resolve: RepositoryIdentityResolver["Service"]["resolve"] = Effect.fn(
     "RepositoryIdentityResolver.resolve",
   )(function* (cwd) {
-    // An indeterminate root keeps the previous behaviour of keying on `cwd` itself, so a
-    // non-repository directory still gets a (negatively cached) identity lookup.
-    const cacheKey = (yield* Cache.get(repositoryRootCache, cwd)) ?? cwd;
+    const cacheKey = yield* Cache.get(repositoryRootCache, cwd);
+    if (cacheKey === null) return null;
     return yield* Cache.get(repositoryIdentityCache, cacheKey);
   });
 

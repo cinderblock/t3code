@@ -4,7 +4,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { runMigrations } from "../../Migrations.ts";
 import { runForkMigrations, FORK_MIGRATIONS_TABLE } from "../../ForkMigrations.ts";
-import * as NodeSqliteClient from "../../NodeSqliteClient.ts";
+import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 // Each case needs a database of its own: a suite-level `it.layer` would share one
 // in-memory database across cases, so migrations run by the first case would
