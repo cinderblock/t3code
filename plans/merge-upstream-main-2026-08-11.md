@@ -91,12 +91,27 @@ Upstream adds migrations **036–040** in this range
 `ProjectionProjectFaviconPath`). The fork migrator (`t3fork_migrations`) means
 `Migrations.ts` needs no fork edits and merged without conflict.
 
-⚠️ **The deferred repair from the last merge now matters.** `~/.t3/userdata/state.sqlite`
-still carries stale rows `35_UsageSamples` / `36_QueuedMessages` in
-`effect_sql_migrations`, pinning upstream's high-water at 36. Upstream's real
-migration 36 (`ProjectionThreadsPinned`) is `<=` that mark and would be **silently
-skipped**, producing a missing-column failure later at query time. Fix with
-`scripts/fix-fork-migration-rows.ts` (dry-run default, `--apply` with app stopped).
+✅ **The predecessor plan's live-DB warning is STALE — no repair is needed.**
+It said `~/.t3/userdata/state.sqlite` still carried stale rows `35_UsageSamples` /
+`36_QueuedMessages`, pinning upstream's high-water at 36 and so silently
+swallowing upstream's real migration 36. Verified directly on 2026-08-11 by
+reading `effect_sql_migrations`:
+
+```
+userdata: 35 ProjectionThreadTitleRegeneration   <- genuine upstream name
+          34 ProjectionThreadsSnoozed
+          33 ProjectionThreadsSettled
+   t3fork_migrations: 1_UsageSamples, 2_QueuedMessages
+dev:      32 AuthPairingProofKeyThumbprint
+   t3fork_migrations: absent
+```
+
+High-water is **35**, not 36, and every row carries an upstream name — the stale
+fork rows are gone and the fork migrator is tracking its own two migrations in
+`t3fork_migrations` as designed. Upstream's new 36–40 will apply normally on next
+start. `node scripts/fix-fork-migration-rows.ts` agrees ("clean, nothing to do")
+on both databases. **Correct the 07-25 plan's "Remaining live-database cleanup
+(NOT yet applied)" section — it is done.**
 
 Checked whether fork `Migrations.ts` had drifted: **it has not.**
 `git diff <merge-base> HEAD -- apps/server/src/persistence/Migrations.ts` is
@@ -130,12 +145,11 @@ are eliminated by the pre-merge rename. Remaining 11:
 3. [x] `git merge upstream/main`; resolved all 11 conflicts.
 4. [x] `pnpm install`, `pnpm typecheck` (0 errors, 15 packages), `pnpm lint`
        (exit 0).
-5. [ ] Commit the merge.
-6. [ ] Run the test suite.
-7. [ ] DB repair: `scripts/fix-fork-migration-rows.ts` dry-run → show → `--apply`.
+5. [x] Merge commit `ad5e0bb3b`. Now 0 behind upstream/main, 92 ahead.
+6. [~] Test suite — in progress, see "Test results" below.
+7. [x] DB repair: **not needed**, the warning was stale. See below.
 8. [ ] Build desktop + smoke test.
-9. [ ] Rename the local branch to `master` (user asked mid-merge, 2026-08-11) and
-       decide what happens to the stale local `main` and to the origin branch.
+9. [x] Branch rename done. See "Branch layout" below.
 
 ## Findings / gotchas
 
@@ -248,3 +262,40 @@ regressions: `no-array-reverse` in ChatView (safe — spread-then-reverse) and
   `git stash store -m "..." "$(git stash create)"` only.
 - Do not resolve the `usage.ts` conflicts by hand-merging both features into one
   file; the rename exists precisely to avoid that.
+
+## Branch layout (changed 2026-08-11)
+
+The branch was no longer about a crash investigation, so at the user's request:
+
+- `debug/crash-investigation` → renamed to **`master`** (92 commits ahead of
+  upstream, 0 behind). Its upstream tracking was **unset**: it used to track
+  `origin/debug/crash-investigation`, so a bare `git push` would have pushed the
+  merge to that stale branch. Pushing now requires naming a target explicitly.
+- **`main`** kept as the pure upstream mirror and fast-forwarded to
+  `upstream/main` (it was 924 behind, 0 ahead — nothing was lost). It now tracks
+  `upstream/main` rather than the equally-stale `origin/main`.
+- Upstream names its trunk `main`, so the mirror keeps that name; `master` is the
+  fork's own working branch, matching this machine's `init.defaultBranch=master`.
+- **Nothing was changed on GitHub.** No push, no remote rename, no default-branch
+  change. `origin/debug/crash-investigation` and `origin/main` are untouched and
+  still stale.
+
+## Test results
+
+`pnpm test` (`vp run -r test`) **halts on the first failing package**, so the
+first run only covered 5 of 14 packages before `@t3tools/shared` stopped it.
+Anything that reports "the suite passed" off that run is wrong. The remaining
+packages were run separately with `pnpm --no-bail`.
+
+Known-failing, **not** merge regressions — every failure so far is the same
+Windows path-separator / PATH-resolution class, in files byte-identical to
+upstream:
+
+- `packages/shared` — `relayClient.test.ts` (4) + `logging.test.ts` (1).
+  Both the tests _and_ the code they exercise (`relayClient.ts`, `logging.ts`)
+  verified byte-identical to `upstream/main`. Failures compare `/`-joined
+  expected paths against Windows `\`-joined actual ones.
+- `apps/desktop` — `DesktopConnectionCatalogStore.test.ts` (6), same
+  `userdata/connection-catalog.json` vs `userdata\connection-catalog.json` shape.
+
+Upstream CI is Linux, so these never fire there.
