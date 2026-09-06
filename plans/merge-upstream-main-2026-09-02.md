@@ -80,6 +80,13 @@ Likely upstream-drift, take upstream shape + re-apply fork additions:
   stale (pre-merge tip `cdada9797`) and fully merged — safe to delete whenever.
 - The dedicated worktree `C:\Users\camer\git\t3code-merge-v0.0.34` served its purpose
   and was removed; recreate one for the next conflicted merge.
+- 2026-09-06: the long-running GUI instance (up since 08-23 on the pre-merge bundle)
+  was restarted onto the merged build (v0.0.38 bundle) via a one-shot elevated
+  scheduled task — graceful close, then `pnpm start:desktop` relaunch. Two gotchas for
+  next time: the app runs **elevated**, so a default-token scheduled task can neither
+  read its path (`Get-Process .Path` returns empty across the integrity gap — use CIM)
+  nor close it; register the task with `-RunLevel Highest`. Script kept at
+  `C:\Users\camer\AppData\Local\t3-restart\restart-t3.ps1`; task itself removed.
 - Follow-up worth considering: the ~165 Windows-only server test failures are all
   environmental (provider CLIs, POSIX-only tests, `/`-literal assertions). A pass that
   Windows-proofs the path assertions would be upstreamable and shrink the noise floor
