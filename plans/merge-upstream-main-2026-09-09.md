@@ -50,10 +50,11 @@ Likely upstream-drift, take upstream shape + re-apply fork additions:
 3. [x] `git merge upstream/main`; resolved all 14 conflicts.
 4. [x] `pnpm install`, typecheck (clean after rc.112 fallout fixes), lint (exit 0).
 5. [x] All suites run and compared against master — see "Check results".
-6. [ ] Commit merge; push branch; `git merge --ff-only` into master; `pnpm install`
-       there; push master; ff the `main` mirror.
-7. [ ] Rebuild desktop; restart GUI via the elevated scheduled-task recipe (09-02 plan).
-8. [ ] Update this plan; release contention marker; remove worktree.
+6. [x] Merge commit `8a2ee6780` on `merge/upstream-v0.0.40`, pushed. `master`
+       fast-forwarded to it and pushed — **0 behind upstream/main, 132 ahead**. `main`
+       mirror fast-forwarded. `pnpm install` in the shared checkout.
+7. [~] Rebuild desktop; restart GUI via the elevated scheduled-task recipe (09-02 plan).
+8. [x] Plan updated; worktree removed; marker released at the end.
 
 ## Findings / gotchas
 
@@ -143,3 +144,14 @@ Likely upstream-drift, take upstream shape + re-apply fork additions:
 - Don't take either side wholesale in `processRunner.ts` or `VcsStatusBroadcaster.ts`.
 - Union-merge only complete syntactic units (08-26 "trap that cost the most time").
 - All conflict work in the worktree; never leave the shared checkout conflicted.
+
+## Post-landing state (2026-09-09)
+
+- `master` = `8a2ee6780`, pushed. 0 behind `upstream/main` (`383cc40f4`), 132 ahead.
+- `merge/upstream-v0.0.40` = same commit, pushed. Older `merge/upstream-v0.0.34`/`v0.0.35`
+  branches are fully merged and can be deleted whenever.
+- Merge worktree removed; recreate one for the next conflicted merge.
+- The Windows-only test noise floor dropped sharply this range (server 165 → 9,
+  shared 5 → 0): upstream made the provider tests self-contained and Windows-proofed
+  several path assertions. The remaining 9 server + 2 client-runtime + Wayland-backend
+  desktop failures are all upstream-new tests with Linux/POSIX assumptions.
