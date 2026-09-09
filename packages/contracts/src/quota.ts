@@ -157,7 +157,7 @@ export const UsageHistoryResult = Schema.Struct({
 });
 export type UsageHistoryResult = typeof UsageHistoryResult.Type;
 
-export class AccountUsageError extends Schema.TaggedErrorClass<AccountUsageError>()(
+export class AccountUsageError extends Schema.TaggedError<AccountUsageError>()(
   "AccountUsageError",
   {
     message: Schema.String,

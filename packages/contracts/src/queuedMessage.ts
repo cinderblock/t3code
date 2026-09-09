@@ -143,7 +143,7 @@ export const QueuedMessageStreamEvent = Schema.Union([
 ]);
 export type QueuedMessageStreamEvent = typeof QueuedMessageStreamEvent.Type;
 
-export class QueuedMessageError extends Schema.TaggedErrorClass<QueuedMessageError>()(
+export class QueuedMessageError extends Schema.TaggedError<QueuedMessageError>()(
   "QueuedMessageError",
   {
     message: Schema.String,

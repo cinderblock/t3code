@@ -142,78 +142,88 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
 
   const appliedCount = { value: 0 };
 
-  const applyItem = Effect.fn("EnvironmentShellState.applyItem")(function* (
-    item: OrchestrationShellStreamItem,
+  // Apply each received batch with one state write. The RPC client's bounded
+  // buffer can split a server chunk, so a bulk action can still need several
+  // writes, but each write includes every event in that batch.
+  const applyItems = Effect.fn("EnvironmentShellState.applyItems")(function* (
+    items: ReadonlyArray<OrchestrationShellStreamItem>,
   ) {
-    if (item.kind === "synchronized") {
-      yield* Ref.set(awaitingCompletion, false);
-      yield* SubscriptionRef.update(state, (current) =>
-        Option.isSome(current.snapshot)
-          ? { ...current, status: "live" as const, error: Option.none() }
-          : current,
-      );
-      return;
+    const initial = yield* SubscriptionRef.get(state);
+    let waiting = yield* Ref.get(awaitingCompletion);
+    let next = initial;
+    let receivedSnapshot = false;
+    for (const item of items) {
+      if (item.kind === "synchronized") {
+        waiting = false;
+        if (Option.isSome(next.snapshot)) {
+          next = { ...next, status: "live", error: Option.none() };
+        }
+        continue;
+      }
+      const previousSnapshot = Option.getOrNull(next.snapshot);
+      const nextSnapshot =
+        item.kind === "snapshot"
+          ? item.snapshot
+          : Option.match(next.snapshot, {
+              onNone: () => null,
+              onSome: (snapshot) =>
+                item.sequence > snapshot.snapshotSequence
+                  ? applyShellStreamEvent(snapshot, item)
+                  : snapshot,
+            });
+
+      // Report the ways this view can silently stop matching the server. See
+      // shellStreamDiagnostics.ts — threads have gone missing here while every other layer was
+      // provably healthy, and none of these paths previously left any trace. `previousSnapshot`
+      // is the running batch value, so a stale event mid-batch is still caught.
+      yield* emitShellStreamDiagnostic({
+        environmentId,
+        itemKind: item.kind,
+        itemSequence: item.kind === "snapshot" ? null : item.sequence,
+        previousSequence: previousSnapshot?.snapshotSequence ?? null,
+        nextSequence: nextSnapshot?.snapshotSequence ?? null,
+        previousThreadCount: previousSnapshot?.threads.length ?? null,
+        nextThreadCount: nextSnapshot?.threads.length ?? null,
+        previousProjectCount: previousSnapshot?.projects.length ?? null,
+        nextProjectCount: nextSnapshot?.projects.length ?? null,
+        discardedAsStale:
+          item.kind !== "snapshot" &&
+          previousSnapshot !== null &&
+          nextSnapshot === previousSnapshot,
+        droppedWithoutSnapshot: item.kind !== "snapshot" && previousSnapshot === null,
+      });
+
+      if (nextSnapshot === null) continue;
+
+      appliedCount.value += 1;
+      yield* emitShellAppliedDiagnostic({
+        environmentId,
+        itemKind: item.kind,
+        appliedCount: appliedCount.value,
+        itemSequence: item.kind === "snapshot" ? null : item.sequence,
+        nextSequence: nextSnapshot.snapshotSequence,
+        nextThreadCount: nextSnapshot.threads.length,
+        nextProjectCount: nextSnapshot.projects.length,
+      });
+      receivedSnapshot ||= item.kind === "snapshot";
+      next = {
+        snapshot: Option.some(nextSnapshot),
+        status: waiting ? "synchronizing" : "live",
+        error: Option.none(),
+      };
     }
-
-    const current = yield* SubscriptionRef.get(state);
-    const previousSnapshot = Option.getOrNull(current.snapshot);
-    const nextSnapshot =
-      item.kind === "snapshot"
-        ? item.snapshot
-        : Option.match(current.snapshot, {
-            onNone: () => null,
-            onSome: (snapshot) =>
-              item.sequence > snapshot.snapshotSequence
-                ? applyShellStreamEvent(snapshot, item)
-                : snapshot,
-          });
-
-    // Report the ways this view can silently stop matching the server. See
-    // shellStreamDiagnostics.ts — threads have gone missing here while every other layer was
-    // provably healthy, and none of these paths previously left any trace.
-    yield* emitShellStreamDiagnostic({
-      environmentId,
-      itemKind: item.kind,
-      itemSequence: item.kind === "snapshot" ? null : item.sequence,
-      previousSequence: previousSnapshot?.snapshotSequence ?? null,
-      nextSequence: nextSnapshot?.snapshotSequence ?? null,
-      previousThreadCount: previousSnapshot?.threads.length ?? null,
-      nextThreadCount: nextSnapshot?.threads.length ?? null,
-      previousProjectCount: previousSnapshot?.projects.length ?? null,
-      nextProjectCount: nextSnapshot?.projects.length ?? null,
-      discardedAsStale:
-        item.kind !== "snapshot" && previousSnapshot !== null && nextSnapshot === previousSnapshot,
-      droppedWithoutSnapshot: item.kind !== "snapshot" && previousSnapshot === null,
-    });
-
-    if (nextSnapshot === null) {
-      return;
-    }
-
-    appliedCount.value += 1;
-    yield* emitShellAppliedDiagnostic({
-      environmentId,
-      itemKind: item.kind,
-      appliedCount: appliedCount.value,
-      itemSequence: item.kind === "snapshot" ? null : item.sequence,
-      nextSequence: nextSnapshot.snapshotSequence,
-      nextThreadCount: nextSnapshot.threads.length,
-      nextProjectCount: nextSnapshot.projects.length,
-    });
-
-    const waiting = yield* Ref.get(awaitingCompletion);
-    yield* SubscriptionRef.set(state, {
-      snapshot: Option.some(nextSnapshot),
-      status: waiting ? "synchronizing" : "live",
-      error: Option.none(),
-    });
-    if (item.kind === "snapshot") {
+    yield* Ref.set(awaitingCompletion, waiting);
+    if (next === initial) return;
+    yield* SubscriptionRef.set(state, next);
+    if (receivedSnapshot) {
       const session = yield* Ref.get(activeSubscriptionSession);
       if (session !== null) {
         yield* Ref.set(lastAuthoritativeSession, session);
       }
     }
-    yield* Queue.offer(persistence, nextSnapshot);
+    if (next.snapshot !== initial.snapshot && Option.isSome(next.snapshot)) {
+      yield* Queue.offer(persistence, next.snapshot.value);
+    }
   });
 
   const foregroundResubscriptions = Option.match(wakeups, {
@@ -258,7 +268,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
           );
           const httpSnapshot = yield* snapshotLoader.load(prepared);
           if (Option.isSome(httpSnapshot)) {
-            yield* applyItem({ kind: "snapshot", snapshot: httpSnapshot.value });
+            yield* applyItems([{ kind: "snapshot", snapshot: httpSnapshot.value }]);
             canResume = true;
             current = yield* SubscriptionRef.get(state);
           }
@@ -301,7 +311,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         retryExpectedFailureAfter: "250 millis",
         resubscribe: foregroundResubscriptions,
       },
-    ).pipe(Stream.runForEach(applyItem)),
+    ).pipe(Stream.runForEachArray(applyItems)),
   );
   yield* SubscriptionRef.changes(supervisor.state).pipe(
     Stream.runForEach((connectionState) => {
@@ -320,7 +330,7 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   return state;
 });
 
-export function shellStateChanges(environmentId: EnvironmentId) {
+function shellStateChanges(environmentId: EnvironmentId) {
   return followStreamInEnvironment(
     environmentId,
     Stream.unwrap(makeEnvironmentShellState().pipe(Effect.map(SubscriptionRef.changes))),
