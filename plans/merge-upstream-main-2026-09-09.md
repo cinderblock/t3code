@@ -53,7 +53,11 @@ Likely upstream-drift, take upstream shape + re-apply fork additions:
 6. [x] Merge commit `8a2ee6780` on `merge/upstream-v0.0.40`, pushed. `master`
        fast-forwarded to it and pushed — **0 behind upstream/main, 132 ahead**. `main`
        mirror fast-forwarded. `pnpm install` in the shared checkout.
-7. [~] Rebuild desktop; restart GUI via the elevated scheduled-task recipe (09-02 plan).
+7. [x] Desktop rebuilt from merged master (bin.mjs 8.96 MB, Electron 44.1.0); GUI restart
+       fired via the elevated scheduled task. **Gotcha:** the running app was on
+       Electron 43.4.1 and the new build on 44.1.0 — the restart script now matches any
+       `electron@*` under the repo pnpm store instead of a hardcoded version, for both
+       the kill guard and the post-launch check.
 8. [x] Plan updated; worktree removed; marker released at the end.
 
 ## Findings / gotchas
