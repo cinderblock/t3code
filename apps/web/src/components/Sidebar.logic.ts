@@ -902,6 +902,81 @@ export function filterSidebarProjectScopeItems<TItem extends { readonly value: s
   return input.activeScopeKey === null ? projectItems : input.items;
 }
 
+/**
+ * The host filter only applies with two or more environments: with one host
+ * there is no row to un-hide from, so a stale persisted id must not blank
+ * the list. Ids missing from the catalog stay persisted (a disconnected host
+ * keeps its preference) but never hide anything.
+ */
+export function resolveSidebarHiddenEnvironmentIds(input: {
+  hiddenEnvironmentIds: readonly string[];
+  environmentIds: readonly string[];
+}): ReadonlySet<string> {
+  if (input.environmentIds.length < 2 || input.hiddenEnvironmentIds.length === 0) {
+    return new Set();
+  }
+  const catalog = new Set(input.environmentIds);
+  return new Set(input.hiddenEnvironmentIds.filter((environmentId) => catalog.has(environmentId)));
+}
+
+/**
+ * Counts live (non-archived) threads per environment inside the current
+ * project scope, so the host row's numbers match what the list would show.
+ */
+export function countSidebarThreadsByEnvironment(input: {
+  threads: readonly Pick<ScopedSidebarThread, "environmentId" | "projectId" | "archivedAt">[];
+  scopedProjectKeys: ReadonlySet<string> | null;
+}): ReadonlyMap<string, number> {
+  const counts = new Map<string, number>();
+  for (const thread of input.threads) {
+    if (thread.archivedAt !== null) continue;
+    if (
+      input.scopedProjectKeys !== null &&
+      !input.scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)
+    ) {
+      continue;
+    }
+    counts.set(thread.environmentId, (counts.get(thread.environmentId) ?? 0) + 1);
+  }
+  return counts;
+}
+
+export interface SidebarHostFilterEntry<TEnvironment extends { environmentId: string }> {
+  readonly environment: TEnvironment;
+  readonly threadCount: number;
+  readonly hidden: boolean;
+}
+
+/**
+ * One row entry per environment, primary host first, catalog order after.
+ * `hiddenThreadCount` is the number the "All" reset advertises.
+ */
+export function buildSidebarHostFilterEntries<
+  TEnvironment extends { environmentId: string },
+>(input: {
+  environments: readonly TEnvironment[];
+  primaryEnvironmentId: string | null;
+  hiddenEnvironmentIds: ReadonlySet<string>;
+  threadCountByEnvironmentId: ReadonlyMap<string, number>;
+}): {
+  readonly entries: readonly SidebarHostFilterEntry<TEnvironment>[];
+  readonly hiddenThreadCount: number;
+} {
+  const ordered = input.environments.toSorted((left, right) => {
+    const leftPrimary = left.environmentId === input.primaryEnvironmentId ? 0 : 1;
+    const rightPrimary = right.environmentId === input.primaryEnvironmentId ? 0 : 1;
+    return leftPrimary - rightPrimary;
+  });
+  let hiddenThreadCount = 0;
+  const entries = ordered.map((environment) => {
+    const threadCount = input.threadCountByEnvironmentId.get(environment.environmentId) ?? 0;
+    const hidden = input.hiddenEnvironmentIds.has(environment.environmentId);
+    if (hidden) hiddenThreadCount += threadCount;
+    return { environment, threadCount, hidden };
+  });
+  return { entries, hiddenThreadCount };
+}
+
 export interface SidebarProjectScopeMenuState {
   readonly open: boolean;
   readonly query: string;

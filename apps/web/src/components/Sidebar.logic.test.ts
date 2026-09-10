@@ -9,6 +9,9 @@ import {
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
   buildMultiSelectThreadContextMenuItems,
+  buildSidebarHostFilterEntries,
+  countSidebarThreadsByEnvironment,
+  resolveSidebarHiddenEnvironmentIds,
   createThreadJumpHintVisibilityController,
   deleteSelectedThreadEntries,
   filterSidebarProjectScopeItems,
@@ -852,6 +855,102 @@ describe("filterSidebarProjectScopeItems", () => {
   it("returns matching projects in source order and supports no-match results", () => {
     expect(filter(null, "WORK")).toEqual([items[1]]);
     expect(filter(null, "missing")).toEqual([]);
+  });
+});
+
+describe("resolveSidebarHiddenEnvironmentIds", () => {
+  it("ignores hidden ids with a single environment so a stale id cannot blank the list", () => {
+    expect(
+      resolveSidebarHiddenEnvironmentIds({
+        hiddenEnvironmentIds: ["env-a"],
+        environmentIds: ["env-a"],
+      }),
+    ).toEqual(new Set());
+  });
+
+  it("keeps only hidden ids that are in the catalog", () => {
+    expect(
+      resolveSidebarHiddenEnvironmentIds({
+        hiddenEnvironmentIds: ["env-b", "env-gone"],
+        environmentIds: ["env-a", "env-b"],
+      }),
+    ).toEqual(new Set(["env-b"]));
+  });
+});
+
+describe("countSidebarThreadsByEnvironment", () => {
+  const thread = (environmentId: string, projectId: string, archivedAt: string | null = null) => ({
+    environmentId,
+    projectId,
+    archivedAt,
+  });
+  const threads = [
+    thread("env-a", "p1"),
+    thread("env-a", "p2"),
+    thread("env-a", "p1", "2026-01-02T00:00:00.000Z"),
+    thread("env-b", "p1"),
+  ];
+
+  it("counts live threads per environment", () => {
+    expect(countSidebarThreadsByEnvironment({ threads, scopedProjectKeys: null })).toEqual(
+      new Map([
+        ["env-a", 2],
+        ["env-b", 1],
+      ]),
+    );
+  });
+
+  it("respects the project scope", () => {
+    expect(
+      countSidebarThreadsByEnvironment({
+        threads,
+        scopedProjectKeys: new Set(["env-a:p2"]),
+      }),
+    ).toEqual(new Map([["env-a", 1]]));
+  });
+});
+
+describe("buildSidebarHostFilterEntries", () => {
+  const environments = [
+    { environmentId: "env-b", label: "Remote" },
+    { environmentId: "env-a", label: "This device" },
+  ];
+
+  it("lists the primary environment first and totals hidden threads", () => {
+    expect(
+      buildSidebarHostFilterEntries({
+        environments,
+        primaryEnvironmentId: "env-a",
+        hiddenEnvironmentIds: new Set(["env-b"]),
+        threadCountByEnvironmentId: new Map([
+          ["env-a", 3],
+          ["env-b", 5],
+        ]),
+      }),
+    ).toEqual({
+      entries: [
+        { environment: environments[1], threadCount: 3, hidden: false },
+        { environment: environments[0], threadCount: 5, hidden: true },
+      ],
+      hiddenThreadCount: 5,
+    });
+  });
+
+  it("reports zero threads for a host without any", () => {
+    expect(
+      buildSidebarHostFilterEntries({
+        environments,
+        primaryEnvironmentId: null,
+        hiddenEnvironmentIds: new Set(),
+        threadCountByEnvironmentId: new Map(),
+      }),
+    ).toEqual({
+      entries: [
+        { environment: environments[0], threadCount: 0, hidden: false },
+        { environment: environments[1], threadCount: 0, hidden: false },
+      ],
+      hiddenThreadCount: 0,
+    });
   });
 });
 

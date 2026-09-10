@@ -42,6 +42,8 @@ import {
   CircleCheckIcon,
   CircleDashedIcon,
   ClockIcon,
+  EyeIcon,
+  EyeOffIcon,
   FolderIcon,
   FolderPlusIcon,
   GitBranchIcon,
@@ -144,6 +146,8 @@ import {
   applySidebarThreadDrop,
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
+  buildSidebarHostFilterEntries,
+  countSidebarThreadsByEnvironment,
   deleteSelectedThreadEntries,
   filterSidebarProjectScopeItems,
   formatWorkingDurationLabel,
@@ -157,6 +161,7 @@ import {
   resolveAdjacentThreadId,
   resolveSidebarDropTarget,
   resolveSidebarDropVerb,
+  resolveSidebarHiddenEnvironmentIds,
   type SidebarDropVerb,
   resolveSidebarThreadStatus,
   searchSidebarThreadsByTitle,
@@ -209,8 +214,10 @@ import {
 } from "../providerInstances";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { stackedThreadToast, toastManager } from "./ui/toast";
+import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { Toggle } from "./ui/toggle";
 import {
   Combobox,
   ComboboxEmpty,
@@ -786,6 +793,7 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
   projectByKey: ReadonlyMap<string, EnvironmentProject>;
   projectDisplayNameByKey: ReadonlyMap<string, string>;
   scopedProjectKeys: ReadonlySet<string> | null;
+  hiddenEnvironmentIds: ReadonlySet<string>;
   routeDraftId: string | null;
   onNavigateToDraft: (draftId: DraftId) => void;
 }) {
@@ -831,6 +839,9 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
       ) {
         continue;
       }
+      if (props.hiddenEnvironmentIds.has(session.environmentId)) {
+        continue;
+      }
       if (draftKey === props.routeDraftId) {
         // Open draft: render the frozen entry snapshot, or nothing for a
         // draft that has never been left. Gated on the LIVE session above so
@@ -852,6 +863,7 @@ const SidebarDraftBlock = memo(function SidebarDraftBlock(props: {
     draftThreadsByThreadKey,
     draftsByThreadKey,
     frozenActive,
+    props.hiddenEnvironmentIds,
     props.routeDraftId,
     props.scopedProjectKeys,
   ]);
@@ -2305,17 +2317,46 @@ export default function Sidebar() {
   // app restarts keep it.
   const projectScopeKey = useUiStateStore((store) => store.sidebarProjectScopeKey);
   const setProjectScopeKey = useUiStateStore((store) => store.setSidebarProjectScopeKey);
+  // Host filter: a persisted hide-list of environment ids, applied below the
+  // project scope. The effective set drops ids outside the catalog and is
+  // empty with a single host (see resolveSidebarHiddenEnvironmentIds). Keyed
+  // on the joined ids so connection-state churn in `environments` does not
+  // re-partition the list.
+  const persistedHiddenEnvironmentIds = useUiStateStore(
+    (store) => store.sidebarHiddenEnvironmentIds,
+  );
+  const setEnvironmentHidden = useUiStateStore((store) => store.setSidebarEnvironmentHidden);
+  const showAllEnvironments = useUiStateStore((store) => store.showAllSidebarEnvironments);
+  const environmentIdsKey = environments.map((environment) => environment.environmentId).join("\0");
+  const hiddenEnvironmentIds = useMemo(
+    () =>
+      resolveSidebarHiddenEnvironmentIds({
+        hiddenEnvironmentIds: persistedHiddenEnvironmentIds,
+        environmentIds: environmentIdsKey.length === 0 ? [] : environmentIdsKey.split("\0"),
+      }),
+    [environmentIdsKey, persistedHiddenEnvironmentIds],
+  );
   // {value, label} items let Base UI drive the combobox selection contract
-  // while the popup search filters the same collection.
+  // while the popup search filters the same collection. Projects that live
+  // only on hidden hosts leave the menu, except the active scope: the
+  // combobox value must stay among its items.
   const projectScopeItems = useMemo(
     () => [
       { value: "all", label: "All projects" },
-      ...projectGroups.map((project) => ({
-        value: project.projectKey,
-        label: project.displayName,
-      })),
+      ...projectGroups
+        .filter(
+          (project) =>
+            project.projectKey === projectScopeKey ||
+            project.memberProjectRefs.some(
+              (projectRef) => !hiddenEnvironmentIds.has(projectRef.environmentId),
+            ),
+        )
+        .map((project) => ({
+          value: project.projectKey,
+          label: project.displayName,
+        })),
     ],
-    [projectGroups],
+    [hiddenEnvironmentIds, projectGroups, projectScopeKey],
   );
   const projectGroupByScopeKey = useMemo(
     () => new Map(projectGroups.map((project) => [project.projectKey, project] as const)),
@@ -2368,6 +2409,22 @@ export default function Sidebar() {
           ),
     [scopedProjectGroup],
   );
+  // Per-host thread counts inside the current scope feed the host row and
+  // the "hidden by host filter" empty state, so the numbers the user sees
+  // always describe rows the list would otherwise show.
+  const hostFilter = useMemo(
+    () =>
+      buildSidebarHostFilterEntries({
+        environments,
+        primaryEnvironmentId,
+        hiddenEnvironmentIds,
+        threadCountByEnvironmentId: countSidebarThreadsByEnvironment({
+          threads,
+          scopedProjectKeys,
+        }),
+      }),
+    [environments, hiddenEnvironmentIds, primaryEnvironmentId, scopedProjectKeys, threads],
+  );
   // A persisted scope whose project is gone falls back to all projects, but
   // only after every catalog environment has a live project snapshot. Cached
   // or disconnected environments cannot establish that the project is gone.
@@ -2399,15 +2456,19 @@ export default function Sidebar() {
       ) {
         continue;
       }
+      if (hiddenEnvironmentIds.has(session.environmentId)) {
+        continue;
+      }
       count += 1;
     }
     return count;
   });
-  // Scope flips drop the selection: rows selected under the old scope may be
-  // hidden now, and bulk actions must never count or touch invisible rows.
+  // Scope and host-filter flips drop the selection: rows selected under the
+  // old filters may be hidden now, and bulk actions must never count or
+  // touch invisible rows.
   useEffect(() => {
     clearSelection();
-  }, [clearSelection, projectScopeKey]);
+  }, [clearSelection, persistedHiddenEnvironmentIds, projectScopeKey]);
 
   const openProjectSettings = useCallback(
     (projectGroup: SidebarProjectSnapshot) => {
@@ -2475,7 +2536,8 @@ export default function Sidebar() {
       (thread) =>
         thread.archivedAt === null &&
         (scopedProjectKeys === null ||
-          scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
+          scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)) &&
+        !hiddenEnvironmentIds.has(thread.environmentId),
     );
     const pinned: EnvironmentThreadShell[] = [];
     const active: EnvironmentThreadShell[] = [];
@@ -2561,7 +2623,15 @@ export default function Sidebar() {
       settledThreads: sortSettledThreadsForSidebar(settled),
       snoozeNow: preciseNow,
     };
-  }, [nowMinute, optimisticDrop, scopedProjectKeys, serverConfigs, snoozeWakeTick, threads]);
+  }, [
+    hiddenEnvironmentIds,
+    nowMinute,
+    optimisticDrop,
+    scopedProjectKeys,
+    serverConfigs,
+    snoozeWakeTick,
+    threads,
+  ]);
 
   const threadSearchInputRef = useRef<HTMLInputElement>(null);
   const [threadSearchQuery, setThreadSearchQuery] = useState("");
@@ -4524,6 +4594,64 @@ export default function Sidebar() {
                 </Tooltip>
               </div>
             ) : null}
+            {projectGroups.length > 0 && hostFilter.entries.length > 1 ? (
+              // Host toggles: pressed means shown. "All" is a reset, pressed
+              // while nothing is hidden, and carries the hidden total so a
+              // filtered-away host is never silent.
+              <div
+                role="group"
+                aria-label="Filter threads by host"
+                className="flex flex-wrap gap-0.5 rounded-lg bg-sidebar-control-surface p-0.5"
+              >
+                <Toggle
+                  variant="segmented"
+                  size="segmented"
+                  className="gap-1.5 text-sidebar-muted-foreground data-pressed:text-sidebar-foreground"
+                  pressed={hiddenEnvironmentIds.size === 0}
+                  onPressedChange={(pressed) => {
+                    if (pressed) showAllEnvironments();
+                  }}
+                  aria-label={
+                    hostFilter.hiddenThreadCount > 0
+                      ? `Show all hosts (${hostFilter.hiddenThreadCount} hidden)`
+                      : "Show all hosts"
+                  }
+                >
+                  All
+                  {hostFilter.hiddenThreadCount > 0 ? (
+                    <Badge size="sm" variant="warning" className="tabular-nums">
+                      {hostFilter.hiddenThreadCount} hidden
+                    </Badge>
+                  ) : null}
+                </Toggle>
+                {hostFilter.entries.map(({ environment, threadCount, hidden }) => (
+                  <Toggle
+                    key={environment.environmentId}
+                    variant="segmented"
+                    size="segmented"
+                    className="min-w-0 max-w-full gap-1.5 text-sidebar-muted-foreground data-pressed:text-sidebar-foreground"
+                    pressed={!hidden}
+                    onPressedChange={(pressed) => {
+                      setEnvironmentHidden(environment.environmentId, !pressed);
+                    }}
+                    aria-label={`${environment.label}: ${threadCount} ${
+                      threadCount === 1 ? "thread" : "threads"
+                    }${hidden ? ", hidden" : ""}`}
+                  >
+                    {hidden ? (
+                      <EyeOffIcon className="size-3.5" />
+                    ) : (
+                      <EnvironmentMachineIcon
+                        kind={environmentMachineById.get(environment.environmentId) ?? "server"}
+                        className="size-3.5"
+                      />
+                    )}
+                    <span className="min-w-0 truncate">{environment.label}</span>
+                    <span className="tabular-nums opacity-70">{threadCount}</span>
+                  </Toggle>
+                ))}
+              </div>
+            ) : null}
           </SidebarGroup>
         }
       >
@@ -4747,6 +4875,7 @@ export default function Sidebar() {
                           projectByKey={projectByKey}
                           projectDisplayNameByKey={projectDisplayNameByKey}
                           scopedProjectKeys={scopedProjectKeys}
+                          hiddenEnvironmentIds={hiddenEnvironmentIds}
                           routeDraftId={routeDraftIdForRows}
                           onNavigateToDraft={navigateToDraft}
                         />,
@@ -4890,6 +5019,24 @@ export default function Sidebar() {
                   >
                     <PlusIcon className="-mx-0.5 size-3" />
                     Add project
+                  </button>
+                </>
+              ) : hostFilter.hiddenThreadCount > 0 ? (
+                <>
+                  <span>
+                    {hostFilter.hiddenThreadCount === 1
+                      ? "1 thread"
+                      : `${hostFilter.hiddenThreadCount} threads`}
+                    {scopedProjectGroup ? ` in ${scopedProjectGroup.displayName}` : ""} hidden by
+                    the host filter
+                  </span>
+                  <button
+                    type="button"
+                    onClick={showAllEnvironments}
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-sidebar-border px-2.5 py-1 text-[11px] font-medium text-sidebar-muted-foreground transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+                  >
+                    <EyeIcon className="-mx-0.5 size-3" />
+                    Show all hosts
                   </button>
                 </>
               ) : scopedProjectGroup ? (

@@ -20,6 +20,21 @@ on Windows and Linux to start a new thread and immediately open another draft. T
 next draft keeps the workspace mode and base branch you selected. With **New
 worktree**, each background submission creates its own worktree.
 
+## Filter the list
+
+On web and desktop, the picker above the thread list scopes the sidebar to one
+project. Choose **All projects** to clear it. The scope is remembered across
+restarts.
+
+When you are connected to more than one environment, a row of host buttons
+appears below the project picker. Each button shows the host and how many of
+its threads match the current project scope. Click a host to hide its threads;
+click it again to bring them back. **All** shows every host and, while any are
+hidden, displays the total number of hidden threads. If a filter hides
+everything, the list says how many threads it is hiding and offers **Show all
+hosts**. Host filters are remembered per browser or device and do not affect
+the mobile app, which has its own environment filter.
+
 ## Pin and reorder threads
 
 Pin a thread from its menu to keep it above your active work.

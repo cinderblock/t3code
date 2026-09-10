@@ -13,8 +13,10 @@ import {
   resolveProjectExpanded,
   setDefaultAdvertisedEndpointKey,
   setProjectExpanded,
+  setSidebarEnvironmentHidden,
   setSidebarProjectScopeKey,
   setThreadChangedFilesExpanded,
+  showAllSidebarEnvironments,
   type UiState,
 } from "./uiStateStore";
 
@@ -23,6 +25,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
     projectExpandedById: {},
     projectOrder: [],
     sidebarProjectScopeKey: null,
+    sidebarHiddenEnvironmentIds: [],
     threadLastVisitedAtById: {},
     threadChangedFilesExpandedById: {},
     defaultAdvertisedEndpointKey: null,
@@ -156,6 +159,35 @@ describe("uiStateStore pure functions", () => {
     expect(setSidebarProjectScopeKey(scoped, null).sidebarProjectScopeKey).toBeNull();
     expect(setSidebarProjectScopeKey(scoped, "").sidebarProjectScopeKey).toBeNull();
   });
+
+  it("hides and shows sidebar environments without duplicating ids", () => {
+    const hidden = setSidebarEnvironmentHidden(makeUiState(), "env-b", true);
+
+    expect(hidden.sidebarHiddenEnvironmentIds).toEqual(["env-b"]);
+    expect(setSidebarEnvironmentHidden(hidden, "env-b", true)).toBe(hidden);
+    expect(setSidebarEnvironmentHidden(hidden, "", true)).toBe(hidden);
+    expect(setSidebarEnvironmentHidden(hidden, "env-a", false)).toBe(hidden);
+    expect(setSidebarEnvironmentHidden(hidden, "env-a", true).sidebarHiddenEnvironmentIds).toEqual([
+      "env-b",
+      "env-a",
+    ]);
+    expect(setSidebarEnvironmentHidden(hidden, "env-b", false).sidebarHiddenEnvironmentIds).toEqual(
+      [],
+    );
+  });
+
+  it("shows all sidebar environments in one step", () => {
+    const hidden = setSidebarEnvironmentHidden(
+      setSidebarEnvironmentHidden(makeUiState(), "env-a", true),
+      "env-b",
+      true,
+    );
+
+    const visible = makeUiState();
+
+    expect(showAllSidebarEnvironments(hidden).sidebarHiddenEnvironmentIds).toEqual([]);
+    expect(showAllSidebarEnvironments(visible)).toBe(visible);
+  });
 });
 
 describe("parsePersistedState", () => {
@@ -202,6 +234,7 @@ describe("parsePersistedState", () => {
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKey: null,
+      sidebarHiddenEnvironmentIds: [],
       pullRequestMergeMethod: "merge",
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -324,6 +357,7 @@ describe("uiStateStore persistence", () => {
       },
       defaultAdvertisedEndpointKey: "desktop-core:lan:http",
       sidebarProjectScopeKey: null,
+      sidebarHiddenEnvironmentIds: [],
       threadChangedFilesExpansionVersion: 2,
       threadChangedFilesExpandedById: {
         "environment:thread-1": {
@@ -348,6 +382,22 @@ describe("uiStateStore persistence", () => {
     expect(parsePersistedState(persisted).sidebarProjectScopeKey).toBe(
       "github.com/pingdotgg/t3code",
     );
+  });
+
+  it("restores hidden sidebar environments across reloads and drops junk entries", () => {
+    persistState(makeUiState({ sidebarHiddenEnvironmentIds: ["env-b", "env-c"] }));
+
+    const persisted = JSON.parse(
+      localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
+    ) as PersistedUiState;
+
+    expect(parsePersistedState(persisted).sidebarHiddenEnvironmentIds).toEqual(["env-b", "env-c"]);
+    expect(
+      parsePersistedState({
+        sidebarHiddenEnvironmentIds: ["env-b", "", "env-b", 7 as unknown as string],
+      }).sidebarHiddenEnvironmentIds,
+    ).toEqual(["env-b"]);
+    expect(parsePersistedState({}).sidebarHiddenEnvironmentIds).toEqual([]);
   });
 
   it("drops the temporary expanded-only migration fallback when rewriting state", () => {
