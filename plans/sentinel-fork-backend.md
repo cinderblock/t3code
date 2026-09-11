@@ -111,6 +111,61 @@ msgpackr-extract` before or after installing. Sentinel's npm 9.2.0 predates the 
    `t3` and `node_modules/t3/dist/bin.mjs`. It also needs a version scheme that can't
    collide with upstream's.
 
+## Tooling in this repo
+
+`scripts/pack-server-tarball.ts` packages a built server, and its pure logic in
+`scripts/lib/server-tarball.ts` has tests. Build first with `vp run --filter t3 build`,
+then run `node scripts/pack-server-tarball.ts --out <dir>`. The output is
+`t3-<version>.tgz` plus a `package.json` install root that depends on the tarball
+through a `file:` spec and carries the npm-compatible pins. On the target, copy both
+files into one directory and run `npm install`, then `node node_modules/t3/dist/bin.mjs
+serve`.
+
+## Drafted ops change for option 1 (NOT applied; needs your yes)
+
+Nothing below exists in the ops repo yet. It follows sentinel's existing pattern: the
+deploy runs as `cameron` on the self-hosted runner, with passwordless sudo, via
+`servers/sentinel/deploy.sh`.
+
+1. **`servers/sentinel/t3code/t3code.service`**: a system unit with `User=cameron`, so
+   it starts at boot without enabling linger.
+
+   ```ini
+   [Unit]
+   Description=T3 Code server (cinderblock/t3code fork)
+   After=network-online.target
+   Wants=network-online.target
+
+   [Service]
+   User=cameron
+   WorkingDirectory=/home/cameron
+   ExecStart=/usr/bin/node /opt/t3code/node_modules/t3/dist/bin.mjs serve --host 127.0.0.1 --port 3773 --no-browser
+   Restart=on-failure
+   RestartSec=5
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+2. **`servers/sentinel/ensure-t3code.sh`**, sourced from `deploy.sh`. If a newer tarball
+   and install root are staged in `/opt/t3code/incoming/`, it moves them into
+   `/opt/t3code`, runs `npm install --no-audit --no-fund` as `cameron`, installs the
+   unit, then runs `daemon-reload`, `enable` and `restart`. It is idempotent: with
+   nothing new staged it only ensures the unit is enabled.
+3. **How the tarball gets there.** At first, copy it by hand from noook with `scp` into
+   `/opt/t3code/incoming/`. Later, a fork CI workflow could build and pack on a tag and
+   attach the tarball to a GitHub release, and the deploy would fetch it. That would be
+   CI publishing a release asset, not an npm publish.
+4. **How clients reach it.** The unit binds loopback only. Choose one:
+   - a new LAN-only Caddy site next to `sentinel.tsl`, reverse-proxying to
+     `127.0.0.1:3773`;
+   - `--tailscale-serve` on the unit, if sentinel is on the tailnet.
+
+   Either is a separate yes, because it touches Caddy or Tailscale.
+
+5. **Provider CLIs.** Claude Code and/or Codex are installed for `cameron` and logged
+   in interactively once. Logging in is a user step and can't be done from the deploy.
+
 ## Things not to do
 
 - Don't run `t3 service install` or `service update` with a fork build. It installs
