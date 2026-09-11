@@ -105,7 +105,8 @@ function resolveSpawnExecutableWithNode(
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
 ): string | undefined {
-  const cacheKey = `${platform}\0${command}\0${readEnvPath(env) ?? ""}`;
+  // PATHEXT is part of the resolution on Windows, so it is part of the key.
+  const cacheKey = `${platform}\0${command}\0${readEnvPath(env) ?? ""}\0${env.PATHEXT ?? ""}`;
   const cached = spawnExecutableResolutionCache.get(cacheKey);
   if (cached !== undefined) return cached;
   const resolved = resolveSpawnExecutableWithNodeUncached(command, platform, env);
