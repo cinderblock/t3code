@@ -17,9 +17,8 @@
  * Cheap by construction: 4 wakeups/second that do nothing but subtract two
  * numbers, and it only logs when it sees a real stall.
  *
- * Tuning via environment:
- * - `T3_EVENT_LOOP_LAG_MS` — report threshold in ms (default 250).
- * - `T3_EVENT_LOOP_LAG_OFF` — set to disable the monitor entirely.
+ * Opt-in, like `CpuProfiler`: it runs only when one of these is set.
+ * - `T3_EVENT_LOOP_LAG_MS` — report threshold in ms (`1` for the 250 ms default).
  * - `T3_DIAGNOSTICS_FILE` — also append each stall as JSON to this path.
  *
  * ## Why it writes its own file
@@ -131,7 +130,10 @@ const ZERO_STATS: LagStats = { maxLagMs: 0, totalLagMs: 0, stallCount: 0 };
 
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
-    if (process.env.T3_EVENT_LOOP_LAG_OFF) {
+    // A diagnostic that is on by default is a diagnostic nobody asked for; the
+    // sampling is cheap, but the file it writes is not something a production
+    // install should grow unprompted.
+    if (!process.env.T3_EVENT_LOOP_LAG_MS?.trim() && !process.env.T3_DIAGNOSTICS_FILE?.trim()) {
       return;
     }
 
