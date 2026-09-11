@@ -7,6 +7,7 @@
  *
  * Usage: node scripts/diagnose-usage-animation.mjs "<pair-url>"
  */
+import * as NodeFS from "node:fs";
 import { chromium } from "playwright-core";
 
 const pairUrl = process.argv[2];
@@ -14,6 +15,9 @@ if (!pairUrl) {
   console.error("need a pair URL argument");
   process.exit(1);
 }
+
+// Screenshots show live account state; keep them out of the tree.
+NodeFS.mkdirSync(".crash-reports", { recursive: true });
 
 const browser = await chromium.launch({ channel: "chrome", headless: false });
 const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
@@ -47,7 +51,7 @@ if (!bubble) {
     "page text sample:",
     (await page.evaluate(() => document.body.innerText)).slice(0, 400),
   );
-  await page.screenshot({ path: "usage-anim-nobubble.png" });
+  await page.screenshot({ path: ".crash-reports/usage-anim-nobubble.png" });
   await browser.close();
   process.exit(0);
 }
@@ -80,5 +84,5 @@ const report = await page.evaluate(async () => {
 });
 
 console.log(JSON.stringify(report, null, 2));
-await page.screenshot({ path: "usage-anim-expanded.png" });
+await page.screenshot({ path: ".crash-reports/usage-anim-expanded.png" });
 await browser.close();
