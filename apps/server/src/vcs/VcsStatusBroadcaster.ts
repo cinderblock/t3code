@@ -40,6 +40,8 @@ const STATUS_REFRESH_STARTUP_GRACE = Duration.seconds(10);
 // initial burst from blocking backend readiness; this keeps the burst (and steady-state) from
 // freezing the event loop and tripping post-connect reconnects. On-demand requests are not throttled.
 const STATUS_REFRESH_CONCURRENCY = 3;
+/** Longest one repo may hold a refresh permit; see the poller loop. */
+const STATUS_REFRESH_PERMIT_TIMEOUT = Duration.minutes(2);
 const VCS_STATUS_REFRESH_FAILURE_BASE_DELAY = Duration.seconds(30);
 const VCS_STATUS_REFRESH_FAILURE_MAX_DELAY = Duration.minutes(15);
 const MAX_FAILURE_DIAGNOSTIC_VALUES = 8;
@@ -642,12 +644,16 @@ export const make = Effect.gen(function* () {
         // fork's semaphore caps HOW MANY repos refresh at once. Different
         // concerns, so keep both -- dropping the semaphore would let all N
         // pollers fire together again once the policy allows work.
+        // The permit is held for the whole refresh, and only the inner `git fetch`
+        // carries its own timeout: a hung PR lookup would otherwise keep one of
+        // the few permits for good and stall every other repo's refresh behind
+        // it. A timeout counts as a failure and takes the same backoff.
         const exit = yield* statusRefreshSemaphore
           .withPermits(1)(
             refreshRemoteStatus(cwd, {
               refreshUpstream: !Duration.isZero(configuredInterval),
               policyCwds: [...demandCwds.keys()],
-            }),
+            }).pipe(Effect.timeout(STATUS_REFRESH_PERMIT_TIMEOUT)),
           )
           .pipe(Effect.exit);
         if (Exit.isSuccess(exit)) {
