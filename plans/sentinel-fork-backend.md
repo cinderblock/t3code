@@ -36,7 +36,10 @@ per-change authorization.
   `catalog:` refs, so a copied `dist` needs a real `npm install` on the target.
 - **Sentinel today.** It runs Ubuntu 24.04 with no `t3` on PATH, no `t3code` user
   service, no `~/.t3`, and **no `claude` or `codex` CLI**. The provider CLIs must be
-  installed and logged in before any agent can run there.
+  installed and logged in before any agent can run there. It does have the native build
+  toolchain (`gcc`, `g++`, `make`, `python3`, `build-essential`), plus `git` and npm
+  9.2.0. That matters because `node-pty` 1.1.0 ships prebuilt binaries only for macOS
+  and Windows, so on Linux it compiles with node-gyp at install time.
 - **Clients.** The fork is 0 commits behind upstream, so the wire protocol matches
   upstream's clients, the iOS app included. Fork-only UI lives in web and desktop.
   Server-side fork behaviour runs regardless of client: queued messages fire and usage
@@ -44,13 +47,61 @@ per-change authorization.
 
 ## Options
 
-1. **Build here, ship a tarball (recommended to start).** On noook, run
-   `vp run --filter t3 build` and then `pnpm --filter t3 pack`. Copy the tarball to
-   sentinel, run `npm install -g ./t3-*.tgz`, and run `t3 serve` under a systemd user
-   unit defined in the ops repo. Updating means repeating those steps. **Unverified:** that
-   `pnpm pack` rewrites the `catalog:` deps correctly (pnpm documents it does on
-   pack/publish). Upstream's publish script also applies icon and metadata overrides a
-   plain pack skips, which is cosmetic only.
+1. **Build here, ship a tarball (recommended to start).** A plain `pnpm --filter t3
+pack` **does not work**: it fails with `ERR_PNPM_CANNOT_RESOLVE_WORKSPACE_PROTOCOL`
+   on the `workspace:*` devDependencies. Upstream's publish script
+   (`apps/server/scripts/cli.ts publish`) avoids this by writing a stripped manifest
+   first, then publishing with pnpm. The working local recipe mirrors that without
+   touching the repo:
+   - Copy `apps/server/dist` into a temp directory.
+   - Write a manifest there with name, version, bin, type, engines and files, plus the
+     runtime `dependencies` with `catalog:` resolved from `pnpm-workspace.yaml`. Leave
+     out devDependencies and **leave out `overrides`**. npm refuses to pack pnpm's
+     `a>b` selector syntax (`Invalid tag name "dbus-next>usocket"`), and npm ignores a
+     dependency's overrides anyway.
+   - Run `npm pack`.
+
+   On sentinel, install the tarball **as a dependency** into its own directory, the same
+   layout as upstream's pinned runtime. Run `node <dir>/node_modules/t3/dist/bin.mjs
+serve` under a systemd user unit defined in the ops repo. Updating means repeating
+   those steps. Upstream's icon and metadata overrides are skipped, which is cosmetic
+   only.
+
+   Two install details that are required, not optional:
+   - **The wrapper directory's `package.json` must carry the npm-compatible overrides**:
+     the plain `name: version` entries from `pnpm-workspace.yaml`, with no `a>b`
+     selectors, no `-` removals and no `npm:` aliases. npm ignores overrides on a
+     dependency, so they only work on the root. Without them, `@effect/platform-node-shared`
+     floats to `rc.114`, which wants `effect ^rc.114` against the pinned `rc.112`. npm then
+     loops re-parsing the 10 MB `effect` record indefinitely; it was killed after 20
+     minutes with nothing installed. With them, the install takes about 60 seconds and
+     yields one `effect@4.0.0-rc.112`.
+   - **npm 11+ blocks install scripts by default**, so `node-pty` and `msgpackr-extract`
+     are skipped with `allow-scripts` warnings. Windows gets away with it on prebuilt
+     binaries, but Linux has none, so on npm 11+ run `npm approve-scripts node-pty
+msgpackr-extract` before or after installing. Sentinel's npm 9.2.0 predates the block.
+
+   **Verified locally on 2026-09-11** on Windows with npm 11.16 and Node 24.18:
+   - The tarball is 24 MB and includes the web client. It contains the fork-only UI
+     strings: the usage strip, the queue popover and the off-site links setting.
+   - It installs and reports `t3 v0.0.40`.
+   - `serve` in a throwaway `--base-dir` ran upstream's migrations and all five fork
+     migrations, created `fork_usage_samples` and `fork_queued_messages`, listened, and
+     printed a pairing URL. Its first response came about 4.6 s after launch. `/`,
+     `/pair` and `/index.html` served HTML with status 200, and
+     `/.well-known/t3/environment` served JSON. The server then stopped cleanly.
+   - Gotcha when repeating the check: give every readiness request a timeout. A
+     `fetch` without one hung on an early connection and never gave up. That made
+     the first run look like the server never answered, when it was the probe.
+
+   Not yet run on Linux, so the `node-pty` compile on sentinel is still unproven. Its
+   toolchain is present.
+
+   **Upstream's own nightlies probably hit the same resolution trap.**
+   `t3@0.0.41-nightly` pins `rc.112`, and `platform-node-shared@rc.114` wants
+   `effect ^rc.114`. The pinned runtime installs `t3@<version>` as a dependency, so the
+   package's overrides don't apply there either. That's an inference; it hasn't been tested.
+
 2. **Clone and build on sentinel.** Same `serve` unit, but sentinel builds it with
    `git pull`, `vp i` and a build. Needs Node 24 on sentinel, which is an ops repo change.
 3. **Publish the fork under its own npm name from fork CI.** This is the only path that
