@@ -146,6 +146,7 @@ import {
   applySidebarThreadDrop,
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
+  buildSidebarHostContextMenuItems,
   buildSidebarHostFilterEntries,
   countSidebarThreadsByEnvironment,
   deleteSelectedThreadEntries,
@@ -2327,14 +2328,19 @@ export default function Sidebar() {
   );
   const setEnvironmentHidden = useUiStateStore((store) => store.setSidebarEnvironmentHidden);
   const showAllEnvironments = useUiStateStore((store) => store.showAllSidebarEnvironments);
+  const soloEnvironment = useUiStateStore((store) => store.soloSidebarEnvironment);
   const environmentIdsKey = environments.map((environment) => environment.environmentId).join("\0");
+  const catalogEnvironmentIds = useMemo(
+    () => (environmentIdsKey.length === 0 ? [] : environmentIdsKey.split("\0")),
+    [environmentIdsKey],
+  );
   const hiddenEnvironmentIds = useMemo(
     () =>
       resolveSidebarHiddenEnvironmentIds({
         hiddenEnvironmentIds: persistedHiddenEnvironmentIds,
-        environmentIds: environmentIdsKey.length === 0 ? [] : environmentIdsKey.split("\0"),
+        environmentIds: catalogEnvironmentIds,
       }),
-    [environmentIdsKey, persistedHiddenEnvironmentIds],
+    [catalogEnvironmentIds, persistedHiddenEnvironmentIds],
   );
   // {value, label} items let Base UI drive the combobox selection contract
   // while the popup search filters the same collection. Projects that live
@@ -2424,6 +2430,55 @@ export default function Sidebar() {
         }),
       }),
     [environments, hiddenEnvironmentIds, primaryEnvironmentId, scopedProjectKeys, threads],
+  );
+  // Right-click on a host toggle: the modifier-free way to solo a host, for
+  // touch (long-press) and keyboard (context-menu key) users.
+  const handleHostContextMenu = useCallback(
+    (
+      entry: { readonly environmentId: string; readonly label: string; readonly hidden: boolean },
+      position: { x: number; y: number },
+    ) => {
+      void (async () => {
+        const api = readLocalApi();
+        if (!api) return;
+        const clicked = await settlePromise(() =>
+          api.contextMenu.show(
+            buildSidebarHostContextMenuItems({
+              label: entry.label,
+              hidden: entry.hidden,
+              isSolo: hostFilter.soloEnvironmentId === entry.environmentId,
+              anyHidden: hiddenEnvironmentIds.size > 0,
+            }),
+            position,
+          ),
+        );
+        if (clicked._tag === "Failure") return;
+        switch (clicked.value) {
+          case "solo":
+            soloEnvironment(entry.environmentId, catalogEnvironmentIds);
+            break;
+          case "hide":
+            setEnvironmentHidden(entry.environmentId, true);
+            break;
+          case "show":
+            setEnvironmentHidden(entry.environmentId, false);
+            break;
+          case "show-all":
+            showAllEnvironments();
+            break;
+          case null:
+            break;
+        }
+      })();
+    },
+    [
+      catalogEnvironmentIds,
+      hiddenEnvironmentIds,
+      hostFilter.soloEnvironmentId,
+      setEnvironmentHidden,
+      showAllEnvironments,
+      soloEnvironment,
+    ],
   );
   // A persisted scope whose project is gone falls back to all projects, but
   // only after every catalog environment has a live project snapshot. Cached
@@ -4631,8 +4686,25 @@ export default function Sidebar() {
                     size="segmented"
                     className="min-w-0 max-w-full gap-1.5 text-sidebar-muted-foreground data-pressed:text-sidebar-foreground"
                     pressed={!hidden}
-                    onPressedChange={(pressed) => {
+                    onPressedChange={(pressed, eventDetails) => {
+                      // Alt-click solos the host (the DAW convention); a second
+                      // Alt-click on the soloed host restores all.
+                      if (eventDetails.event instanceof MouseEvent && eventDetails.event.altKey) {
+                        soloEnvironment(environment.environmentId, catalogEnvironmentIds);
+                        return;
+                      }
                       setEnvironmentHidden(environment.environmentId, !pressed);
+                    }}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      handleHostContextMenu(
+                        {
+                          environmentId: environment.environmentId,
+                          label: environment.label,
+                          hidden,
+                        },
+                        { x: event.clientX, y: event.clientY },
+                      );
                     }}
                     aria-label={`${environment.label}: ${threadCount} ${
                       threadCount === 1 ? "thread" : "threads"

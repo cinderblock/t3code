@@ -961,6 +961,8 @@ export function buildSidebarHostFilterEntries<
 }): {
   readonly entries: readonly SidebarHostFilterEntry<TEnvironment>[];
   readonly hiddenThreadCount: number;
+  /** The single visible host while exactly one is shown, else null. */
+  readonly soloEnvironmentId: string | null;
 } {
   const ordered = input.environments.toSorted((left, right) => {
     const leftPrimary = left.environmentId === input.primaryEnvironmentId ? 0 : 1;
@@ -968,13 +970,40 @@ export function buildSidebarHostFilterEntries<
     return leftPrimary - rightPrimary;
   });
   let hiddenThreadCount = 0;
+  const visibleIds: string[] = [];
   const entries = ordered.map((environment) => {
     const threadCount = input.threadCountByEnvironmentId.get(environment.environmentId) ?? 0;
     const hidden = input.hiddenEnvironmentIds.has(environment.environmentId);
     if (hidden) hiddenThreadCount += threadCount;
+    else visibleIds.push(environment.environmentId);
     return { environment, threadCount, hidden };
   });
-  return { entries, hiddenThreadCount };
+  return {
+    entries,
+    hiddenThreadCount,
+    soloEnvironmentId: entries.length > 1 && visibleIds.length === 1 ? visibleIds[0]! : null,
+  };
+}
+
+export type SidebarHostContextMenuAction = "solo" | "hide" | "show" | "show-all";
+
+/**
+ * Right-click menu for a host toggle: the modifier-free route to solo, so
+ * touch and keyboard users get the same gesture Alt-click offers.
+ */
+export function buildSidebarHostContextMenuItems(input: {
+  label: string;
+  hidden: boolean;
+  isSolo: boolean;
+  anyHidden: boolean;
+}): readonly ContextMenuItem<SidebarHostContextMenuAction>[] {
+  return [
+    { id: "solo", label: `Show only ${input.label}`, disabled: input.isSolo },
+    input.hidden
+      ? { id: "show", label: `Show ${input.label}` }
+      : { id: "hide", label: `Hide ${input.label}` },
+    { id: "show-all", label: "Show all hosts", disabled: !input.anyHidden, separatorBefore: true },
+  ];
 }
 
 export interface SidebarProjectScopeMenuState {

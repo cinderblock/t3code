@@ -29,8 +29,10 @@ restarts.
 When you are connected to more than one environment, a row of host buttons
 appears below the project picker. Each button shows the host and how many of
 its threads match the current project scope. Click a host to hide its threads;
-click it again to bring them back. **All** shows every host and, while any are
-hidden, displays the total number of hidden threads. If a filter hides
+click it again to bring them back. To see one host by itself, Alt-click it
+(Option-click on macOS), or right-click it and choose **Show only**. Repeating
+the gesture on that host restores the others. **All** shows every host and,
+while any are hidden, displays the total number of hidden threads. If a filter hides
 everything, the list says how many threads it is hiding and offers **Show all
 hosts**. Host filters are remembered per browser or device and do not affect
 the mobile app, which has its own environment filter.

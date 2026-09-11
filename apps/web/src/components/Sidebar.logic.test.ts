@@ -9,6 +9,7 @@ import {
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
   buildMultiSelectThreadContextMenuItems,
+  buildSidebarHostContextMenuItems,
   buildSidebarHostFilterEntries,
   countSidebarThreadsByEnvironment,
   resolveSidebarHiddenEnvironmentIds,
@@ -933,7 +934,27 @@ describe("buildSidebarHostFilterEntries", () => {
         { environment: environments[0], threadCount: 5, hidden: true },
       ],
       hiddenThreadCount: 5,
+      soloEnvironmentId: "env-a",
     });
+  });
+
+  it("reports no solo host while several are visible or only one exists", () => {
+    expect(
+      buildSidebarHostFilterEntries({
+        environments,
+        primaryEnvironmentId: null,
+        hiddenEnvironmentIds: new Set(),
+        threadCountByEnvironmentId: new Map(),
+      }).soloEnvironmentId,
+    ).toBeNull();
+    expect(
+      buildSidebarHostFilterEntries({
+        environments: environments.slice(0, 1),
+        primaryEnvironmentId: null,
+        hiddenEnvironmentIds: new Set(),
+        threadCountByEnvironmentId: new Map(),
+      }).soloEnvironmentId,
+    ).toBeNull();
   });
 
   it("reports zero threads for a host without any", () => {
@@ -950,7 +971,48 @@ describe("buildSidebarHostFilterEntries", () => {
         { environment: environments[1], threadCount: 0, hidden: false },
       ],
       hiddenThreadCount: 0,
+      soloEnvironmentId: null,
     });
+  });
+});
+
+describe("buildSidebarHostContextMenuItems", () => {
+  it("offers solo, a hide/show toggle, and a reset that is disabled when nothing is hidden", () => {
+    expect(
+      buildSidebarHostContextMenuItems({
+        label: "Remote",
+        hidden: false,
+        isSolo: false,
+        anyHidden: false,
+      }),
+    ).toEqual([
+      { id: "solo", label: "Show only Remote", disabled: false },
+      { id: "hide", label: "Hide Remote" },
+      { id: "show-all", label: "Show all hosts", disabled: true, separatorBefore: true },
+    ]);
+  });
+
+  it("disables solo for the soloed host and flips the toggle for a hidden host", () => {
+    expect(
+      buildSidebarHostContextMenuItems({
+        label: "Remote",
+        hidden: true,
+        isSolo: false,
+        anyHidden: true,
+      }),
+    ).toEqual([
+      { id: "solo", label: "Show only Remote", disabled: false },
+      { id: "show", label: "Show Remote" },
+      { id: "show-all", label: "Show all hosts", disabled: false, separatorBefore: true },
+    ]);
+    expect(
+      buildSidebarHostContextMenuItems({
+        label: "Remote",
+        hidden: false,
+        isSolo: true,
+        anyHidden: true,
+      })[0],
+    ).toEqual({ id: "solo", label: "Show only Remote", disabled: true });
   });
 });
 

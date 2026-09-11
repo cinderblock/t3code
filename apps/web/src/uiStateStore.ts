@@ -375,6 +375,27 @@ export function showAllSidebarEnvironments(state: UiState): UiState {
     : { ...state, sidebarHiddenEnvironmentIds: [] };
 }
 
+/**
+ * Solo: show only `environmentId` by hiding every other catalog host. Soloing
+ * the host that is already the only visible one restores all hosts, so the
+ * gesture is its own undo. Ids outside the catalog are dropped from the
+ * hide-list as a side effect, which is harmless: they never hid anything.
+ */
+export function soloSidebarEnvironment(
+  state: UiState,
+  environmentId: string,
+  environmentIds: readonly string[],
+): UiState {
+  if (environmentId.length === 0 || !environmentIds.includes(environmentId)) {
+    return state;
+  }
+  const others = environmentIds.filter((id) => id !== environmentId);
+  const alreadySolo =
+    others.length === state.sidebarHiddenEnvironmentIds.length &&
+    others.every((id) => state.sidebarHiddenEnvironmentIds.includes(id));
+  return { ...state, sidebarHiddenEnvironmentIds: alreadySolo ? [] : others };
+}
+
 function setPullRequestMergeMethod(state: UiState, method: PullRequestMergeMethod): UiState {
   return state.pullRequestMergeMethod === method
     ? state
@@ -466,6 +487,7 @@ interface UiStateStore extends UiState {
   setSidebarProjectScopeKey: (projectKey: string | null) => void;
   setSidebarEnvironmentHidden: (environmentId: string, hidden: boolean) => void;
   showAllSidebarEnvironments: () => void;
+  soloSidebarEnvironment: (environmentId: string, environmentIds: readonly string[]) => void;
   setPullRequestMergeMethod: (method: PullRequestMergeMethod) => void;
   setProjectExpanded: (projectIds: string | readonly string[], expanded: boolean) => void;
   reorderProjects: (
@@ -490,6 +512,8 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   setSidebarEnvironmentHidden: (environmentId, hidden) =>
     set((state) => setSidebarEnvironmentHidden(state, environmentId, hidden)),
   showAllSidebarEnvironments: () => set((state) => showAllSidebarEnvironments(state)),
+  soloSidebarEnvironment: (environmentId, environmentIds) =>
+    set((state) => soloSidebarEnvironment(state, environmentId, environmentIds)),
   setPullRequestMergeMethod: (method) => set((state) => setPullRequestMergeMethod(state, method)),
   setProjectExpanded: (projectIds, expanded) =>
     set((state) => setProjectExpanded(state, projectIds, expanded)),

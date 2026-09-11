@@ -17,6 +17,7 @@ import {
   setSidebarProjectScopeKey,
   setThreadChangedFilesExpanded,
   showAllSidebarEnvironments,
+  soloSidebarEnvironment,
   type UiState,
 } from "./uiStateStore";
 
@@ -187,6 +188,23 @@ describe("uiStateStore pure functions", () => {
 
     expect(showAllSidebarEnvironments(hidden).sidebarHiddenEnvironmentIds).toEqual([]);
     expect(showAllSidebarEnvironments(visible)).toBe(visible);
+  });
+
+  it("solos an environment by hiding every other catalog host, and un-solos on repeat", () => {
+    const catalog = ["env-a", "env-b", "env-c"];
+    const state = setSidebarEnvironmentHidden(makeUiState(), "env-stale", true);
+
+    const solo = soloSidebarEnvironment(state, "env-b", catalog);
+    expect(solo.sidebarHiddenEnvironmentIds).toEqual(["env-a", "env-c"]);
+
+    const switched = soloSidebarEnvironment(solo, "env-c", catalog);
+    expect(switched.sidebarHiddenEnvironmentIds).toEqual(["env-a", "env-b"]);
+
+    expect(soloSidebarEnvironment(switched, "env-c", catalog).sidebarHiddenEnvironmentIds).toEqual(
+      [],
+    );
+    expect(soloSidebarEnvironment(state, "env-missing", catalog)).toBe(state);
+    expect(soloSidebarEnvironment(state, "", catalog)).toBe(state);
   });
 });
 
