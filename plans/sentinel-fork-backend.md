@@ -190,3 +190,52 @@ deploy runs as `cameron` on the self-hosted runner, with passwordless sudo, via
    recommend yes: `gh workflow disable Release -R cinderblock/t3code`, which is
    reversible.
 3. Which provider CLIs should sentinel carry: Claude Code, Codex, or both?
+
+## Decisions (user, 2026-09-11) — don't re-ask
+
+1. **Option 1, the tarball route.** Approved. Stage the ops change in a separate ops worktree
+   (`ops-sentinel-t3code`, branch `sentinel-t3code`) and show the exact diff before pushing,
+   because pushing ops `master` triggers the deploy.
+2. **LAN-only on sentinel.** Steamboat is the internet edge; any public exposure happens
+   there, as its own change.
+3. **Fork Release workflow.** The user asked for an explanation before deciding.
+4. **Provider CLIs.** Claude Code only; the user has no Codex account.
+
+## Staged ops change (2026-09-11), awaiting the final yes
+
+This supersedes the draft above. It's committed on the ops branch `sentinel-t3code`
+as `ea5194e`, in the worktree `C:\Users\camer\git\Personal Projects\ops-sentinel-t3code`,
+and **not pushed**. It's a fast-forward of ops `origin/master` (`2069707`). Files:
+
+- `servers/sentinel/t3code/t3code.service`: a system unit with `User=cameron`, on
+  `127.0.0.1:3773`, with PATH including `~/.local/bin` so T3 finds `claude`.
+- `servers/sentinel/t3code/ensure-t3code.sh`: installs Claude Code, installs a tarball
+  from `~/t3code-incoming/` into `/opt/t3code/current` and keeps the previous runtime,
+  installs the unit, and restarts only on change. It also copies itself to
+  `/opt/t3code/bin/t3code-update`.
+- `deploy.sh` runs the installer; `build.sh` bundles it; the `sentinel.tsl` site now
+  reverse-proxies to T3, with `/health` kept; the README gains a T3 section.
+
+The tarball is packed and matches current fork `master`:
+`C:\Users\camer\AppData\Local\Temp\t3-sentinel-pack\` holds `t3-0.0.40.tgz` and
+`package.json`.
+
+Rollout, once approved:
+
+1. `scp` both files to `cameron@sentinel:t3code-incoming/`, so the first deploy
+   installs and starts T3 in one pass.
+2. Push `ea5194e` to ops `master`. "Server Deploys" redeploys **every** server with
+   an online runner, because the workflow has no per-server filter. The other hosts'
+   deploys are idempotent.
+3. User steps: log Claude Code in once, then pair a device (see the ops README).
+
+## The fork's Release workflow
+
+`release.yml` is inherited from upstream. It has a `schedule` trigger that fires
+twice an hour, and GitHub runs schedules on the fork's default branch. Every job
+needs upstream's paid `blacksmith-*` runners, so each run sits queued until GitHub
+cancels it. Of the fork's last 200 runs, all were this workflow: 194 cancelled and
+6 queued. They never start, so they cost no minutes and can never publish. They're
+noise in the Actions tab. `gh workflow disable Release -R cinderblock/t3code` turns
+off just that workflow on GitHub. It's reversible with `gh workflow enable`, leaves
+the file untouched, and so doesn't affect upstream merges.
