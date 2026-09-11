@@ -12,6 +12,14 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 const withDatabase = <A, E>(effect: Effect.Effect<A, E, SqlClient.SqlClient>) =>
   effect.pipe(Effect.provide(NodeSqliteClient.layerMemory()));
 
+const FORK_MIGRATION_LIST: ReadonlyArray<readonly [number, string]> = [
+  [1, "UsageSamples"],
+  [2, "QueuedMessages"],
+  [3, "UsageSnapshots"],
+  [4, "DropUsageSnapshots"],
+  [5, "RepairUpstreamMigrationRows"],
+];
+
 const tableNames = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const rows = yield* sql<{ readonly name: string }>`
@@ -48,15 +56,11 @@ it.effect("fork migrations track a high-water mark separate from upstream's", ()
 
       assert.deepStrictEqual(
         fork.map((row) => [row.migration_id, row.name]),
-        [
-          [1, "UsageSamples"],
-          [2, "QueuedMessages"],
-          [3, "UsageSnapshots"],
-        ],
+        FORK_MIGRATION_LIST,
       );
       // Fork ids restart at 1, well below upstream's, which is only safe because
       // they live in a different table.
-      assert.isAbove(upstream[0]!.migration_id, 3);
+      assert.isAbove(upstream[0]!.migration_id, FORK_MIGRATION_LIST.length);
     }),
   ),
 );
@@ -70,7 +74,9 @@ it.effect("fork migrations create fork-prefixed tables on a fresh database", () 
       const tables = yield* tableNames;
       assert.include(tables, "fork_usage_samples");
       assert.include(tables, "fork_queued_messages");
-      assert.include(tables, "fork_usage_snapshots");
+      // Created by 003 and retired by 004: usage limits now come from the provider
+      // snapshots, so there is no last-good read to restore.
+      assert.notInclude(tables, "fork_usage_snapshots");
       // Unprefixed names are reserved for upstream, so they must not reappear.
       assert.notInclude(tables, "usage_samples");
       assert.notInclude(tables, "queued_messages");
@@ -173,17 +179,17 @@ it.effect("a database stopped at an earlier fork migration picks up the rest", (
 
       // Every existing install is here: it ran the fork migrations that existed
       // when it last started, and must adopt newer ones on the next start.
-      const before = yield* runForkMigrations({ toMigrationInclusive: 2 });
-      assert.strictEqual(before.length, 2);
-      assert.notInclude(yield* tableNames, "fork_usage_snapshots");
+      const before = yield* runForkMigrations({ toMigrationInclusive: 3 });
+      assert.strictEqual(before.length, 3);
+      assert.include(yield* tableNames, "fork_usage_snapshots");
 
       const after = yield* runForkMigrations();
 
       assert.deepStrictEqual(
         after.map(([id, name]) => [id, name]),
-        [[3, "UsageSnapshots"]],
+        FORK_MIGRATION_LIST.slice(3),
       );
-      assert.include(yield* tableNames, "fork_usage_snapshots");
+      assert.notInclude(yield* tableNames, "fork_usage_snapshots");
     }),
   ),
 );
@@ -195,8 +201,44 @@ it.effect("fork migrations are idempotent across repeated runs", () =>
       const first = yield* runForkMigrations();
       const second = yield* runForkMigrations();
 
-      assert.strictEqual(first.length, 3);
+      assert.strictEqual(first.length, FORK_MIGRATION_LIST.length);
       assert.strictEqual(second.length, 0);
+    }),
+  ),
+);
+
+it.effect("the repair migration drops the fork's rows from upstream's table by id and name", () =>
+  withDatabase(
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations();
+
+      // A database from before the fork migrator recorded the fork's migrations
+      // under upstream ids. Upstream's genuine 35/36 never ran there (the whole
+      // problem), so stand those rows in for them.
+      yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id IN (35, 36)`;
+      yield* sql`
+        INSERT INTO effect_sql_migrations (migration_id, name, created_at)
+        VALUES (35, 'UsageSamples', '2026-07-25T00:00:00.000Z'),
+               (36, 'QueuedMessages', '2026-07-25T00:00:00.000Z')
+      `;
+      const genuineBefore = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM effect_sql_migrations
+        WHERE name NOT IN ('UsageSamples', 'QueuedMessages')
+      `;
+
+      yield* runForkMigrations();
+
+      const stale = yield* sql<{ readonly migration_id: number }>`
+        SELECT migration_id FROM effect_sql_migrations
+        WHERE name IN ('UsageSamples', 'QueuedMessages')
+      `;
+      assert.deepStrictEqual(stale, []);
+      const genuineAfter = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM effect_sql_migrations
+        WHERE name NOT IN ('UsageSamples', 'QueuedMessages')
+      `;
+      assert.strictEqual(Number(genuineAfter[0]!.count), Number(genuineBefore[0]!.count));
     }),
   ),
 );

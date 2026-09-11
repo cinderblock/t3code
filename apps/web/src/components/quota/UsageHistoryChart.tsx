@@ -1,12 +1,23 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useState } from "react";
-import type { EnvironmentId, UsageHistorySample, UsageWindow } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ProviderInstanceId,
+  ServerProviderUsageWindow,
+  UsageHistorySample,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
 
 import { cn } from "~/lib/utils";
 import { usageEnvironment } from "../../state/quota";
-import { formatPercent, seriesSlotClassForWindow, windowShortLabel } from "./usagePresentation";
+import {
+  formatPercent,
+  seriesSlotClassForWindow,
+  windowHours,
+  windowScopeName,
+  windowShortLabel,
+} from "./usagePresentation";
 
 const CHART_WIDTH = 640;
 const CHART_HEIGHT = 132;
@@ -16,6 +27,12 @@ const PAD_TOP = 8;
 const PAD_BOTTOM = 18;
 const PLOT_WIDTH = CHART_WIDTH - PAD_LEFT - PAD_RIGHT;
 const PLOT_HEIGHT = CHART_HEIGHT - PAD_TOP - PAD_BOTTOM;
+/**
+ * Without a reset time the domain is anchored on "now", which changes every
+ * render. Rounding it keeps the history query key — and so the cached read —
+ * stable for a while instead of re-fetching on every paint.
+ */
+const ANCHOR_BUCKET_MS = 5 * 60_000;
 
 interface ChartDomain {
   readonly startMs: number;
@@ -56,17 +73,17 @@ function nearestSample(
  */
 function SeriesLine(props: {
   environmentId: EnvironmentId;
-  accountKey: string;
-  window: UsageWindow;
+  instanceId: ProviderInstanceId;
+  window: ServerProviderUsageWindow;
   since: string;
   domain: ChartDomain;
   hoverTimeMs: number | null;
 }) {
-  const { environmentId, accountKey, window, since, domain, hoverTimeMs } = props;
+  const { environmentId, instanceId, window, since, domain, hoverTimeMs } = props;
   const history = useAtomValue(
     usageEnvironment.usageHistory({
       environmentId,
-      input: { accountKey, windowId: window.id, since },
+      input: { instanceId, windowId: window.id, since },
     }),
   );
   const samples = Option.getOrNull(AsyncResult.value(history))?.samples ?? [];
@@ -137,23 +154,24 @@ function SeriesLine(props: {
  */
 export function UsageHistoryChart(props: {
   environmentId: EnvironmentId;
-  accountKey: string;
-  windows: ReadonlyArray<UsageWindow>;
+  instanceId: ProviderInstanceId;
+  windows: ReadonlyArray<ServerProviderUsageWindow>;
   title: string;
 }) {
-  const { environmentId, accountKey, windows, title } = props;
+  const { environmentId, instanceId, windows, title } = props;
   const [hoverX, setHoverX] = useState<number | null>(null);
 
   const referenceWindow =
-    windows.find((window) => window.scope.kind === "all") ?? windows[0] ?? null;
-  const windowHours = referenceWindow?.windowHours ?? 5;
+    windows.find((window) => windowScopeName(window) === null) ?? windows[0] ?? null;
+  const hours = referenceWindow === null ? 5 : windowHours(referenceWindow);
   const resetMs =
-    referenceWindow?.resetsAt != null ? Date.parse(referenceWindow.resetsAt) : Number.NaN;
+    referenceWindow?.resetsAt !== undefined ? Date.parse(referenceWindow.resetsAt) : Number.NaN;
   const nowMs = Date.now();
-  const endMs = Number.isFinite(resetMs) ? Math.max(resetMs, nowMs) : nowMs;
-  const startMs = Number.isFinite(resetMs)
-    ? resetMs - windowHours * 3600_000
-    : nowMs - windowHours * 3600_000;
+  const anchorMs = Number.isFinite(resetMs)
+    ? resetMs
+    : Math.floor(nowMs / ANCHOR_BUCKET_MS) * ANCHOR_BUCKET_MS;
+  const endMs = Math.max(anchorMs, nowMs);
+  const startMs = anchorMs - hours * 3600_000;
   const domain: ChartDomain = { startMs, endMs };
   const since = new Date(startMs).toISOString();
 
@@ -268,7 +286,7 @@ export function UsageHistoryChart(props: {
               className="fill-muted-foreground"
             >
               {new Date(hoverTimeMs).toLocaleString(undefined, {
-                ...(windowHours > 24 ? { weekday: "short" as const } : {}),
+                ...(hours > 24 ? { weekday: "short" as const } : {}),
                 hour: "2-digit",
                 minute: "2-digit",
               })}
@@ -279,7 +297,7 @@ export function UsageHistoryChart(props: {
           <SeriesLine
             key={window.id}
             environmentId={environmentId}
-            accountKey={accountKey}
+            instanceId={instanceId}
             window={window}
             since={since}
             domain={domain}

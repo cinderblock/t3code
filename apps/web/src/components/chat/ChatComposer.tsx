@@ -159,7 +159,7 @@ import {
   removeInlineTerminalContextPlaceholder,
 } from "../../lib/terminalContext";
 import { useComposerPathSearch } from "../../lib/composerPathSearchState";
-import { primaryAccountUsageAtom } from "../../state/quota";
+import { primaryUsageAccountsAtom } from "../../state/quota";
 import { type ElementContextDraft } from "../../lib/elementContext";
 import { ComposerPendingElementContexts } from "./ComposerPendingElementContexts";
 import { ComposerPendingReviewComments } from "./ComposerPendingReviewComments";
@@ -2323,7 +2323,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     !composerSendState.hasSendableContent;
   const collapsedComposerPrimaryActionLabel = "Send message";
   // Queue draft ("send later") affordance next to the send button.
-  const usageAccounts = useAtomValue(primaryAccountUsageAtom);
+  const usageAccounts = useAtomValue(primaryUsageAccountsAtom);
   const showQueueDraftButton =
     isServerThread &&
     pendingPrimaryAction === null &&

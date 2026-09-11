@@ -1,11 +1,4 @@
-import {
-  WS_METHODS,
-  type AccountUsageSnapshot,
-  type AccountUsageStreamEvent,
-  type AccountUsageUnavailableReason,
-  type QueuedMessage,
-  type QueuedMessageStreamEvent,
-} from "@t3tools/contracts";
+import { WS_METHODS, type QueuedMessage, type QueuedMessageStreamEvent } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import type { Atom } from "effect/unstable/reactivity";
@@ -17,85 +10,14 @@ import {
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 
-export interface AccountUsageState {
-  readonly accountKey: string;
-  /**
-   * Null until the first successful poll. The account is still tracked so
-   * the UI can render a placeholder rather than vanishing, which reads as a
-   * bug rather than a transient backoff.
-   */
-  readonly snapshot: AccountUsageSnapshot | null;
-  /** Set while the poller cannot refresh this account; snapshot is stale. */
-  readonly unavailableReason: AccountUsageUnavailableReason | null;
-  readonly unavailableDetail: string | null;
-}
-
-export interface AccountUsageProjection {
-  readonly accounts: ReadonlyArray<AccountUsageState>;
-}
-
-export function applyAccountUsageEvent(
-  current: Option.Option<AccountUsageProjection>,
-  event: AccountUsageStreamEvent,
-): Option.Option<AccountUsageProjection> {
-  const currentAccounts = Option.match(current, {
-    onNone: () => [] as ReadonlyArray<AccountUsageState>,
-    onSome: (projection) => projection.accounts,
-  });
-
-  switch (event._tag) {
-    case "snapshot":
-      return Option.some({
-        accounts: event.accounts.map((account) => ({
-          accountKey: account.accountKey,
-          snapshot: account.snapshot,
-          unavailableReason: account.unavailableReason,
-          unavailableDetail: account.unavailableDetail,
-        })),
-      });
-    case "accountUpdated": {
-      const others = currentAccounts.filter(
-        (account) => account.accountKey !== event.snapshot.accountKey,
-      );
-      return Option.some({
-        accounts: [
-          ...others,
-          {
-            accountKey: event.snapshot.accountKey,
-            snapshot: event.snapshot,
-            unavailableReason: null,
-            unavailableDetail: null,
-          },
-        ],
-      });
-    }
-    case "accountUnavailable": {
-      // Upsert: the account may have failed before it ever produced a
-      // snapshot, in which case this is the first we hear of it.
-      const existing = currentAccounts.find((account) => account.accountKey === event.accountKey);
-      const others = currentAccounts.filter((account) => account.accountKey !== event.accountKey);
-      return Option.some({
-        accounts: [
-          ...others,
-          {
-            accountKey: event.accountKey,
-            snapshot: existing?.snapshot ?? null,
-            unavailableReason: event.reason,
-            unavailableDetail: event.detail,
-          },
-        ],
-      });
-    }
-  }
-}
-
-export function projectAccountUsage(
-  current: Option.Option<AccountUsageProjection>,
-  event: AccountUsageStreamEvent,
-): readonly [Option.Option<AccountUsageProjection>, ReadonlyArray<AccountUsageProjection>] {
-  const next = applyAccountUsageEvent(current, event);
-  return [next, Option.toArray(next)];
-}
+/**
+ * Fork state behind the usage meter strip and queued messages.
+ *
+ * Live usage limits are not here: they ride on every provider snapshot
+ * (`ServerProvider.usageLimits`) that the server-config subscription already
+ * delivers, so clients derive the meters from that. What this module adds is
+ * the history read for the charts and the queued-message RPCs.
+ */
 
 export interface QueuedMessagesProjection {
   readonly messages: ReadonlyArray<QueuedMessage>;
@@ -135,12 +57,6 @@ export function createUsageEnvironmentAtoms<R, E>(
   runtime: Atom.AtomRuntime<EnvironmentRegistry | R, E>,
 ) {
   return {
-    usageProjection: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
-      label: "environment-data:usage:projection",
-      tag: WS_METHODS.subscribeAccountUsage,
-      transform: (stream) =>
-        stream.pipe(Stream.mapAccum(Option.none<AccountUsageProjection>, projectAccountUsage)),
-    }),
     usageHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:usage:history",
       tag: WS_METHODS.usageGetHistory,

@@ -154,7 +154,6 @@ export const RPC_REQUIRED_SCOPES = {
   // these carry over the scopes the fork assigned in the old RPC_REQUIRED_SCOPE
   // map. Reads are read-scope; anything mutating the queue is operate-scope.
   [WS_METHODS.usageGetHistory]: AuthOrchestrationReadScope,
-  [WS_METHODS.subscribeAccountUsage]: AuthOrchestrationReadScope,
   [WS_METHODS.queueListMessages]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeQueuedMessages]: AuthOrchestrationReadScope,
   [WS_METHODS.queueEnqueueMessage]: AuthOrchestrationOperateScope,

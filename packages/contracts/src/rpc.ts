@@ -238,12 +238,7 @@ import {
   SourceControlRepositoryLookupInput,
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
-import {
-  AccountUsageError,
-  AccountUsageStreamEvent,
-  UsageHistoryInput,
-  UsageHistoryResult,
-} from "./quota.ts";
+import { UsageHistoryError, UsageHistoryInput, UsageHistoryResult } from "./quota.ts";
 import {
   QueuedMessage,
   QueuedMessageCancelInput,
@@ -400,7 +395,6 @@ export const WS_METHODS = {
   queueListMessages: "queue.listMessages",
 
   // Streaming subscriptions
-  subscribeAccountUsage: "subscribeAccountUsage",
   subscribeQueuedMessages: "subscribeQueuedMessages",
   subscribeVcsStatus: "subscribeVcsStatus",
   subscribeTerminalEvents: "subscribeTerminalEvents",
@@ -1215,14 +1209,7 @@ const WsSubscribeAuthAccessRpc = Rpc.make(WS_METHODS.subscribeAuthAccess, {
 export const WsUsageGetHistoryRpc = Rpc.make(WS_METHODS.usageGetHistory, {
   payload: UsageHistoryInput,
   success: UsageHistoryResult,
-  error: Schema.Union([AccountUsageError, EnvironmentAuthorizationError]),
-});
-
-export const WsSubscribeAccountUsageRpc = Rpc.make(WS_METHODS.subscribeAccountUsage, {
-  payload: Schema.Struct({}),
-  success: AccountUsageStreamEvent,
-  error: Schema.Union([AccountUsageError, EnvironmentAuthorizationError]),
-  stream: true,
+  error: Schema.Union([UsageHistoryError, EnvironmentAuthorizationError]),
 });
 
 export const WsQueueEnqueueMessageRpc = Rpc.make(WS_METHODS.queueEnqueueMessage, {
@@ -1342,7 +1329,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsAgentSessionsImportRpc,
   WsAssetsCreateUrlRpc,
   WsUsageGetHistoryRpc,
-  WsSubscribeAccountUsageRpc,
   WsQueueEnqueueMessageRpc,
   WsQueueUpdateMessageRpc,
   WsQueueCancelMessageRpc,

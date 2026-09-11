@@ -41,6 +41,8 @@ import * as Effect from "effect/Effect";
 import ForkMigration0001 from "./Migrations/fork/001_UsageSamples.ts";
 import ForkMigration0002 from "./Migrations/fork/002_QueuedMessages.ts";
 import ForkMigration0003 from "./Migrations/fork/003_UsageSnapshots.ts";
+import ForkMigration0004 from "./Migrations/fork/004_DropUsageSnapshots.ts";
+import ForkMigration0005 from "./Migrations/fork/005_RepairUpstreamMigrationRows.ts";
 
 /** Tracking table for fork migrations, kept apart from upstream's `effect_sql_migrations`. */
 export const FORK_MIGRATIONS_TABLE = "t3fork_migrations";
@@ -49,6 +51,8 @@ export const forkMigrationEntries = [
   [1, "UsageSamples", ForkMigration0001],
   [2, "QueuedMessages", ForkMigration0002],
   [3, "UsageSnapshots", ForkMigration0003],
+  [4, "DropUsageSnapshots", ForkMigration0004],
+  [5, "RepairUpstreamMigrationRows", ForkMigration0005],
 ] as const;
 
 export const makeForkMigrationLoader = (throughId?: number) =>

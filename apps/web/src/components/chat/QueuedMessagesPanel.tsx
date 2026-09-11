@@ -6,8 +6,8 @@ import { cn } from "~/lib/utils";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { primaryEnvironmentIdAtom } from "../../state/primaryEnvironment";
 import {
-  primaryAccountUsageAtom,
   primaryQueuedMessagesAtom,
+  primaryUsageAccountsAtom,
   usageEnvironment,
 } from "../../state/quota";
 import { Button } from "../ui/button";
@@ -28,7 +28,7 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel(props: {
 }) {
   const environmentId = useAtomValue(primaryEnvironmentIdAtom);
   const queuedMessages = useAtomValue(primaryQueuedMessagesAtom);
-  const usageAccounts = useAtomValue(primaryAccountUsageAtom);
+  const usageAccounts = useAtomValue(primaryUsageAccountsAtom);
   const updateQueuedMessage = useAtomCommand(
     usageEnvironment.updateQueuedMessage,
     "queued message update",
@@ -44,7 +44,9 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel(props: {
       queuedMessages.filter(
         (message) =>
           message.threadId === props.threadId &&
-          (message.status === "pending" || message.status === "failed"),
+          (message.status === "pending" ||
+            message.status === "sending" ||
+            message.status === "failed"),
       ),
     [props.threadId, queuedMessages],
   );
@@ -92,41 +94,55 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel(props: {
                 {describeQueuedMessageTrigger(message.trigger)}
               </div>
             </div>
-            <Popover
-              open={editingMessageId === message.id}
-              onOpenChange={(open) => setEditingMessageId(open ? message.id : null)}
-            >
-              <PopoverTrigger
-                render={
-                  <Button size="xs" variant="ghost" className="shrink-0 text-muted-foreground" />
-                }
-              >
-                Edit trigger
-              </PopoverTrigger>
-              <PopoverPopup side="top" align="end" className="w-72 max-w-none">
-                <QueuedMessageTriggerForm
-                  accounts={usageAccounts}
-                  preferredInstanceId={message.sendContext.modelSelection?.instanceId ?? null}
-                  initialTrigger={message.trigger}
-                  confirmLabel="Save trigger"
-                  onConfirm={(trigger) => {
-                    setEditingMessageId(null);
-                    void updateQueuedMessage({
-                      environmentId,
-                      input: { id: message.id, trigger },
-                    });
-                  }}
-                />
-              </PopoverPopup>
-            </Popover>
-            <Button
-              size="xs"
-              variant="ghost"
-              className="shrink-0 text-muted-foreground"
-              onClick={() => void cancelQueuedMessage({ environmentId, input: { id: message.id } })}
-            >
-              Cancel
-            </Button>
+            {message.status === "sending" ? (
+              // Claimed by the server: the turn is starting, so there is nothing left to
+              // edit or cancel. The row disappears once the send settles.
+              <span className="shrink-0 text-[11px] text-muted-foreground">Sending…</span>
+            ) : (
+              <>
+                <Popover
+                  open={editingMessageId === message.id}
+                  onOpenChange={(open) => setEditingMessageId(open ? message.id : null)}
+                >
+                  <PopoverTrigger
+                    render={
+                      <Button
+                        size="xs"
+                        variant="ghost"
+                        className="shrink-0 text-muted-foreground"
+                      />
+                    }
+                  >
+                    Edit trigger
+                  </PopoverTrigger>
+                  <PopoverPopup side="top" align="end" className="w-72 max-w-none">
+                    <QueuedMessageTriggerForm
+                      accounts={usageAccounts}
+                      preferredInstanceId={message.sendContext.modelSelection?.instanceId ?? null}
+                      initialTrigger={message.trigger}
+                      confirmLabel="Save trigger"
+                      onConfirm={(trigger) => {
+                        setEditingMessageId(null);
+                        void updateQueuedMessage({
+                          environmentId,
+                          input: { id: message.id, trigger },
+                        });
+                      }}
+                    />
+                  </PopoverPopup>
+                </Popover>
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  className="shrink-0 text-muted-foreground"
+                  onClick={() =>
+                    void cancelQueuedMessage({ environmentId, input: { id: message.id } })
+                  }
+                >
+                  Cancel
+                </Button>
+              </>
+            )}
           </div>
         ),
       )}

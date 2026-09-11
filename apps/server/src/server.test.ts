@@ -153,7 +153,7 @@ import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriver from "./vcs/VcsDriver.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
-import * as UsageBroadcaster from "./quota/UsageBroadcaster.ts";
+import * as UsageHistoryRecorder from "./quota/UsageHistoryRecorder.ts";
 import * as QueuedMessageService from "./queue/QueuedMessageService.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
@@ -915,12 +915,9 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provide(
         Layer.mergeAll(
-          Layer.mock(UsageBroadcaster.UsageBroadcaster)({
-            getSnapshots: Effect.succeed([]),
-            getAccountStates: Effect.succeed([]),
-            streamUsage: Stream.empty,
+          Layer.mock(UsageHistoryRecorder.UsageHistoryRecorder)({
             getHistory: () => Effect.succeed({ samples: [] }),
-            pollSoon: Effect.void,
+            recordProviders: () => Effect.succeed(0),
           }),
           Layer.mock(QueuedMessageService.QueuedMessageService)({
             enqueue: () => Effect.die("QueuedMessageService not stubbed in this test"),

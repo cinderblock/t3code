@@ -1,13 +1,17 @@
 import { useAtomValue } from "@effect/atom-react";
 import { ChevronDownIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import type { AccountUsageState } from "@t3tools/client-runtime/state/quota";
-import type { UsageWindow } from "@t3tools/contracts";
+import type { ServerProviderUsageWindow } from "@t3tools/contracts";
 
 import { cn } from "~/lib/utils";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { primaryEnvironmentIdAtom } from "../../state/primaryEnvironment";
-import { primaryAccountUsageAtom, primaryQueuedMessagesAtom } from "../../state/quota";
+import {
+  primaryQueuedMessagesAtom,
+  primaryUsageAccountsAtom,
+  type UsageAccountView,
+} from "../../state/quota";
+import { getDriverOption } from "../settings/providerDriverMeta";
 import { UsageHistoryChart } from "./UsageHistoryChart";
 import {
   emphasizedWeeklyWindowId,
@@ -18,15 +22,20 @@ import {
   sortWindowsForDisplay,
   unavailableLabel,
   windowLongLabel,
+  windowScopeName,
   windowShortLabel,
 } from "./usagePresentation";
 
 /** Height of the meter strip itself (the expanded panel stacks above it). */
 const USAGE_STATUS_BAR_HEIGHT_PX = 24;
 
-function WindowMeter(props: { window: UsageWindow; emphasized: boolean; nowMs: number }) {
+function WindowMeter(props: {
+  window: ServerProviderUsageWindow;
+  emphasized: boolean;
+  nowMs: number;
+}) {
   const { window, emphasized, nowMs } = props;
-  const percent = Math.max(0, Math.min(100, window.percent));
+  const percent = Math.max(0, Math.min(100, window.usedPercent));
   const resetEta = formatResetEta(window.resetsAt, nowMs);
   return (
     <span
@@ -56,7 +65,7 @@ function WindowMeter(props: { window: UsageWindow; emphasized: boolean; nowMs: n
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={Math.round(percent)}
-        aria-label={`${windowLongLabel(window)}: ${formatPercent(window.percent)} used${resetEta ? `, ${resetEta}` : ""}`}
+        aria-label={`${windowLongLabel(window)}: ${formatPercent(window.usedPercent)} used${resetEta ? `, ${resetEta}` : ""}`}
       >
         <span
           className={cn(
@@ -80,46 +89,41 @@ function WindowMeter(props: { window: UsageWindow; emphasized: boolean; nowMs: n
           emphasized ? "font-medium text-foreground/80" : "text-muted-foreground",
         )}
       >
-        {formatPercent(window.percent)}
+        {formatPercent(window.usedPercent)}
       </span>
     </span>
   );
 }
 
 function AccountMeters(props: {
-  account: AccountUsageState;
+  account: UsageAccountView;
   nowMs: number;
   showAccountLabel: boolean;
 }) {
   const { account, nowMs, showAccountLabel } = props;
   const stickySelections = useComposerDraftStore((state) => state.stickyModelSelectionByProvider);
   const selectedModel = selectedModelSlugForAccount(account, stickySelections);
-  const snapshot = account.snapshot;
+  const notice = unavailableLabel(account.limits);
 
-  // No snapshot yet — say so instead of rendering nothing, which looks
+  // Say why there are no bars instead of rendering nothing, which looks
   // identical to the feature being broken.
-  if (snapshot === null) {
+  if (notice !== null) {
     return (
       <span className="flex min-w-0 flex-1 items-center gap-2 text-[10px] text-muted-foreground/70">
-        <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-muted-foreground/50" />
-        <span className="truncate">{unavailableLabel(account)}</span>
+        <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/50" />
+        <span className="truncate">{notice}</span>
       </span>
     );
   }
 
-  const windows = sortWindowsForDisplay(snapshot.windows);
+  const windows = sortWindowsForDisplay(account.limits.windows);
   const emphasizedWeeklyId = emphasizedWeeklyWindowId(windows, selectedModel);
 
   return (
-    <span
-      className={cn(
-        "flex min-w-0 flex-1 items-center gap-3",
-        account.unavailableReason !== null && "opacity-50",
-      )}
-    >
+    <span className="flex min-w-0 flex-1 items-center gap-3">
       {showAccountLabel ? (
         <span className="max-w-32 truncate text-[10px] text-muted-foreground/70">
-          {account.accountKey}
+          {account.label}
         </span>
       ) : null}
       {windows.map((window) => (
@@ -130,21 +134,15 @@ function AccountMeters(props: {
           nowMs={nowMs}
         />
       ))}
-      {account.unavailableReason !== null ? (
-        <span className="whitespace-nowrap text-[10px] text-muted-foreground">
-          {account.unavailableReason === "no-credentials" ? "no Claude login" : "usage stale"}
-        </span>
-      ) : null}
     </span>
   );
 }
 
-function ExpandedPanel(props: { accounts: ReadonlyArray<AccountUsageState>; nowMs: number }) {
+function ExpandedPanel(props: { accounts: ReadonlyArray<UsageAccountView>; nowMs: number }) {
   const { accounts, nowMs } = props;
   const environmentId = useAtomValue(primaryEnvironmentIdAtom);
   // The bubble header carries the plan/updated line, so this renders only the
-  // charts — a second "Claude usage" heading here would duplicate it. Per
-  // account labels stay when there is more than one account to tell apart.
+  // charts. Per-account labels stay when there is more than one to tell apart.
   const showAccountHeading = accounts.length > 1;
   if (environmentId === null) return null;
 
@@ -154,38 +152,38 @@ function ExpandedPanel(props: { accounts: ReadonlyArray<AccountUsageState>; nowM
     <div>
       <div className="flex flex-col gap-4">
         {accounts.map((account) => {
-          const snapshot = account.snapshot;
-          if (snapshot === null) {
+          const notice = unavailableLabel(account.limits);
+          if (notice !== null) {
             return (
-              <div key={account.accountKey} className="text-[11px] text-muted-foreground">
-                {unavailableLabel(account)}
+              <div key={account.key} className="text-[11px] text-muted-foreground">
+                {notice}
               </div>
             );
           }
-          const windows = sortWindowsForDisplay(snapshot.windows);
+          const windows = sortWindowsForDisplay(account.limits.windows);
           const sessionWindows = windows.filter((window) => window.kind === "session");
           const weeklyWindows = windows.filter((window) => window.kind === "weekly");
-          const monthlyWindow = windows.find((window) => window.kind === "monthly");
-          const sessionEta = formatResetEta(sessionWindows[0]?.resetsAt ?? null, nowMs);
+          const otherWindows = windows.filter(
+            (window) => window.kind !== "session" && window.kind !== "weekly",
+          );
+          const sessionEta = formatResetEta(sessionWindows[0]?.resetsAt, nowMs);
           const weeklyEta = formatResetEta(
-            weeklyWindows.find((window) => window.scope.kind === "all")?.resetsAt ??
-              weeklyWindows[0]?.resetsAt ??
-              null,
+            weeklyWindows.find((window) => windowScopeName(window) === null)?.resetsAt ??
+              weeklyWindows[0]?.resetsAt,
             nowMs,
           );
-          const spend = monthlyWindow?.dollars;
           return (
-            <div key={account.accountKey} className="flex flex-col gap-3">
+            <div key={account.key} className="flex flex-col gap-3">
               {showAccountHeading ? (
                 <span className="truncate font-medium text-foreground/90 text-xs">
-                  {account.accountKey}
-                  {snapshot.planLabel ? ` · ${snapshot.planLabel}` : ""}
+                  {account.label}
+                  {account.plan ? ` · ${account.plan}` : ""}
                 </span>
               ) : null}
               {sessionWindows.length > 0 ? (
                 <UsageHistoryChart
                   environmentId={environmentId}
-                  accountKey={account.accountKey}
+                  instanceId={account.instanceId}
                   windows={sessionWindows}
                   title={`5-hour window${sessionEta ? ` · ${sessionEta}` : ""}`}
                 />
@@ -193,21 +191,20 @@ function ExpandedPanel(props: { accounts: ReadonlyArray<AccountUsageState>; nowM
               {weeklyWindows.length > 0 ? (
                 <UsageHistoryChart
                   environmentId={environmentId}
-                  accountKey={account.accountKey}
+                  instanceId={account.instanceId}
                   windows={weeklyWindows}
                   title={`Weekly windows${weeklyEta ? ` · ${weeklyEta}` : ""}`}
                 />
               ) : null}
-              {spend !== undefined ? (
-                <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                  <span>Extra usage this month</span>
-                  <span className="tabular-nums">
-                    {spend.currency === "USD" ? "$" : `${spend.currency} `}
-                    {spend.used.toFixed(2)} / {spend.currency === "USD" ? "$" : ""}
-                    {spend.limit.toFixed(2)}
-                  </span>
-                </div>
-              ) : null}
+              {otherWindows.map((window) => (
+                <UsageHistoryChart
+                  key={window.id}
+                  environmentId={environmentId}
+                  instanceId={account.instanceId}
+                  windows={[window]}
+                  title={windowLongLabel(window)}
+                />
+              ))}
             </div>
           );
         })}
@@ -216,12 +213,16 @@ function ExpandedPanel(props: { accounts: ReadonlyArray<AccountUsageState>; nowM
   );
 }
 
+function driverLabel(account: UsageAccountView): string {
+  return getDriverOption(account.driver)?.label ?? String(account.driver);
+}
+
 /**
  * App-wide usage meter strip pinned to the bottom of the window. Shows one
- * cluster of meters per Claude account; click expands the history charts.
+ * cluster of meters per signed-in account; click expands the history charts.
  */
 export function UsageStatusBar() {
-  const accounts = useAtomValue(primaryAccountUsageAtom);
+  const accounts = useAtomValue(primaryUsageAccountsAtom);
   const queuedMessages = useAtomValue(primaryQueuedMessagesAtom);
   const [expanded, setExpanded] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -265,24 +266,24 @@ export function UsageStatusBar() {
     return null;
   }
 
-  const headlineAccount = accounts.find((account) => account.snapshot !== null) ?? accounts[0]!;
-  const headlineSnapshot = headlineAccount.snapshot;
+  const headlineAccount =
+    accounts.find((account) => unavailableLabel(account.limits) === null) ?? accounts[0]!;
+  const drivers = new Set(accounts.map(driverLabel));
   const headline = [
-    "Claude usage",
-    headlineSnapshot?.planLabel ?? null,
+    drivers.size === 1 ? `${driverLabel(headlineAccount)} usage` : "Usage limits",
+    headlineAccount.plan ?? null,
     accounts.length > 1 ? `${accounts.length} accounts` : null,
   ]
     .filter((part): part is string => part !== null)
     .join(" · ");
   const pendingQueuedCount = queuedMessages.filter(
-    (message) => message.status === "pending",
+    (message) => message.status === "pending" || message.status === "sending",
   ).length;
+  const headlineNotice = unavailableLabel(headlineAccount.limits);
   const headlineStatus = [
-    headlineAccount.unavailableReason !== null
-      ? `stale (${headlineAccount.unavailableReason})`
-      : headlineSnapshot !== null
-        ? `updated ${new Date(headlineSnapshot.capturedAt).toLocaleTimeString()}`
-        : null,
+    headlineNotice !== null
+      ? headlineNotice
+      : `updated ${new Date(headlineAccount.limits.checkedAt).toLocaleTimeString()}`,
     pendingQueuedCount > 0
       ? `${pendingQueuedCount} queued message${pendingQueuedCount === 1 ? "" : "s"}`
       : null,
@@ -364,7 +365,7 @@ export function UsageStatusBar() {
               >
                 {accounts.map((account) => (
                   <AccountMeters
-                    key={account.accountKey}
+                    key={account.key}
                     account={account}
                     nowMs={nowMs}
                     showAccountLabel={accounts.length > 1}

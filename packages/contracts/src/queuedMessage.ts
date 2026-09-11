@@ -23,13 +23,18 @@ export const QueuedMessageTrigger = Schema.Union([
     at: IsoDateTime,
   }),
   /**
-   * Send when a usage window resets (its `resetsAt` passes, or the poller
-   * observes utilization drop back near zero for that window).
+   * Send when a usage window resets (its `resetsAt` passes, or the provider
+   * reports utilization back near zero for that window).
    */
   Schema.Struct({
     type: Schema.Literal("window-reset"),
+    /** The provider instance whose limits are watched. */
     accountKey: TrimmedNonEmptyString,
-    /** UsageWindow id, e.g. "session:all" or "weekly:model:Fable". */
+    /**
+     * `ServerProviderUsageWindow.id` (`five_hour`, `seven_day`, …). The
+     * fork's earlier `session:all` / `weekly:all` ids are still honoured by
+     * window kind, so messages queued before the switch keep firing.
+     */
     windowId: TrimmedNonEmptyString,
   }),
   /**
@@ -51,6 +56,12 @@ export type QueuedMessageTrigger = typeof QueuedMessageTrigger.Type;
 export const QueuedMessageStatus = Schema.Literals([
   /** Waiting for its trigger. */
   "pending",
+  /**
+   * Claimed by the reactor and being dispatched. A row that is still `sending`
+   * when the server starts was interrupted mid-dispatch and is marked failed
+   * rather than re-sent, since the turn may already have started.
+   */
+  "sending",
   /** Trigger fired; turn dispatched. */
   "sent",
   /** Dispatch attempted but the orchestration command failed. */

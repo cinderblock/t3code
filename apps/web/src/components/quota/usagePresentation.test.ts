@@ -1,119 +1,148 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { UsageWindow } from "@t3tools/contracts";
+import type { ServerProviderUsageWindow } from "@t3tools/contracts";
 
 import {
+  accountWindowIdForKind,
   emphasizedWeeklyWindowId,
   formatPercent,
   formatResetEta,
   sortWindowsForDisplay,
+  windowScopeName,
+  windowSeverity,
+  windowShortLabel,
 } from "./usagePresentation";
 
-const makeWindow = (overrides: Partial<UsageWindow>): UsageWindow =>
-  ({
-    id: "weekly:all",
-    kind: "weekly",
-    scope: { kind: "all" },
-    percent: 50,
-    severity: "normal",
-    resetsAt: null,
-    windowHours: 168,
-    isActive: false,
-    billing: "subscription",
-    ...overrides,
-  }) as UsageWindow;
+const makeWindow = (overrides: Partial<ServerProviderUsageWindow>): ServerProviderUsageWindow => ({
+  id: "seven_day",
+  kind: "weekly",
+  label: "Weekly",
+  usedPercent: 50,
+  windowDurationMins: 7 * 24 * 60,
+  ...overrides,
+});
 
-const sessionAll = makeWindow({ id: "session:all", kind: "session", windowHours: 5 });
-const weeklyAll = makeWindow({ id: "weekly:all" });
-const weeklyFable = makeWindow({
-  id: "weekly:model:Fable",
-  scope: { kind: "model", displayName: "Fable" },
+const session = makeWindow({
+  id: "five_hour",
+  kind: "session",
+  label: "Session",
+  windowDurationMins: 300,
 });
-const weeklyOpus = makeWindow({
-  id: "weekly:model:Opus",
-  scope: { kind: "model", displayName: "Opus" },
-});
-const monthlyAll = makeWindow({
-  id: "monthly:all",
+const weekly = makeWindow({ id: "seven_day" });
+const weeklyFable = makeWindow({ id: "seven_day_fable", label: "Fable" });
+const weeklyOpus = makeWindow({ id: "seven_day_opus", label: "Opus" });
+const monthly = makeWindow({
+  id: "monthly",
   kind: "monthly",
-  windowHours: 720,
-  billing: "pay-per-use",
+  label: "Monthly",
+  windowDurationMins: 720 * 60,
+});
+
+describe("windowScopeName", () => {
+  it("treats the provider's kind-labelled windows as account-wide", () => {
+    expect(windowScopeName(session)).toBeNull();
+    expect(windowScopeName(weekly)).toBeNull();
+    expect(windowScopeName(makeWindow({ id: "primary", label: "Primary" }))).toBeNull();
+  });
+
+  it("reads a model-scoped window's model off its label", () => {
+    expect(windowScopeName(weeklyFable)).toBe("Fable");
+  });
+});
+
+describe("windowShortLabel", () => {
+  it("names the windows the way the strip has always shown them", () => {
+    expect(windowShortLabel(session)).toBe("5h");
+    expect(windowShortLabel(weekly)).toBe("Week");
+    expect(windowShortLabel(weeklyFable)).toBe("Week · Fable");
+    expect(windowShortLabel(monthly)).toBe("Month");
+  });
 });
 
 describe("sortWindowsForDisplay", () => {
-  it("orders session, then weekly (all before scoped, scoped alphabetical), then monthly", () => {
-    const shuffled = [monthlyAll, weeklyOpus, weeklyFable, weeklyAll, sessionAll];
-    expect(sortWindowsForDisplay(shuffled).map((window) => window.id)).toEqual([
-      "session:all",
-      "weekly:all",
-      "weekly:model:Fable",
-      "weekly:model:Opus",
-      "monthly:all",
+  it("orders session, then weekly (account-wide before scoped, scoped alphabetical), then monthly", () => {
+    const sorted = sortWindowsForDisplay([monthly, weeklyOpus, weeklyFable, weekly, session]);
+    expect(sorted.map((window) => window.id)).toEqual([
+      "five_hour",
+      "seven_day",
+      "seven_day_fable",
+      "seven_day_opus",
+      "monthly",
     ]);
   });
 
   it("does not mutate the input array", () => {
-    const input = [weeklyAll, sessionAll];
+    const input = [weekly, session];
     sortWindowsForDisplay(input);
-    expect(input.map((window) => window.id)).toEqual(["weekly:all", "session:all"]);
+    expect(input.map((window) => window.id)).toEqual(["seven_day", "five_hour"]);
   });
 });
 
 describe("emphasizedWeeklyWindowId", () => {
-  const windows = [weeklyAll, weeklyFable];
+  const windows = [session, weekly, weeklyFable, weeklyOpus];
 
   it("emphasizes the model-scoped weekly window matching the selected slug", () => {
-    expect(emphasizedWeeklyWindowId(windows, "claude-fable-5")).toBe("weekly:model:Fable");
+    expect(emphasizedWeeklyWindowId(windows, "claude-fable-5-1")).toBe("seven_day_fable");
   });
 
-  it("falls back to the all-models weekly window when no scoped window matches", () => {
-    expect(emphasizedWeeklyWindowId(windows, "claude-opus-4-8")).toBe("weekly:all");
+  it("falls back to the account-wide weekly window when no scoped window matches", () => {
+    expect(emphasizedWeeklyWindowId(windows, "claude-haiku-4-5")).toBe("seven_day");
   });
 
-  it("emphasizes the all-models weekly window when no model is selected", () => {
-    expect(emphasizedWeeklyWindowId(windows, null)).toBe("weekly:all");
+  it("emphasizes the account-wide weekly window when no model is selected", () => {
+    expect(emphasizedWeeklyWindowId(windows, null)).toBe("seven_day");
   });
 
   it("returns null when there are no weekly windows", () => {
-    expect(emphasizedWeeklyWindowId([sessionAll, monthlyAll], "claude-fable-5")).toBeNull();
+    expect(emphasizedWeeklyWindowId([session], "claude-fable-5-1")).toBeNull();
+  });
+});
+
+describe("accountWindowIdForKind", () => {
+  it("picks the account-wide window of the kind", () => {
+    const account = {
+      limits: { checkedAt: "2026-09-10T00:00:00.000Z", windows: [weeklyFable, weekly, session] },
+    };
+    expect(accountWindowIdForKind(account, "weekly")).toBe("seven_day");
+    expect(accountWindowIdForKind(account, "session")).toBe("five_hour");
+  });
+
+  it("falls back to the legacy kind id the server still resolves", () => {
+    const account = { limits: { checkedAt: "2026-09-10T00:00:00.000Z", windows: [session] } };
+    expect(accountWindowIdForKind(account, "weekly")).toBe("weekly:all");
+  });
+});
+
+describe("windowSeverity", () => {
+  it("escalates on the used share", () => {
+    expect(windowSeverity(makeWindow({ usedPercent: 10 }))).toBe("normal");
+    expect(windowSeverity(makeWindow({ usedPercent: 75 }))).toBe("warning");
+    expect(windowSeverity(makeWindow({ usedPercent: 90 }))).toBe("critical");
+    expect(windowSeverity(makeWindow({ usedPercent: 100 }))).toBe("exceeded");
   });
 });
 
 describe("formatResetEta", () => {
-  const NOW_MS = Date.parse("2026-07-24T12:00:00Z");
-  const minutesFromNow = (minutes: number): string =>
-    new Date(NOW_MS + minutes * 60_000).toISOString();
+  const nowMs = Date.parse("2026-09-10T12:00:00Z");
 
   it("returns null when no reset time is reported", () => {
-    expect(formatResetEta(null, NOW_MS)).toBeNull();
+    expect(formatResetEta(undefined, nowMs)).toBeNull();
   });
 
-  it("formats short waits in minutes", () => {
-    expect(formatResetEta(minutesFromNow(45), NOW_MS)).toBe("resets in 45m");
+  it("formats minutes, hours and days", () => {
+    expect(formatResetEta("2026-09-10T12:30:00Z", nowMs)).toBe("resets in 30m");
+    expect(formatResetEta("2026-09-10T14:15:00Z", nowMs)).toBe("resets in 2h 15m");
+    expect(formatResetEta("2026-09-13T15:00:00Z", nowMs)).toBe("resets in 3d 3h");
   });
 
-  it("formats mid-range waits in hours and minutes", () => {
-    expect(formatResetEta(minutesFromNow(2 * 60 + 13), NOW_MS)).toBe("resets in 2h 13m");
-  });
-
-  it("formats long waits in days and hours", () => {
-    expect(formatResetEta(minutesFromNow(3 * 24 * 60 + 5 * 60), NOW_MS)).toBe("resets in 3d 5h");
-  });
-
-  it("reports resetting once the reset moment has passed", () => {
-    expect(formatResetEta(minutesFromNow(-1), NOW_MS)).toBe("resetting…");
+  it("reads as resetting once the moment has passed", () => {
+    expect(formatResetEta("2026-09-10T11:00:00Z", nowMs)).toBe("resetting…");
   });
 });
 
 describe("formatPercent", () => {
-  it("renders zero without a decimal", () => {
-    expect(formatPercent(0)).toBe("0%");
-  });
-
-  it("keeps one decimal for small non-zero values", () => {
-    expect(formatPercent(7.5)).toBe("7.5%");
-  });
-
-  it("rounds larger values to whole percents", () => {
-    expect(formatPercent(64.4)).toBe("64%");
+  it("keeps one decimal below ten percent and rounds above", () => {
+    expect(formatPercent(3.25)).toBe("3.3%");
+    expect(formatPercent(3)).toBe("3%");
+    expect(formatPercent(42.6)).toBe("43%");
   });
 });

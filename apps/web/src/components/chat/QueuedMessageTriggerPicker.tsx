@@ -1,7 +1,12 @@
-import type { AccountUsageState } from "@t3tools/client-runtime/state/quota";
 import type { QueuedMessageTrigger } from "@t3tools/contracts";
 import { useState } from "react";
 import { cn } from "~/lib/utils";
+import type { UsageAccountView } from "../../state/quota";
+import {
+  accountWindowIdForKind,
+  describeTriggerWindow,
+  isWeeklyTriggerWindow,
+} from "../quota/usagePresentation";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 
@@ -16,25 +21,16 @@ type HeadroomWindowChoice = "session" | "weekly";
  * account whose provider instances include the composer's current instance,
  * falling back to the first known account.
  */
-export function resolveQueuedMessageAccountKey(
-  accounts: ReadonlyArray<AccountUsageState>,
+export function resolveQueuedMessageAccount(
+  accounts: ReadonlyArray<UsageAccountView>,
   preferredInstanceId: string | null,
-): string | null {
+): UsageAccountView | null {
   const preferred = preferredInstanceId
     ? accounts.find((account) =>
-        (account.snapshot?.instanceIds ?? []).some(
-          (instanceId) => instanceId === preferredInstanceId,
-        ),
+        account.instanceIds.some((instanceId) => instanceId === preferredInstanceId),
       )
     : undefined;
-  return (preferred ?? accounts[0])?.accountKey ?? null;
-}
-
-function describeWindow(windowId: string): string {
-  if (windowId.startsWith("session")) return "5-hour window";
-  if (windowId.startsWith("weekly")) return "weekly window";
-  if (windowId.startsWith("monthly")) return "monthly window";
-  return `${windowId} window`;
+  return preferred ?? accounts[0] ?? null;
 }
 
 /** Human description of a queued message trigger for list rows. */
@@ -53,9 +49,9 @@ export function describeQueuedMessageTrigger(trigger: QueuedMessageTrigger): str
       })}`;
     }
     case "window-reset":
-      return `Sends when the ${describeWindow(trigger.windowId)} resets`;
+      return `Sends when the ${describeTriggerWindow(trigger.windowId)} resets`;
     case "headroom":
-      return `Sends when >${trigger.minRemainingPercent}% remains near ${describeWindow(
+      return `Sends when >${trigger.minRemainingPercent}% remains near ${describeTriggerWindow(
         trigger.windowId,
       )} reset`;
   }
@@ -80,7 +76,7 @@ function initialChoiceForTrigger(
     case "headroom":
       return "headroom";
     case "window-reset":
-      return trigger.windowId.startsWith("weekly") ? "weekly-reset" : "session-reset";
+      return isWeeklyTriggerWindow(trigger.windowId) ? "weekly-reset" : "session-reset";
   }
 }
 
@@ -90,7 +86,7 @@ function initialChoiceForTrigger(
  * and hands it back via `onConfirm`.
  */
 export function QueuedMessageTriggerForm(props: {
-  accounts: ReadonlyArray<AccountUsageState>;
+  accounts: ReadonlyArray<UsageAccountView>;
   preferredInstanceId: string | null;
   initialTrigger?: QueuedMessageTrigger;
   confirmLabel: string;
@@ -98,8 +94,8 @@ export function QueuedMessageTriggerForm(props: {
 }) {
   const { accounts, preferredInstanceId, initialTrigger, confirmLabel, onConfirm } = props;
 
-  const accountKey = resolveQueuedMessageAccountKey(accounts, preferredInstanceId);
-  const hasUsageAccount = accountKey !== null;
+  const account = resolveQueuedMessageAccount(accounts, preferredInstanceId);
+  const hasUsageAccount = account !== null;
 
   const [choice, setChoice] = useState<TriggerChoice>(() =>
     initialChoiceForTrigger(initialTrigger, hasUsageAccount),
@@ -119,7 +115,7 @@ export function QueuedMessageTriggerForm(props: {
       : String(DEFAULT_HEADROOM_PERCENT),
   );
   const [headroomWindow, setHeadroomWindow] = useState<HeadroomWindowChoice>(() =>
-    initialTrigger?.type === "headroom" && initialTrigger.windowId.startsWith("weekly")
+    initialTrigger?.type === "headroom" && isWeeklyTriggerWindow(initialTrigger.windowId)
       ? "weekly"
       : "session",
   );
@@ -151,19 +147,28 @@ export function QueuedMessageTriggerForm(props: {
       onConfirm({ type: "at", at: new Date(parsedAtTime).toISOString() });
       return;
     }
-    if (accountKey === null) return;
+    if (account === null) return;
+    const accountKey = account.instanceId;
     if (choice === "session-reset") {
-      onConfirm({ type: "window-reset", accountKey, windowId: "session:all" });
+      onConfirm({
+        type: "window-reset",
+        accountKey,
+        windowId: accountWindowIdForKind(account, "session"),
+      });
       return;
     }
     if (choice === "weekly-reset") {
-      onConfirm({ type: "window-reset", accountKey, windowId: "weekly:all" });
+      onConfirm({
+        type: "window-reset",
+        accountKey,
+        windowId: accountWindowIdForKind(account, "weekly"),
+      });
       return;
     }
     onConfirm({
       type: "headroom",
       accountKey,
-      windowId: headroomWindow === "weekly" ? "weekly:all" : "session:all",
+      windowId: accountWindowIdForKind(account, headroomWindow),
       minRemainingPercent: Math.round(parsedPercent),
       leadMinutes: DEFAULT_HEADROOM_LEAD_MINUTES,
     });

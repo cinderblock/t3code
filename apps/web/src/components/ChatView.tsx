@@ -311,8 +311,8 @@ import {
 } from "@t3tools/client-runtime/state/threads";
 import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
 import {
-  primaryAccountUsageAtom,
   primaryQueuedMessagesAtom,
+  primaryUsageAccountsAtom,
   usageEnvironment,
 } from "../state/quota";
 import { vcsEnvironment } from "../state/vcs";
@@ -353,6 +353,7 @@ import {
 } from "./chat/ProviderStatusBanner";
 import { QueuedMessagesPanel } from "./chat/QueuedMessagesPanel";
 import { UsageStatusBar } from "./quota/UsageStatusBar";
+import { accountWindowIdForKind } from "./quota/usagePresentation";
 import {
   dismissThreadErrorBannerForSession,
   getThreadErrorBannerKey,
@@ -1463,7 +1464,7 @@ export default function ChatView(props: ChatViewProps) {
     usageEnvironment.enqueueMessage,
     "queued message enqueue",
   );
-  const usageAccounts = useAtomValue(primaryAccountUsageAtom);
+  const usageAccounts = useAtomValue(primaryUsageAccountsAtom);
   const queuedMessages = useAtomValue(primaryQueuedMessagesAtom);
   const { environments } = useEnvironments();
   const primaryEnvironment = usePrimaryEnvironment();
@@ -3025,9 +3026,7 @@ export default function ChatView(props: ChatViewProps) {
     const threadInstanceId = activeThread.modelSelection.instanceId;
     const account =
       usageAccounts.find((candidate) =>
-        (candidate.snapshot?.instanceIds ?? []).some(
-          (instanceId) => instanceId === threadInstanceId,
-        ),
+        candidate.instanceIds.some((instanceId) => instanceId === threadInstanceId),
       ) ??
       usageAccounts[0] ??
       null;
@@ -3043,10 +3042,12 @@ export default function ChatView(props: ChatViewProps) {
       )?.kind ?? null;
     const rateLimitType =
       typeof rateLimitInfo?.rateLimitType === "string" ? rateLimitInfo.rateLimitType : null;
-    const windowId =
+    const windowId = accountWindowIdForKind(
+      account,
       rejectedWindowKind === "weekly" || rateLimitType?.includes("seven_day")
-        ? "weekly:all"
-        : "session:all";
+        ? "weekly"
+        : "session",
+    );
     autoQueuedCapHitTurnIdsRef.current.add(failedTurnId);
     void enqueueQueuedMessage({
       environmentId,
@@ -3057,7 +3058,7 @@ export default function ChatView(props: ChatViewProps) {
         text: failedMessageText,
         trigger: {
           type: "window-reset",
-          accountKey: account.accountKey,
+          accountKey: account.instanceId,
           windowId,
         },
         sendContext: {

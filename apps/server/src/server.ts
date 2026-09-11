@@ -89,7 +89,7 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
-import * as UsageBroadcaster from "./quota/UsageBroadcaster.ts";
+import * as UsageHistoryRecorder from "./quota/UsageHistoryRecorder.ts";
 import * as EventLoopLagMonitor from "./observability/EventLoopLagMonitor.ts";
 import * as CpuProfiler from "./observability/CpuProfiler.ts";
 import * as QueuedMessageService from "./queue/QueuedMessageService.ts";
@@ -463,9 +463,9 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // Core Services
   Layer.provideMerge(ServerSettingsLayerLive),
   // Queued messages sit above the orchestration engine (they dispatch
-  // turn-start commands) and above the usage broadcaster (usage-based
-  // triggers read its snapshots). Folded into the checkpointing slot to
-  // stay within pipe's 20-argument ceiling.
+  // turn-start commands) and read usage limits off the provider registry.
+  // Folded into the checkpointing slot to stay within pipe's 20-argument
+  // ceiling.
   Layer.provideMerge(Layer.mergeAll(QueuedMessageService.layer, CheckpointingLayerLive)),
   Layer.provideMerge(
     Layer.mergeAll(SourceControlProviderRegistryLayerLive, PullRequestServiceLive),
@@ -473,7 +473,9 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   Layer.provideMerge(GitLayerLive),
   Layer.provideMerge(VcsLayerLive),
   Layer.provideMerge(ProviderRuntimeLayerLive),
-  Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive, UsageBroadcaster.layer)),
+  Layer.provideMerge(
+    Layer.mergeAll(TerminalLayerLive, PreviewLayerLive, UsageHistoryRecorder.layer),
+  ),
   Layer.provideMerge(PersistenceLayerLive),
   // Both read a user-owned file out of the state directory and stream changes
   // to clients; neither depends on the other.

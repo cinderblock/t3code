@@ -123,7 +123,7 @@ import { readWorkflowScript } from "./orchestration/workflowScriptQuery.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
-import * as UsageBroadcaster from "./quota/UsageBroadcaster.ts";
+import * as UsageHistoryRecorder from "./quota/UsageHistoryRecorder.ts";
 import * as QueuedMessageService from "./queue/QueuedMessageService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
@@ -519,7 +519,7 @@ const makeWsRpcLayer = (
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
-      const usageBroadcaster = yield* UsageBroadcaster.UsageBroadcaster;
+      const usageHistory = yield* UsageHistoryRecorder.UsageHistoryRecorder;
       const queuedMessages = yield* QueuedMessageService.QueuedMessageService;
       const terminalManager = yield* TerminalManager.TerminalManager;
       const previewManager = yield* PreviewManager.PreviewManager;
@@ -2468,11 +2468,7 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.usageGetHistory]: (input) =>
-          observeRpcEffect(WS_METHODS.usageGetHistory, usageBroadcaster.getHistory(input), {
-            "rpc.aggregate": "usage",
-          }),
-        [WS_METHODS.subscribeAccountUsage]: (_input) =>
-          observeRpcStream(WS_METHODS.subscribeAccountUsage, usageBroadcaster.streamUsage, {
+          observeRpcEffect(WS_METHODS.usageGetHistory, usageHistory.getHistory(input), {
             "rpc.aggregate": "usage",
           }),
         [WS_METHODS.queueEnqueueMessage]: (input) =>
