@@ -30,8 +30,12 @@ with a count of hidden threads, so a filter can never produce a silent
 - **Hide-list, not show-list.** Persist `sidebarHiddenEnvironmentIds`. New
   hosts appear by default; **All** clears the list.
 - **Multi-toggle semantics.** Each host button toggles that host. **All** is
-  a reset that is "pressed" when nothing is hidden. No solo/alt-click mode
-  (YAGNI; possible follow-up).
+  a reset that is "pressed" when nothing is hidden.
+- **Solo mode** (requested as a follow-up): Alt-click a host to show only it;
+  Alt-click the soloed host again to restore all. Right-click offers the same
+  via a context menu (**Show only**, **Hide**/**Show**, **Show all hosts**)
+  so touch and keyboard users are not locked out. Solo is expressed purely
+  as the hide-list (hide every other catalog host), so no new persisted state.
 - **Single-host setups show no row and hide nothing**, even if a stale hidden
   id is persisted. Effective hidden set = persisted ∩ catalog, and only when
   the catalog has 2+ environments.
@@ -62,6 +66,9 @@ with a count of hidden threads, so a filter can never produce a silent
 7. [x] Targeted typecheck/lint/tests; committed as 255f9c6a39 on `master`.
 8. [ ] Optional: one integrated pass in a real client with two environments
        connected (needs user OK for a dev server / browser).
+9. [ ] Solo mode: store reducer `soloSidebarEnvironment`, `soloEnvironmentId`
+       from `buildSidebarHostFilterEntries`, `buildSidebarHostContextMenuItems`,
+       Alt-click + context menu wiring, docs; tests; committed on `master`.
 
 ## Findings / gotchas
 
@@ -93,6 +100,7 @@ with a count of hidden threads, so a filter can never produce a silent
 - [x] Sidebar UI
 - [x] Docs
 - [x] Final checks + commit (web typecheck exit 0, 186 tests pass, lint clean in new code)
+- [x] Solo mode + tests (190 tests pass, typecheck exit 0)
 
 ## Open questions for the user
 
