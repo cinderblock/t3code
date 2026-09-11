@@ -768,21 +768,26 @@ export function runtimeEventToActivities(
     }
 
     case "account.rate-limits.updated": {
-      // The provider's rate-limit update, previously dropped here. Surface it
-      // as a thread activity so the client can react instantly when a usage
-      // cap engages (e.g. offering to queue the pending message until the
-      // window resets). Adapters normalize the raw SDK message into usage
-      // windows and drop its status, so "rejected" is read off the windows
-      // themselves: a window the provider refuses to serve reports 100% used.
+      // The provider's rate-limit update. Only an engaged cap becomes a thread
+      // activity: that is what lets the client offer to queue the failed
+      // message until the window resets. Routine updates arrive once or more
+      // per turn and already reach clients through the provider snapshot, so
+      // persisting them would only pad the work log. Adapters normalize the
+      // raw SDK message into usage windows and drop its status, so "rejected"
+      // is read off the windows themselves: a window the provider refuses to
+      // serve reports 100% used.
       const limits = event.payload.limits;
       const rejected = limits.windows.some((window) => window.usedPercent >= 100);
+      if (!rejected) {
+        return [];
+      }
       return [
         {
           id: event.eventId,
           createdAt: event.createdAt,
-          tone: rejected ? "error" : "info",
+          tone: "error",
           kind: "account.rate-limits.updated",
-          summary: rejected ? "Usage limit reached" : "Rate limit status updated",
+          summary: "Usage limit reached",
           payload: { limits, rejected },
           turnId: toTurnId(event.turnId) ?? null,
           ...maybeSequence,
