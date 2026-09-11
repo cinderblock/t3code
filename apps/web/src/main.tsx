@@ -19,23 +19,15 @@ import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkR
 declare global {
   interface Window {
     __t3CrashLog?: {
-      send: (payload: { level: string; source: string; message: string; data?: unknown }) => void;
+      send: (payload: { level: string; source: string; message: string; stack?: string }) => void;
     };
   }
 }
 {
   const bridge = window.__t3CrashLog;
   if (bridge) {
-    const serializeArg = (a: unknown): unknown => {
-      if (a instanceof Error) {
-        return { name: a.name, message: a.message, stack: a.stack };
-      }
-      try {
-        return JSON.parse(JSON.stringify(a));
-      } catch {
-        return String(a);
-      }
-    };
+    const errorStack = (value: unknown): string | undefined =>
+      value instanceof Error && typeof value.stack === "string" ? value.stack : undefined;
     let inSend = false;
     const safeSend = (payload: Parameters<typeof bridge.send>[0]) => {
       if (inSend) return;
@@ -46,45 +38,27 @@ declare global {
         inSend = false;
       }
     };
+    // Only uncaught failures: console output is not forwarded, since it would carry
+    // whatever the app logged verbatim and bypass the log redaction main.ts applies.
     window.addEventListener("error", (event) => {
+      const stack = errorStack(event.error);
       safeSend({
         level: "error",
         source: "window.onerror",
         message: event.message ?? "unknown error",
-        data: {
-          filename: event.filename,
-          lineno: event.lineno,
-          colno: event.colno,
-          error: event.error ? serializeArg(event.error) : undefined,
-        },
+        ...(stack !== undefined ? { stack } : {}),
       });
     });
     window.addEventListener("unhandledrejection", (event) => {
       const reason = event.reason;
+      const stack = errorStack(reason);
       safeSend({
         level: "error",
         source: "unhandledrejection",
         message: reason instanceof Error ? reason.message : String(reason),
-        data: { reason: serializeArg(reason) },
+        ...(stack !== undefined ? { stack } : {}),
       });
     });
-    const wrapConsole = (level: "error" | "warn") => {
-      const original = console[level].bind(console);
-      console[level] = (...args: unknown[]) => {
-        safeSend({
-          level,
-          source: `console.${level}`,
-          message: args
-            .map((a) => (typeof a === "string" ? a : ""))
-            .filter(Boolean)
-            .join(" "),
-          data: { args: args.map(serializeArg) },
-        });
-        original(...args);
-      };
-    };
-    wrapConsole("error");
-    wrapConsole("warn");
   }
 }
 

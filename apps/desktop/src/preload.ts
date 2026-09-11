@@ -367,10 +367,15 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   },
 } satisfies DesktopBridge);
 
-contextBridge.exposeInMainWorld("__t3CrashLog", {
-  send: (payload: { level: string; source: string; message: string; data?: unknown }) => {
-    try {
-      ipcRenderer.send("__t3-debug-renderer-log", payload);
-    } catch {}
-  },
-});
+// Renderer crash log for triage runs. Opt-in: main.ts only listens, and this only
+// exposes the sender, when T3_RENDERER_LOG is set, so a production renderer has no
+// extra surface and nothing on disk grows unprompted.
+if (process.env.T3_RENDERER_LOG) {
+  contextBridge.exposeInMainWorld("__t3CrashLog", {
+    send: (payload: { level: string; source: string; message: string; stack?: string }) => {
+      try {
+        ipcRenderer.send("__t3-debug-renderer-log", payload);
+      } catch {}
+    },
+  });
+}

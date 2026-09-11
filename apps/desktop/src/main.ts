@@ -237,18 +237,41 @@ const desktopRuntimeLayer = desktopClerkLayer.pipe(
   Layer.provideMerge(DesktopPreReadyPlatform.layer),
 );
 
-// Surface renderer-side errors (window.onerror, unhandledrejection, console.error/warn)
-// to a dedicated file alongside the existing desktop logs. The renderer otherwise
-// only logs to DevTools, which is invisible during crash triage.
-{
+// Surface renderer-side errors (window.onerror, unhandledrejection) to a dedicated
+// file alongside the existing desktop logs for crash triage. Opt-in via
+// T3_RENDERER_LOG: the preload only exposes the sender when it is set, and this is
+// the only listener. Only the app's own windows may write, the payload is reduced
+// to the fields triage reads, and the file rolls over once so a reconnect spiral
+// cannot grow it without bound.
+if (process.env.T3_RENDERER_LOG) {
   const baseDir = process.env.T3_HOME ?? NodePath.join(NodeOS.homedir(), ".t3");
   const stateLeaf = process.env.VITE_DEV_SERVER_URL ? "dev" : "userdata";
   const rendererLogPath = NodePath.join(baseDir, stateLeaf, "logs", "renderer.log");
-  Electron.ipcMain.on("__t3-debug-renderer-log", (_event, payload) => {
+  const RENDERER_LOG_MAX_BYTES = 5 * 1024 * 1024;
+  const asString = (value: unknown, max: number): string | undefined =>
+    typeof value === "string" ? value.slice(0, max) : undefined;
+  Electron.ipcMain.on("__t3-debug-renderer-log", (event, payload) => {
+    if (Electron.BrowserWindow.fromWebContents(event.sender) === null) return;
     try {
-      // @effect-diagnostics-next-line globalDate:off - sync timestamp for the crash-triage log outside the Effect runtime
-      const line = JSON.stringify({ ts: new Date().toISOString(), ...(payload as object) }) + "\n";
+      const record =
+        typeof payload === "object" && payload !== null ? (payload as Record<string, unknown>) : {};
+      const line =
+        JSON.stringify({
+          // @effect-diagnostics-next-line globalDate:off - sync timestamp for the crash-triage log outside the Effect runtime
+          ts: new Date().toISOString(),
+          level: asString(record.level, 16) ?? "error",
+          source: asString(record.source, 64) ?? "renderer",
+          message: asString(record.message, 2_000) ?? "",
+          ...(asString(record.stack, 8_000) !== undefined
+            ? { stack: asString(record.stack, 8_000) }
+            : {}),
+        }) + "\n";
       NodeFS.mkdirSync(NodePath.dirname(rendererLogPath), { recursive: true });
+      try {
+        if (NodeFS.statSync(rendererLogPath).size > RENDERER_LOG_MAX_BYTES) {
+          NodeFS.renameSync(rendererLogPath, `${rendererLogPath}.1`);
+        }
+      } catch {}
       NodeFS.appendFileSync(rendererLogPath, line);
     } catch {}
   });
