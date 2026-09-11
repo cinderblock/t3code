@@ -94,8 +94,18 @@ msgpackr-extract` before or after installing. Sentinel's npm 9.2.0 predates the 
      `fetch` without one hung on an early connection and never gave up. That made
      the first run look like the server never answered, when it was the probe.
 
-   Not yet run on Linux, so the `node-pty` compile on sentinel is still unproven. Its
-   toolchain is present.
+   **Verified on Linux on 2026-09-11** in WSL Ubuntu 20.04 (glibc 2.31) with a portable
+   Node v22.22.1, sentinel's exact version, and its bundled npm 10.9.4. Nothing was
+   installed system-wide.
+   - `npm install` from the generated install root took 19 s and yielded one `effect`.
+   - `node-pty` compiled from source to `build/Release/pty.node` and spawned a real
+     terminal, which printed `pty-ok` and exited 0.
+   - The sandboxed boot ran all five fork migrations and first responded after 1.6 s.
+     `/`, `/pair` and `/.well-known/t3/environment` all returned 200.
+
+   The check script ran from a temp directory and was removed afterwards. The only
+   difference from sentinel is the OS release, 20.04 against 24.04, and 24.04 has a
+   newer glibc.
 
    **Upstream's own nightlies probably hit the same resolution trap.**
    `t3@0.0.41-nightly` pins `rc.112`, and `platform-node-shared@rc.114` wants
