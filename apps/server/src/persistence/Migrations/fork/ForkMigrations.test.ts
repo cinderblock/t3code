@@ -10,7 +10,7 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 // in-memory database across cases, so migrations run by the first case would
 // already be recorded for the rest and the fixtures below would be meaningless.
 const withDatabase = <A, E>(effect: Effect.Effect<A, E, SqlClient.SqlClient>) =>
-  effect.pipe(Effect.provide(NodeSqliteClient.layerMemory()));
+  effect.pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" })));
 
 const FORK_MIGRATION_LIST: ReadonlyArray<readonly [number, string]> = [
   [1, "UsageSamples"],
@@ -54,7 +54,7 @@ it.effect("fork migrations track a high-water mark separate from upstream's", ()
         SELECT migration_id, name FROM ${sql(FORK_MIGRATIONS_TABLE)} ORDER BY migration_id
       `;
 
-      assert.deepStrictEqual(
+      assert.deepStrictEqual<ReadonlyArray<ReadonlyArray<number | string>>>(
         fork.map((row) => [row.migration_id, row.name]),
         FORK_MIGRATION_LIST,
       );
@@ -185,7 +185,7 @@ it.effect("a database stopped at an earlier fork migration picks up the rest", (
 
       const after = yield* runForkMigrations();
 
-      assert.deepStrictEqual(
+      assert.deepStrictEqual<ReadonlyArray<ReadonlyArray<number | string>>>(
         after.map(([id, name]) => [id, name]),
         FORK_MIGRATION_LIST.slice(3),
       );

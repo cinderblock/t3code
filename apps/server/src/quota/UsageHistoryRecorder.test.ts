@@ -24,7 +24,7 @@ const layer = it.layer(
   Layer.mergeAll(
     Layer.effect(UsageHistoryRecorder.UsageHistoryRecorder, UsageHistoryRecorder.make).pipe(
       Layer.provide(makeProviderRegistryLayer([])),
-      Layer.provideMerge(NodeSqliteClient.layerMemory()),
+      Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
     ),
   ),
 );
