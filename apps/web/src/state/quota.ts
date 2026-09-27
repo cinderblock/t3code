@@ -5,6 +5,7 @@ import type {
   ServerProvider,
   ServerProviderUsageLimits,
 } from "@t3tools/contracts";
+import { isProviderAvailable } from "@t3tools/contracts";
 import { providersWithLimits } from "@t3tools/shared/usageLimits";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -72,7 +73,46 @@ export function groupUsageAccounts(
   return [...accounts.values()];
 }
 
+/**
+ * Drivers whose probe publishes `usageLimits` (the server's Claude, Codex,
+ * Cursor, Grok and OpenCode drivers). A ready provider on one of these with no
+ * limits yet is waiting on its first successful probe, which can take tens of
+ * seconds after startup; a driver outside this set simply has no usage to show.
+ */
+const USAGE_REPORTING_DRIVERS: ReadonlySet<string> = new Set([
+  "claudeAgent",
+  "codex",
+  "cursor",
+  "grok",
+  "opencode",
+]);
+
+/**
+ * Drivers the meter strip is still waiting on: ready providers that report
+ * usage but have not published limits yet. Empty once any account has limits,
+ * since the meters then speak for themselves. Pure, exported for tests.
+ */
+export function usageWaitingDrivers(
+  providers: ReadonlyArray<ServerProvider>,
+): ReadonlyArray<ServerProvider["driver"]> {
+  if (providersWithLimits(providers).length > 0) return [];
+  const drivers = new Set<ServerProvider["driver"]>();
+  for (const provider of providers) {
+    if (
+      provider.enabled &&
+      provider.installed &&
+      isProviderAvailable(provider) &&
+      provider.usageLimits === undefined &&
+      USAGE_REPORTING_DRIVERS.has(provider.driver)
+    ) {
+      drivers.add(provider.driver);
+    }
+  }
+  return [...drivers];
+}
+
 const EMPTY_ACCOUNTS: ReadonlyArray<UsageAccountView> = [];
+const EMPTY_DRIVERS: ReadonlyArray<ServerProvider["driver"]> = [];
 const EMPTY_QUEUED_MESSAGES: ReadonlyArray<QueuedMessage> = [];
 
 /** Accounts with usage limits on the primary environment. */
@@ -80,6 +120,14 @@ export const primaryUsageAccountsAtom = Atom.make((get): ReadonlyArray<UsageAcco
   const accounts = groupUsageAccounts(get(primaryServerProvidersAtom));
   return accounts.length === 0 ? EMPTY_ACCOUNTS : accounts;
 }).pipe(Atom.withLabel("web-primary-usage-accounts"));
+
+/** Usage-reporting drivers on the primary environment whose limits have not arrived. */
+export const primaryUsageWaitingDriversAtom = Atom.make(
+  (get): ReadonlyArray<ServerProvider["driver"]> => {
+    const drivers = usageWaitingDrivers(get(primaryServerProvidersAtom));
+    return drivers.length === 0 ? EMPTY_DRIVERS : drivers;
+  },
+).pipe(Atom.withLabel("web-primary-usage-waiting-drivers"));
 
 /** All queued messages for the primary environment. */
 export const primaryQueuedMessagesAtom = Atom.make((get): ReadonlyArray<QueuedMessage> => {

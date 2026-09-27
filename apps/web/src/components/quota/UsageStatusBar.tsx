@@ -9,6 +9,7 @@ import { primaryEnvironmentIdAtom } from "../../state/primaryEnvironment";
 import {
   primaryQueuedMessagesAtom,
   primaryUsageAccountsAtom,
+  primaryUsageWaitingDriversAtom,
   type UsageAccountView,
 } from "../../state/quota";
 import { getDriverOption } from "../settings/providerDriverMeta";
@@ -49,7 +50,7 @@ function WindowMeter(props: {
     >
       <span
         className={cn(
-          "whitespace-nowrap text-[10px] leading-none",
+          "whitespace-nowrap text-3xs leading-none",
           emphasized ? "font-medium text-foreground/80" : "text-muted-foreground",
         )}
       >
@@ -85,7 +86,7 @@ function WindowMeter(props: {
       </span>
       <span
         className={cn(
-          "whitespace-nowrap text-[10px] tabular-nums leading-none",
+          "whitespace-nowrap text-3xs tabular-nums leading-none",
           emphasized ? "font-medium text-foreground/80" : "text-muted-foreground",
         )}
       >
@@ -109,7 +110,7 @@ function AccountMeters(props: {
   // identical to the feature being broken.
   if (notice !== null) {
     return (
-      <span className="flex min-w-0 flex-1 items-center gap-2 text-[10px] text-muted-foreground/70">
+      <span className="flex min-w-0 flex-1 items-center gap-2 text-3xs text-muted-foreground/70">
         <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/50" />
         <span className="truncate">{notice}</span>
       </span>
@@ -122,9 +123,7 @@ function AccountMeters(props: {
   return (
     <span className="flex min-w-0 flex-1 items-center gap-3">
       {showAccountLabel ? (
-        <span className="max-w-32 truncate text-[10px] text-muted-foreground/70">
-          {account.label}
-        </span>
+        <span className="max-w-32 truncate text-3xs text-muted-foreground/70">{account.label}</span>
       ) : null}
       {windows.map((window) => (
         <WindowMeter
@@ -155,7 +154,7 @@ function ExpandedPanel(props: { accounts: ReadonlyArray<UsageAccountView>; nowMs
           const notice = unavailableLabel(account.limits);
           if (notice !== null) {
             return (
-              <div key={account.key} className="text-[11px] text-muted-foreground">
+              <div key={account.key} className="text-2xs text-muted-foreground">
                 {notice}
               </div>
             );
@@ -223,6 +222,7 @@ function driverLabel(account: UsageAccountView): string {
  */
 export function UsageStatusBar() {
   const accounts = useAtomValue(primaryUsageAccountsAtom);
+  const waitingDrivers = useAtomValue(primaryUsageWaitingDriversAtom);
   const queuedMessages = useAtomValue(primaryQueuedMessagesAtom);
   const [expanded, setExpanded] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
@@ -263,7 +263,32 @@ export function UsageStatusBar() {
   }, [accounts.length]);
 
   if (accounts.length === 0) {
-    return null;
+    if (waitingDrivers.length === 0) return null;
+    // A provider that reports usage but has not published limits yet is
+    // waiting on its first probe, which can take a while after startup. Say
+    // so: an empty strip looks identical to the feature being broken.
+    const waitingOn = waitingDrivers
+      .map((driver) => getDriverOption(driver)?.label ?? String(driver))
+      .join(", ");
+    return (
+      <div className="-mt-2 w-full shrink-0">
+        <div className="mx-auto w-full max-w-3xl">
+          <div
+            data-usage-bubble="true"
+            className="alert-glass overflow-hidden rounded-t-2xl border border-b-0 border-border/60 shadow-sm"
+          >
+            <div
+              role="status"
+              className="flex items-center gap-2 px-3 text-3xs text-muted-foreground/70"
+              style={{ height: USAGE_STATUS_BAR_HEIGHT_PX + 12 }}
+            >
+              <span className="size-1.5 shrink-0 rounded-full bg-muted-foreground/50" />
+              <span className="truncate">Waiting for usage data from {waitingOn}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   }
 
   const headlineAccount =
@@ -322,7 +347,7 @@ export function UsageStatusBar() {
                 </span>
                 <span className="flex shrink-0 items-center gap-2">
                   {headlineStatus.length > 0 ? (
-                    <span className="text-[10px] text-muted-foreground">{headlineStatus}</span>
+                    <span className="text-3xs text-muted-foreground">{headlineStatus}</span>
                   ) : null}
                   <button
                     type="button"

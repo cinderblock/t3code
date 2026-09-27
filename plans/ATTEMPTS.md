@@ -489,6 +489,30 @@ from the wired hooks; going deeper into vendored code first would be another unm
 hypothesis, which is how this investigation lost a month. If `pongLatencyMs` turns out healthy,
 both candidates are moot and the watchdog is exonerated.
 
+### 2026-09-26 — first Claude probe after launch took 36 s; the usage meter vanished meanwhile
+
+Observed on the first launch of the v0.0.43 merge (`5f412a3e6b`, app started 18:24). The fork's
+usage meter strip below the composer was missing, then reappeared on its own minutes later.
+
+Evidence from `~/.t3/userdata/logs/server.trace.ndjson.*` (spans, sampled):
+
+```
+checkClaudeProviderStatus  durationMs 35777.97   (server.trace.ndjson.3, right after launch)
+checkClaudeProviderStatus  durationMs  2732.35   (server.trace.ndjson.1, later)
+checkClaudeProviderStatus  durationMs  2989.27   (server.trace.ndjson.7, earlier session)
+```
+
+Mechanism, from code not measurement: when the probe cannot read capabilities from the CLI's
+initialization result, `ClaudeProvider.ts` publishes the provider with status `warning`
+("Could not verify Claude authentication status from initialization result") and **no
+`usageLimits` field at all**, and the meter strip hid itself when no provider had limits
+(`UsageStatusBar.tsx`, `accounts.length === 0`). The next successful probe restores the field.
+The strip now renders a "Waiting for usage data" notice in that state instead of nothing.
+
+Not measured: why that first probe took 36 s (the startup spawn storm is the obvious suspect; a
+`Subprocess spawn storm: 60 spawns in 30s` event sits in the same log), and whether it timed
+out or returned late without capabilities. Worth a look if startup load comes back on the table.
+
 ## Unverified suspects (not yet tested)
 
 - **HTTP response compression on the WebSocket route.** Upstream's merge added
