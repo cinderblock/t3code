@@ -159,6 +159,18 @@ if (-not (Test-Path (Join-Path $RepoRoot 'pnpm-workspace.yaml'))) {
 }
 Set-Location $RepoRoot
 
+# The toolchain is vite-plus: `vp` supplies node, the package manager, and the
+# task runner, and every root package.json script is a `vp run` underneath.
+# Call it directly rather than through `pnpm <script>` -- there is no global
+# pnpm on this machine any more. It used to come from the Node.js MSI in
+# C:\Program Files\nodejs; once that was uninstalled, only corepack's stale
+# shims were left, off PATH, and a fresh elevated shell failed with "The term
+# 'pnpm' is not recognized" while already-open terminals, with PATH cached
+# from before, kept working.
+if (-not (Get-Command vp -ErrorAction SilentlyContinue)) {
+  throw "vp (vite-plus) not found on PATH. Install it or add $env:USERPROFILE\.vite-plus\bin to PATH."
+}
+
 # --- run directory + markers ---------------------------------------------
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $RunsRoot = 'C:\temp\t3runs'
@@ -294,10 +306,10 @@ if ($needsBuild -and $Config.Build -eq 'never') {
   # Best effort: a missing broker must not make this launcher unable to build.
   $broker = Join-Path $env:USERPROFILE '.claude\bin\cpu-slots.mjs'
   if ((Test-Path $broker) -and (Get-Command node -ErrorAction SilentlyContinue)) {
-    & node $broker run --slots 2 --low --label 't3code build:desktop' -- pnpm build:desktop
+    & node $broker run --slots 2 --low --label 't3code build:desktop' -- vp run build:desktop
   } else {
     Write-Host '  build   : cpu-slots broker unavailable - building at normal priority' -ForegroundColor DarkYellow
-    & pnpm build:desktop
+    & vp run build:desktop
   }
   if ($LASTEXITCODE -ne 0) { throw "build:desktop failed ($LASTEXITCODE)" }
   $didBuild = $true
@@ -408,7 +420,7 @@ Write-Host ''
 
 if ($DryRun) {
   Write-Host 'DRY RUN - would execute:' -ForegroundColor Cyan
-  Write-Host "  pnpm start:desktop -- $($electronArgs -join ' ')"
+  Write-Host "  vp run start:desktop $($electronArgs -join ' ')"
   Write-Host "  NODE_OPTIONS=$($env:NODE_OPTIONS)"
   try { Stop-Transcript | Out-Null } catch {}
   Remove-Item $RunDir -Recurse -Force -ErrorAction SilentlyContinue
@@ -423,7 +435,7 @@ Write-Host ''
 if ($Config.HideConsole -and -not $DryRun) { Set-ConsoleVisible $false }
 
 $started = Get-Date
-& pnpm start:desktop -- @electronArgs
+& vp run start:desktop @electronArgs
 $code = $LASTEXITCODE
 $ended = Get-Date
 
