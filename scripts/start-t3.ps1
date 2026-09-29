@@ -427,6 +427,23 @@ if ($DryRun) {
   exit 0
 }
 
+# The installed app shares this build's Electron profile (%APPDATA%\t3code; see
+# apps/desktop/scripts/start-electron.mjs), and the Clerk bridge takes Electron's
+# single-instance lock on it. While the installed app runs, this build is the
+# second instance: it hands off to that app and exits 0 within ~2s, with nothing
+# in any log -- which looked exactly like "the launcher did nothing". Its process
+# is named after the product, not electron.exe, so the check above misses it.
+$installed = @(Get-Process -Name 'T3 Code*' -ErrorAction SilentlyContinue)
+if ($installed.Count -gt 0) {
+  Set-ConsoleVisible $true
+  Write-Host "  BLOCKED : the installed T3 Code app is running (pid $($installed[0].Id))." -ForegroundColor Red
+  Write-Host '            It holds the single-instance lock on the shared profile, so this' -ForegroundColor Red
+  Write-Host '            build would exit immediately. Quit it (tray icon > Quit), then re-run.' -ForegroundColor Red
+  try { Stop-Transcript | Out-Null } catch {}
+  if ($KeepOpen) { Read-Host 'press Enter to close' | Out-Null }
+  exit 1
+}
+
 # --- run -----------------------------------------------------------------
 Write-Host 'App starting. Quit it normally when done.' -ForegroundColor Green
 Write-Host ''
