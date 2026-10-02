@@ -5,9 +5,8 @@
  * event log — a cancelled queued message leaves no trace in the thread).
  * A reactor loop evaluates triggers against the clock and the usage limits
  * every provider instance publishes; when a trigger fires the stored send
- * context is replayed as a normal `thread.turn.start` through the
- * orchestration engine, so downstream behavior is identical to the user
- * pressing send.
+ * context is replayed as a normal `message.dispatch` through thread
+ * management, so downstream behavior is identical to the user pressing send.
  *
  * Dispatch is two-phase: a row is claimed as `sending` before the turn starts
  * and settled to `sent`/`failed` afterwards, so a dispatch whose settle write
@@ -46,7 +45,7 @@ import {
   type ServerProviderUsageWindow,
 } from "@t3tools/contracts";
 
-import * as OrchestrationEngine from "../orchestration/Services/OrchestrationEngine.ts";
+import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 
 const REACTOR_TICK = Duration.seconds(15);
@@ -231,7 +230,7 @@ const toQueuedError = (message: string) => (cause: unknown) =>
 
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
-  const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
+  const threads = yield* ThreadManagement.ThreadManagementService;
   const providerRegistry = yield* ProviderRegistry;
 
   const eventsPubSub = yield* Effect.acquireRelease(
@@ -435,23 +434,24 @@ export const make = Effect.gen(function* () {
   const dispatchMessage = Effect.fn("QueuedMessageService.dispatchMessage")(function* (
     message: QueuedMessage,
   ) {
-    const dispatched = yield* orchestrationEngine
+    // Runtime and interaction mode are thread state in orchestration v2, so the
+    // send follows the thread's current modes; only the model rides along.
+    // `queue_after_active` starts the run when the thread is idle and lines it
+    // up behind a run that is still going when the trigger fires.
+    const dispatched = yield* threads
       .dispatch({
-        type: "thread.turn.start",
+        type: "message.dispatch",
         commandId: CommandId.make(`server:queued-message:${message.id}`),
         threadId: message.threadId,
-        message: {
-          messageId: message.messageId,
-          role: "user",
-          text: message.text,
-          attachments: [],
-        },
+        messageId: message.messageId,
+        text: message.text,
+        attachments: [],
         ...(message.sendContext.modelSelection !== undefined
           ? { modelSelection: message.sendContext.modelSelection }
           : {}),
-        runtimeMode: message.sendContext.runtimeMode,
-        interactionMode: message.sendContext.interactionMode,
-        createdAt: yield* nowIso,
+        dispatchMode: { type: "queue_after_active" },
+        createdBy: "user",
+        creationSource: "server",
       })
       .pipe(Effect.exit);
     if (Exit.isSuccess(dispatched)) {

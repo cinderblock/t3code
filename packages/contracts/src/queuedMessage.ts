@@ -1,11 +1,12 @@
 import * as Schema from "effect/Schema";
 
 import { IsoDateTime, MessageId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { ModelSelection, ProviderInteractionMode, RuntimeMode } from "./orchestration.ts";
+import { ModelSelection } from "./modelSelection.ts";
+import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 
 /**
  * Queued messages — user messages held server-side until a trigger fires,
- * then dispatched as a normal `thread.turn.start`.
+ * then dispatched as a normal `message.dispatch`.
  *
  * These are scheduling metadata, not thread history: the thread's event log
  * only gains events when the send actually fires. The store lives outside
@@ -72,9 +73,11 @@ export const QueuedMessageStatus = Schema.Literals([
 export type QueuedMessageStatus = typeof QueuedMessageStatus.Type;
 
 /**
- * Everything needed to reconstruct the eventual `thread.turn.start`.
- * Captured from the composer at queue time so the send fires with the
- * settings the user saw, not whatever the thread drifted to later.
+ * The composer settings captured at queue time. Only `modelSelection` is
+ * replayed on the eventual `message.dispatch`: runtime and interaction mode
+ * are thread state in orchestration v2, so the send follows the thread's
+ * current modes. The two mode fields stay in the schema because rows queued
+ * before v2 carry them.
  */
 export const QueuedMessageSendContext = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
