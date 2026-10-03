@@ -206,6 +206,60 @@ if ($already.Count -gt 0) {
   Write-Host "            A second instance may contend for the database and port." -ForegroundColor Yellow
 }
 
+# --- dependencies --------------------------------------------------------
+# An upstream merge that changes pnpm-lock.yaml leaves node_modules stale, and
+# a build against a stale tree fails in confusing ways, or quietly bundles old
+# packages. pnpm rewrites node_modules\.modules.yaml at the end of every
+# install, so a lockfile newer than that record means `vp i` has not run since
+# the merge. Like the build, this is refused while an instance is running:
+# pnpm cannot replace Electron's DLLs under a live process (EPERM), and the
+# 2026-10-02 v2 merge left node_modules half-purged exactly that way.
+$modulesRecord = Join-Path $RepoRoot 'node_modules\.modules.yaml'
+$lockfile = Join-Path $RepoRoot 'pnpm-lock.yaml'
+$needsInstall = -not (Test-Path $modulesRecord) -or
+  ((Get-Item $lockfile).LastWriteTime -gt (Get-Item $modulesRecord).LastWriteTime)
+if ($needsInstall -and $Config.Build -ne 'never') {
+  Set-ConsoleVisible $true
+  if ($already.Count -gt 0) {
+    Write-Host '  install : REFUSED - app is running' -ForegroundColor Red
+    Write-Host '            pnpm cannot replace Electron files under a live instance.' -ForegroundColor Red
+    Write-Host '            Quit the app, then re-run.' -ForegroundColor Red
+    try { Stop-Transcript | Out-Null } catch {}
+    if ($KeepOpen) { Read-Host 'press Enter to close' | Out-Null }
+    exit 1
+  }
+  Write-Host '  install : node_modules is older than pnpm-lock.yaml - running vp i...' -ForegroundColor Yellow
+  # pnpm asks for confirmation before recreating node_modules and aborts
+  # without a TTY to ask on; CI=true answers yes. Scoped to the install so the
+  # build below does not run in CI mode.
+  $previousCI = $env:CI
+  $env:CI = 'true'
+  try {
+    # vp.exe is only a launcher: it loads the project's vite-plus out of
+    # node_modules, so once node_modules is gone (pnpm purges it when the
+    # layout changes) `vp i` itself fails with "Cannot find module". vite-plus
+    # keeps the pnpm versions it manages under ~\.vite-plus; bootstrap with the
+    # one package.json pins, then vp works again for the build.
+    if (Test-Path (Join-Path $RepoRoot 'node_modules\vite-plus\bin\vp')) {
+      & vp i
+      if ($LASTEXITCODE -ne 0) { throw "vp i failed ($LASTEXITCODE)" }
+    } else {
+      $pinned = (Get-Content (Join-Path $RepoRoot 'package.json') -Raw | ConvertFrom-Json).packageManager
+      $pnpmVersion = ($pinned -split '@')[-1]
+      $pnpmCjs = Join-Path $env:USERPROFILE ".vite-plus\package_manager\pnpm\$pnpmVersion\pnpm\bin\pnpm.cjs"
+      if (-not (Test-Path $pnpmCjs)) {
+        throw "node_modules is gone and vite-plus has no cached pnpm $pnpmVersion at $pnpmCjs; run 'vp i' from a shell where vp resolves"
+      }
+      Write-Host "  install : node_modules is gone - bootstrapping with pnpm $pnpmVersion from ~\.vite-plus" -ForegroundColor Yellow
+      & node $pnpmCjs install
+      if ($LASTEXITCODE -ne 0) { throw "pnpm install failed ($LASTEXITCODE)" }
+    }
+  } finally {
+    $env:CI = $previousCI
+  }
+  Write-Host '  install : done' -ForegroundColor Green
+}
+
 # --- staleness check -----------------------------------------------------
 # Written next to the artifacts (dist-electron is gitignored) so the bundles
 # carry the commit they were produced from, and so staleness has a reference
