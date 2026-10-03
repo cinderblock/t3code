@@ -134,9 +134,31 @@ From `docs/internals/legacy-orchestration-migration.md`:
 - [x] Three-way audit of every keep-both hunk.
 - [x] Lint + fmt touched files; focused tests.
 - [x] Commit merge on branch `merge/upstream-new-orchestrator` (`git log -1 merge/upstream-new-orchestrator`).
-- [ ] Fast-forward `master` (after user confirms — see open questions), then `vp i` there.
+- [x] User approved both open questions (2026-10-02: "let's embrace it").
+- [x] `master` fast-forwarded to `69cbb0dcd2`; merge worktree and branch removed.
+- [~] `CI=true vp i` in the main checkout **failed** (`exit 48`): pnpm purges `node_modules` because
+  the layout changed, and hit `EPERM unlink …\electron\dist\dxcompiler.dll` — the running app
+  holds Electron's files. `node_modules` is now empty apart from a partial `.pnpm`, and the
+  global `vp.exe` cannot run at all (it loads the project's vite-plus from `node_modules`).
+- [x] `scripts/start-t3.ps1` gained an install step: when `pnpm-lock.yaml` is newer than
+      `node_modules\.modules.yaml` (or the latter is missing) it runs `vp i` with `CI=true`, or
+      bootstraps with the cached `~\.vite-plus\package_manager\pnpm\<pinned>\pnpm\bin\pnpm.cjs`
+      when `node_modules\vite-plus` is gone. Refused while electron is running, like the build.
+      Tested: parse OK; dry run against the live app reports `install : REFUSED`. The install+build
+      path runs for real on the next `t3.cmd`.
+- [x] Pre-cutover backup: `VACUUM INTO P:\Backups\t3code\2026-10-02-pre-v2\state.sqlite` (6.27 GB)
+      plus the userdata `*.json` settings files. C: is too tight for a second 6.4 GB copy.
+- [x] Commit `scripts/start-t3.ps1` and this plan. Was blocked until the relaunch restored
+      `node_modules` (the pre-commit hook runs `vp fmt`); committed after relaunch, hooks not skipped.
+- [x] Relaunch via `scripts\t3.cmd` (user, 2026-10-02 15:36). Launcher run `C:\temp\t3runs\20261002-153635`:
+      install detected the stale `node_modules`, bootstrapped pnpm 11.10.0 from `~\.vite-plus`,
+      `Done in 3m 8.5s`; build ran (stale stamp); app up at 15:43. First launch on v2 confirmed:
+      `statev2.sqlite` created (6.9 GB), all 901 v1 threads present as v2 thread shells, new
+      threads work (this one runs on it). `state.sqlite` untouched since 15:28.
 
 ## Open questions for the user
+
+None open — both answered yes on 2026-10-02. Kept for the record:
 
 1. OK to fast-forward `master` to the merge? It makes the next build a v2 cutover (new DB file,
    protocol 2, old threads import as transcript-only). Recommendation: yes, but update all
@@ -149,3 +171,23 @@ From `docs/internals/legacy-orchestration-migration.md`:
 - Don't rebase master onto upstream. Merge only.
 - Don't start a server from this worktree against `~/.t3/userdata`.
 - Don't trust a zero-error typecheck without reading the log tail.
+- Don't run `vp run build:desktop` while the fork's desktop build is running — see the launcher.
+
+## Relaunch facts (2026-10-02)
+
+- **Observed on the real relaunch:** `server-child.log` logged `Timed out after 60000ms waiting for
+desktop backend readiness` at 15:44 because the 6.4 GB backup copy outran the desktop shell's
+  60 s readiness wait. Harmless here: the backend (pid 4576) kept running and the window connected
+  once the copy finished. If a future first-launch copy is needed again, expect that log line.
+- `server.log` is stale (last write April); backend stdout now lands only in `server-child.log` and
+  the trace ndjson files. Don't look for v2 startup messages in `server.log`.
+- `~/.t3/userdata/state.sqlite` is **6.4 GB** (1.56M pages, freelist 0, so all live data). C: had
+  **22 GB free**. The first v2 launch backs the file up into `statev2.sqlite` via SQLite's backup
+  API (temp file, then a hard link, so no second transient copy), leaving ~15 GB. Expect the first
+  launch to spend minutes on the copy before the window appears; watch
+  `~/.t3/userdata/logs/server-child.log`.
+- After the copy, old threads appear as shells and transcripts import lazily when opened.
+- Remote environments and the mobile app must be on protocol 2 too; mismatched pairs refuse to
+  connect with an update notice. The connection catalog is encrypted on disk, so the environment
+  list was not read here — check Settings → Connections after relaunch.
+- Housekeeping candidates, not done: stale local branches `merge/upstream-v0.0.34/35/40`.
