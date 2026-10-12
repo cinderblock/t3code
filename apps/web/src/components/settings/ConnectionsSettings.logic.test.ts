@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
   isQrShareableEndpoint,
+  publicOriginAdvertisedEndpoints,
   isWslSettingsRowVisible,
   selectQrEndpointOption,
 } from "./ConnectionsSettings.logic";
@@ -181,5 +182,20 @@ describe("selectQrEndpointOption", () => {
     const loopbackOnly = options.slice(0, 1);
     expect(selectQrEndpointOption(loopbackOnly, null, null)?.id).toBe("desktop-loopback:4780");
     expect(selectQrEndpointOption([], "anything", "anything")).toBeNull();
+  });
+});
+
+describe("publicOriginAdvertisedEndpoints", () => {
+  it("offers a public URL as a shareable endpoint that pairs on the URL itself", () => {
+    const [endpoint] = publicOriginAdvertisedEndpoints(["https://t3.example.com"]);
+    expect(endpoint).toMatchObject({
+      label: "t3.example.com",
+      httpBaseUrl: "https://t3.example.com/",
+      reachability: "public",
+    });
+    // A hosted-compatible endpoint would pair through app.t3.codes, where a
+    // passkey for this origin cannot be saved.
+    expect(endpoint?.compatibility.hostedHttpsApp).not.toBe("compatible");
+    expect(endpoint && isQrShareableEndpoint(endpoint)).toBe(true);
   });
 });

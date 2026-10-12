@@ -6,7 +6,8 @@ type WslEnableBridge = Pick<DesktopBridge, "setWslBackendEnabled" | "setWslDistr
 /**
  * The server's configured public HTTPS origins, offered alongside the
  * desktop's own endpoints. The server cannot see its own proxy, so their
- * reachability stays unknown.
+ * reachability stays unknown. Pairing links open the origin itself rather
+ * than the hosted app, because passkeys are saved for the page's own origin.
  */
 export function publicOriginAdvertisedEndpoints(
   origins: ReadonlyArray<string>,
@@ -14,11 +15,11 @@ export function publicOriginAdvertisedEndpoints(
   return origins.map((origin) =>
     createAdvertisedEndpoint({
       id: `public-origin:${origin}`,
-      label: "Public URL",
+      label: new URL(origin).host,
       provider: { id: "public-origin", label: "Public URL", kind: "manual", isAddon: false },
       httpBaseUrl: origin,
       reachability: "public",
-      hostedHttpsCompatibility: "compatible",
+      hostedHttpsCompatibility: "unknown",
       source: "server",
       status: "unknown",
       description: "HTTPS address served by your reverse proxy. Supports passkey sign-in.",
