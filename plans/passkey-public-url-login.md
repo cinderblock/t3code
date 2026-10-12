@@ -160,3 +160,30 @@ excessive — TLS terminates at the proxy.
 - Don't trust `X-Forwarded-*` headers from arbitrary peers — only from configured trusted proxies.
 - Don't touch Caddy/Cloudflare/ops — another agent, and per-change authorization is required.
 - Don't let passkey login fall back to anything weaker on verification failure.
+
+## Security review (2026-10-12)
+
+Checked and sound:
+
+- No server code grants privileges by peer address. Behind cloudflared every request arrives from
+  127.0.0.1, so that matters. Peer address only feeds client-IP display.
+- Production CORS allows no credentialed cross-origin requests. Raw routes (assets, uploads, OTLP)
+  require a session or a signed capability token.
+- WebAuthn checks: type, single-use challenge (session-bound for registration), origin from the
+  signed client data, RP ID hash, UP+UV, algorithm allow-list, signature, counter, user handle.
+
+Fixed in `71e4ee1dd7`: RSA keys under 2048 bits refused; a revoke racing a sign-in no longer issues
+a session; pairing-exchange cookies over HTTPS are `Secure`.
+
+Logged in `ISSUES.md` (pre-existing, upstream-wide): the WebSocket upgrade does not check `Origin`,
+so a sibling subdomain can ride a `SameSite=Lax` cookie.
+
+Open design questions for the user (not changed):
+
+1. Any browser session, not just admins, may enroll a passkey, turning a 30-day session into a
+   durable credential. Revoking that session, or "Revoke other clients", does not revoke the
+   passkey. Options: require `access:write` to enroll, and/or have revoke-others cover passkeys.
+2. No rate limiting on the unauthenticated endpoints. Pairing tokens and passkeys are not
+   guessable, but a flood of login-options requests can evict pending sign-in challenges (cap 256).
+   Cloudflare-side rate limiting is the cheap fix. That's infrastructure, so it needs the user's call.
+3. Cloudflare "Always Use HTTPS" + HSTS for the domain (infrastructure, the user's call).
