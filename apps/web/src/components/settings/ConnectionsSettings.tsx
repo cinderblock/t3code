@@ -1019,6 +1019,11 @@ const ConnectedClientListRow = memo(function ConnectedClientListRow({
                 This device
               </span>
             ) : null}
+            {clientSession.subject.startsWith("passkey:") ? (
+              <span className="text-3xs text-muted-foreground/80 rounded-md border border-border/50 bg-muted/50 px-1 py-0.5">
+                Passkey
+              </span>
+            ) : null}
           </div>
           <p className="text-xs text-muted-foreground">
             {deviceInfoBits.length > 0 ? (

@@ -696,7 +696,9 @@ export const make = Effect.gen(function* () {
           method: "browser-session-cookie",
           subject: passkeySessionSubject(stored.id),
           scopes: stored.scopes,
-          client: { ...input.client, label: stored.label },
+          // Describe the device signing in, not the one that saved the passkey;
+          // the subject records which passkey it was.
+          client: input.client,
         })
         .pipe(Effect.mapError((cause) => new PasskeySessionIssueError({ cause })));
       yield* publishChange;

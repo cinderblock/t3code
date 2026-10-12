@@ -89,6 +89,12 @@ it.layer(NodeServices.layer)("PublicAccess", (it) => {
       expect(result.response.scopes).toEqual(AuthStandardClientScopes);
       const verified = yield* sessions.verify(result.sessionToken);
       expect(verified.subject).toBe(PublicAccess.passkeySessionSubject(passkey.id));
+      // Labeled from the device signing in, not the one that saved the passkey.
+      const issued = (yield* sessions.listActive()).find(
+        (session) => session.sessionId === verified.sessionId,
+      );
+      expect(issued?.client).toMatchObject({ browser: "Chrome", os: "macOS" });
+      expect(issued?.client.label).toBeUndefined();
 
       const [listed] = yield* publicAccess.listPasskeys;
       expect(listed?.lastUsedAt).not.toBeNull();
