@@ -29,6 +29,7 @@ import { DesktopAppActivationCoordinator } from "../components/desktop/DesktopAp
 import { RunningThreadKeepAlive } from "../components/desktop/RunningThreadKeepAlive";
 import { ProviderUpdateLaunchNotification } from "../components/ProviderUpdateLaunchNotification";
 import { LegacyThreadMigrationToast } from "../components/LegacyThreadMigrationToast";
+import { PasskeyEnrollmentOffer } from "../components/auth/PasskeyEnrollmentOffer";
 import { ThreadNotificationCoordinator } from "../components/ThreadNotificationCoordinator";
 import { ProjectCloneToastCoordinator } from "../components/ProjectCloneToastCoordinator";
 import { SlowRpcRequestToastCoordinator } from "../components/SlowRpcRequestToastCoordinator";
@@ -237,6 +238,7 @@ function RootRouteView() {
           <CustomSnoozeDialogHost />
           <SlowRpcRequestToastCoordinator />
           {primaryEnvironmentAuthenticated ? <LegacyThreadMigrationToast /> : null}
+          {primaryEnvironmentAuthenticated ? <PasskeyEnrollmentOffer /> : null}
           <ProjectCloneToastCoordinator />
           <HostedStaticEnvironmentBootstrap />
           {primaryEnvironmentAuthenticated ? (

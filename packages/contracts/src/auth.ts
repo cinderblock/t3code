@@ -400,7 +400,6 @@ const WebAuthnTransports = Schema.Array(Schema.String);
 const WebAuthnCredentialDescriptor = Schema.Struct({
   id: Base64UrlString,
   type: Schema.Literal("public-key"),
-  transports: Schema.optionalKey(WebAuthnTransports),
 });
 
 /** `PublicKeyCredentialCreationOptionsJSON` as consumed by the browser. */

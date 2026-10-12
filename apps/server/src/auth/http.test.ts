@@ -19,6 +19,7 @@ import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import { authHttpApiLayer, environmentAuthenticatedAuthLayer } from "./http.ts";
+import { makeSoftwareAuthenticator } from "./testing/softwareAuthenticator.ts";
 
 const DEV_TOKEN = "reusable-dev-auth-token-that-is-long-enough";
 class AuthTestApi extends HttpApi.make("environment").add(EnvironmentHttpApi.groups.auth) {}
@@ -131,6 +132,147 @@ it.effect("sets the selected browser session cookies through the HTTP route", ()
         }),
       ([environmentA, environmentB]) =>
         Effect.promise(() => Promise.all([environmentA.dispose(), environmentB.dispose()])),
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("enrolls and signs in with a passkey through the HTTP routes", () =>
+  Effect.gen(function* () {
+    const crypto = yield* Crypto.Crypto;
+    const unusedSecretStore = ServerSecretStore.ServerSecretStore.of({
+      get: () => Effect.succeedNone,
+      set: () => Effect.void,
+      create: () => Effect.void,
+      getOrCreateRandom: () => Effect.die("Not used by these routes."),
+      remove: () => Effect.void,
+    });
+    const requestContext = Context.make(Crypto.Crypto, crypto).pipe(
+      Context.add(ServerSecretStore.ServerSecretStore, unusedSecretStore),
+    );
+    const origin = "https://t3.example.com";
+    return yield* Effect.acquireUseRelease(
+      Effect.sync(() => HttpRouter.toWebHandler(routesLayer, { disableLogger: true })),
+      (environment) =>
+        Effect.tryPromise(async () => {
+          const cookieOf = (response: Response) =>
+            response.headers.getSetCookie()[0]?.split(";", 1)[0] ?? "";
+          const devSession = await environment.handler(
+            postJson("/api/auth/browser-session", { credential: DEV_TOKEN }),
+            requestContext,
+          );
+          const devCookie = cookieOf(devSession);
+
+          // Pair a browser with a token whose scopes the passkey should inherit.
+          const pairing = (await (
+            await environment.handler(
+              postJson(
+                "/api/auth/pairing-token",
+                { scopes: ["orchestration:read", "orchestration:operate"] },
+                { cookie: devCookie },
+              ),
+              requestContext,
+            )
+          ).json()) as { credential: string };
+          const browserCookie = cookieOf(
+            await environment.handler(
+              postJson("/api/auth/browser-session", { credential: pairing.credential }),
+              requestContext,
+            ),
+          );
+
+          const notConfigured = await environment.handler(
+            postJson(
+              "/api/auth/passkeys/registration-options",
+              {},
+              { cookie: browserCookie, origin },
+            ),
+            requestContext,
+          );
+          expect(notConfigured.status).toBe(400);
+          const configure = await environment.handler(
+            postJson(
+              "/api/auth/public-access",
+              { origins: [origin], trustedProxies: [] },
+              { cookie: devCookie },
+            ),
+            requestContext,
+          );
+          expect(configure.status).toBe(200);
+
+          const registrationOptions = (await (
+            await environment.handler(
+              postJson(
+                "/api/auth/passkeys/registration-options",
+                {},
+                { cookie: browserCookie, origin },
+              ),
+              requestContext,
+            )
+          ).json()) as { challenge: string; rp: { id: string }; user: { id: string } };
+          const authenticator = makeSoftwareAuthenticator();
+          const registered = await environment.handler(
+            postJson(
+              "/api/auth/passkeys/register",
+              {
+                credential: authenticator.register({
+                  rpId: registrationOptions.rp.id,
+                  origin,
+                  challenge: registrationOptions.challenge,
+                  userHandle: registrationOptions.user.id,
+                }),
+              },
+              { cookie: browserCookie, origin },
+            ),
+            requestContext,
+          );
+          expect(registered.status).toBe(200);
+
+          const elsewhere = await environment.handler(
+            postJson(
+              "/api/auth/passkeys/login-options",
+              {},
+              { origin: "https://other.example.com" },
+            ),
+            requestContext,
+          );
+          expect(elsewhere.status).toBe(404);
+          const loginOptions = (await (
+            await environment.handler(
+              postJson("/api/auth/passkeys/login-options", {}, { origin }),
+              requestContext,
+            )
+          ).json()) as { challenge: string; rpId: string };
+          const login = await environment.handler(
+            postJson(
+              "/api/auth/passkeys/login",
+              {
+                credential: authenticator.assert({
+                  rpId: loginOptions.rpId,
+                  origin,
+                  challenge: loginOptions.challenge,
+                }),
+              },
+              { origin },
+            ),
+            requestContext,
+          );
+          expect(login.status).toBe(200);
+          const loginCookie = login.headers.getSetCookie()[0] ?? "";
+          expect(loginCookie).toContain("HttpOnly");
+          expect(loginCookie).toContain("Secure");
+
+          const session = await environment.handler(
+            new Request("http://127.0.0.1/api/auth/session", {
+              headers: { cookie: loginCookie.split(";", 1)[0] ?? "" },
+            }),
+            requestContext,
+          );
+          expect(await session.json()).toMatchObject({
+            authenticated: true,
+            scopes: ["orchestration:read", "orchestration:operate"],
+          });
+        }),
+      (environment) => Effect.promise(() => environment.dispose()),
     );
   }).pipe(Effect.provide(NodeServices.layer)),
 );

@@ -511,6 +511,14 @@ export const authHttpApiLayer = HttpApiBuilder.group(
         ),
       )
       .handle(
+        "publicAccess",
+        Effect.fn("environment.auth.publicAccess")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthAccessReadScope);
+          return yield* publicAccess.getConfig;
+        }),
+      )
+      .handle(
         "updatePublicAccess",
         Effect.fn("environment.auth.updatePublicAccess")(
           function* (args) {

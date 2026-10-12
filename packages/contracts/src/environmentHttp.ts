@@ -544,6 +544,13 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
     }).middleware(EnvironmentAuthenticatedAuth),
   )
   .add(
+    HttpApiEndpoint.get("publicAccess", "/api/auth/public-access", {
+      headers: OptionalBearerHeaders,
+      success: AuthPublicAccessConfig,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
     HttpApiEndpoint.post("updatePublicAccess", "/api/auth/public-access", {
       headers: OptionalBearerHeaders,
       payload: AuthPublicAccessConfig,

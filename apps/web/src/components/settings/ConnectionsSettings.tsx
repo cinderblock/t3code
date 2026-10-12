@@ -58,6 +58,7 @@ import {
   applyWslEnableSelection,
   isQrShareableEndpoint,
   isWslSettingsRowVisible,
+  publicOriginAdvertisedEndpoints,
   selectQrEndpointOption,
 } from "./ConnectionsSettings.logic";
 import {
@@ -75,6 +76,7 @@ import {
   formatDesktopSshTarget,
 } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
+import { PublicAccessSettings } from "./PublicAccessSettings";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
 import { GitHubRoutingSettings } from "./GitHubRoutingSettings";
 import { Input } from "../ui/input";
@@ -2573,15 +2575,24 @@ export function ConnectionsSettings() {
         : [],
     [desktopAdvertisedEndpoints, isLocalBackendNetworkAccessible],
   );
+  const authAccessSnapshot =
+    authAccessChanges.data?.type === "snapshot" ? authAccessChanges.data.payload : null;
+  const publicOriginEndpoints = useMemo(
+    () => publicOriginAdvertisedEndpoints(authAccessSnapshot?.publicAccess?.origins ?? []),
+    [authAccessSnapshot?.publicAccess?.origins],
+  );
   const visibleDesktopAdvertisedEndpoints = useMemo(
-    () =>
-      tailscaleHttpsEndpoint
-        ? [...visibleDesktopNetworkAdvertisedEndpoints, tailscaleHttpsEndpoint]
-        : visibleDesktopNetworkAdvertisedEndpoints,
-    [tailscaleHttpsEndpoint, visibleDesktopNetworkAdvertisedEndpoints],
+    () => [
+      ...visibleDesktopNetworkAdvertisedEndpoints,
+      ...(tailscaleHttpsEndpoint ? [tailscaleHttpsEndpoint] : []),
+      ...publicOriginEndpoints,
+    ],
+    [publicOriginEndpoints, tailscaleHttpsEndpoint, visibleDesktopNetworkAdvertisedEndpoints],
   );
   const isLocalBackendRemotelyReachable =
-    isLocalBackendNetworkAccessible || tailscaleHttpsEndpoint?.status === "available";
+    isLocalBackendNetworkAccessible ||
+    tailscaleHttpsEndpoint?.status === "available" ||
+    publicOriginEndpoints.length > 0;
   const defaultDesktopNetworkAdvertisedEndpoint = useMemo(
     () =>
       selectPairingEndpoint(visibleDesktopNetworkAdvertisedEndpoints, defaultAdvertisedEndpointKey),
@@ -3412,6 +3423,12 @@ export function ConnectionsSettings() {
                 {renderAuthorizedClients("current")}
               </ScrollArea>
             </FoldedSettingsSection>
+          ) : null}
+          {canManageLocalBackend ? (
+            <PublicAccessSettings
+              publicAccess={authAccessSnapshot?.publicAccess}
+              passkeys={authAccessSnapshot?.passkeys}
+            />
           ) : null}
           <AlertDialog
             open={isDesktopServerExposureDialogOpen}

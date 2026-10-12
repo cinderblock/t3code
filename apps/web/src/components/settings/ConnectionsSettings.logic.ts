@@ -1,6 +1,30 @@
 import type { AdvertisedEndpoint, DesktopBridge, DesktopWslState } from "@t3tools/contracts";
+import { createAdvertisedEndpoint } from "@t3tools/shared/advertisedEndpoint";
 
 type WslEnableBridge = Pick<DesktopBridge, "setWslBackendEnabled" | "setWslDistro" | "setWslOnly">;
+
+/**
+ * The server's configured public HTTPS origins, offered alongside the
+ * desktop's own endpoints. The server cannot see its own proxy, so their
+ * reachability stays unknown.
+ */
+export function publicOriginAdvertisedEndpoints(
+  origins: ReadonlyArray<string>,
+): ReadonlyArray<AdvertisedEndpoint> {
+  return origins.map((origin) =>
+    createAdvertisedEndpoint({
+      id: `public-origin:${origin}`,
+      label: "Public URL",
+      provider: { id: "public-origin", label: "Public URL", kind: "manual", isAddon: false },
+      httpBaseUrl: origin,
+      reachability: "public",
+      hostedHttpsCompatibility: "compatible",
+      source: "server",
+      status: "unknown",
+      description: "HTTPS address served by your reverse proxy. Supports passkey sign-in.",
+    }),
+  );
+}
 
 /**
  * A QR code encoding a loopback URL makes the scanning device dial itself, so

@@ -10,7 +10,15 @@ import {
   stripPairingTokenFromUrl,
   submitServerAuthCredential,
 } from "../../environments/primary";
+import {
+  fetchPasskeyLoginOptions,
+  isPasskeyCapablePage,
+  isPasskeyPromptDismissed,
+  signInWithPasskey,
+} from "../../environments/primary/passkeys";
 import { readHostedPairingRequest } from "../../hostedPairing";
+import { KeyRoundIcon } from "lucide-react";
+
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { StandalonePage, StandalonePageHeader } from "../ui/standalone-page";
@@ -42,6 +50,41 @@ export function PairingRouteSurface({
   const [errorMessage, setErrorMessage] = useState(initialErrorMessage ?? "");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const autoSubmitAttemptedRef = useRef(false);
+  const [passkeyAvailable, setPasskeyAvailable] = useState(false);
+
+  useEffect(() => {
+    if (autoPairTokenRef.current || !isPasskeyCapablePage()) return;
+    let cancelled = false;
+    void fetchPasskeyLoginOptions().then(
+      (options) => {
+        if (!cancelled) setPasskeyAvailable(options !== null);
+      },
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const handlePasskeySignIn = useCallback(async () => {
+    setIsSubmitting(true);
+    setErrorMessage("");
+    const signInError = await signInWithPasskey().then(
+      () => null,
+      (error: unknown) => error,
+    );
+    setIsSubmitting(false);
+    if (signInError !== null) {
+      // Dismissing the browser's passkey prompt is not an error worth showing.
+      if (!isPasskeyPromptDismissed(signInError)) {
+        setErrorMessage(errorMessageFromUnknown(signInError));
+      }
+      return;
+    }
+    startTransition(() => {
+      onAuthenticated();
+    });
+  }, [onAuthenticated]);
 
   const submitCredential = useCallback(
     async (nextCredential: string) => {
@@ -90,9 +133,22 @@ export function PairingRouteSurface({
     <StandalonePage tone="pairing">
       <StandalonePageHeader
         eyebrow={APP_DISPLAY_NAME}
-        title="Pair with this environment"
-        description={describeAuthGate(auth.bootstrapMethods)}
+        title={passkeyAvailable ? "Sign in to this environment" : "Pair with this environment"}
+        description={
+          passkeyAvailable
+            ? "Use the passkey you saved for this server, or pair with a token."
+            : describeAuthGate(auth.bootstrapMethods)
+        }
       />
+
+      {passkeyAvailable ? (
+        <div className="mt-6">
+          <Button disabled={isSubmitting} onClick={() => void handlePasskeySignIn()}>
+            <KeyRoundIcon aria-hidden />
+            Sign in with passkey
+          </Button>
+        </div>
+      ) : null}
 
       <form className="mt-6 space-y-4" onSubmit={(event) => void handleSubmit(event)}>
         <div className="space-y-2">

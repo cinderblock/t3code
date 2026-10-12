@@ -140,6 +140,8 @@ type ServerAuthGateState =
 
 let bootstrapPromise: Promise<ServerAuthGateState> | null = null;
 let resolvedAuthenticatedGateState: ServerAuthGateState | null = null;
+// Set when this page load paired with a credential, so the app can offer a passkey.
+let pairedWithCredential = false;
 const AUTH_SESSION_ESTABLISH_TIMEOUT_MS = 2_000;
 const AUTH_SESSION_ESTABLISH_STEP_MS = 100;
 
@@ -324,6 +326,7 @@ async function bootstrapServerAuth(urlCredential: string | null): Promise<Server
   try {
     await exchangeBootstrapCredential(bootstrapCredential);
     await waitForAuthenticatedSessionAfterBootstrap();
+    if (urlCredential) pairedWithCredential = true;
     return { status: "authenticated" };
   } catch (error) {
     return {
@@ -344,10 +347,24 @@ export async function submitServerAuthCredential(credential: string): Promise<vo
 
   resolvedAuthenticatedGateState = null;
   await exchangeBootstrapCredential(trimmedCredential);
+  await completeBrowserSessionSignIn();
+  pairedWithCredential = true;
+  stripPairingTokenFromUrl();
+}
+
+/** Marks the primary environment signed in once the server has set a session cookie. */
+export async function completeBrowserSessionSignIn(): Promise<void> {
+  resolvedAuthenticatedGateState = null;
   await waitForAuthenticatedSessionAfterBootstrap();
   resolvedAuthenticatedGateState = { status: "authenticated" };
   bootstrapPromise = null;
-  stripPairingTokenFromUrl();
+}
+
+/** True once per page load after pairing with a token, the moment to offer a passkey. */
+export function takePairedWithCredential(): boolean {
+  const paired = pairedWithCredential;
+  pairedWithCredential = false;
+  return paired;
 }
 
 export async function createServerPairingCredential(input?: {
@@ -468,4 +485,5 @@ export async function resolveInitialServerAuthGateState(): Promise<ServerAuthGat
 export function __resetServerAuthBootstrapForTests() {
   bootstrapPromise = null;
   resolvedAuthenticatedGateState = null;
+  pairedWithCredential = false;
 }
