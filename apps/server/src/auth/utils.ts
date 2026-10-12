@@ -5,6 +5,7 @@ import type {
 } from "@t3tools/contracts";
 import type * as HttpServerRequest from "effect/unstable/http/HttpServerRequest";
 import * as NodeCrypto from "node:crypto";
+import * as NodeNet from "node:net";
 import * as Encoding from "effect/Encoding";
 import * as Result from "effect/Result";
 
@@ -178,12 +179,46 @@ function readRemoteAddressFromSource(source: unknown): string | undefined {
   return normalizeIpAddress(candidate.socket?.remoteAddress ?? candidate.remoteAddress);
 }
 
+/**
+ * The client's address as seen through any trusted reverse proxies. Walks
+ * `X-Forwarded-For` from the right, skipping trusted hops, so a client cannot
+ * spoof its address by sending its own header through the proxy.
+ */
+export function resolveForwardedClientAddress(input: {
+  readonly peerAddress: string | undefined;
+  readonly forwardedFor: string | undefined;
+  readonly isTrustedProxy: (address: string) => boolean;
+}): string | undefined {
+  let address = input.peerAddress;
+  if (!address || !input.isTrustedProxy(address) || !input.forwardedFor) {
+    return address;
+  }
+  const hops = input.forwardedFor
+    .split(",")
+    .map((hop) => normalizeIpAddress(hop))
+    .filter((hop): hop is string => hop !== undefined && NodeNet.isIP(hop) !== 0);
+  for (let index = hops.length - 1; index >= 0; index -= 1) {
+    address = hops[index]!;
+    if (!input.isTrustedProxy(address)) break;
+  }
+  return address;
+}
+
 export function deriveAuthClientMetadata(input: {
   readonly request: HttpServerRequest.HttpServerRequest;
   readonly presented?: AuthClientPresentationMetadata;
+  readonly isTrustedProxy?: (address: string) => boolean;
 }): AuthClientMetadata {
   const userAgent = normalizeNonEmptyString(input.request.headers["user-agent"]);
-  const ipAddress = readRemoteAddressFromSource(input.request.source);
+  const peerAddress = readRemoteAddressFromSource(input.request.source);
+  const forwardedFor = input.request.headers["x-forwarded-for"];
+  const ipAddress = input.isTrustedProxy
+    ? resolveForwardedClientAddress({
+        peerAddress,
+        forwardedFor: typeof forwardedFor === "string" ? forwardedFor : undefined,
+        isTrustedProxy: input.isTrustedProxy,
+      })
+    : peerAddress;
   const os = input.presented?.os ?? inferOs(userAgent);
   const browser = inferBrowser(userAgent);
   return {

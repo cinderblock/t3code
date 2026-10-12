@@ -526,6 +526,9 @@ importers:
       '@ff-labs/fff-node':
         specifier: 0.9.4
         version: 0.9.4(patch_hash=c4e3cc2420ceb9dc650f9d189e9c24baf7e83f342998bacda5f459a4ce7927a8)
+      '@levischuck/tiny-cbor':
+        specifier: ^0.3.6
+        version: 0.3.6
       '@napi-rs/keyring':
         specifier: ^1.3.0
         version: 1.3.0
@@ -650,6 +653,9 @@ importers:
       '@pierre/trees':
         specifier: 1.0.0-beta.4
         version: 1.0.0-beta.4(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@simplewebauthn/browser':
+        specifier: ^14.0.0
+        version: 14.0.0
       '@t3tools/client-runtime':
         specifier: workspace:*
         version: link:../../packages/client-runtime
@@ -3335,6 +3341,9 @@ packages:
       react-native:
         optional: true
 
+  '@levischuck/tiny-cbor@0.3.6':
+    resolution: {integrity: sha512-uh1K62xhRZbEbnXEPUJ1WHd7uJTAKg65EX/7S/DDX3u2lexCvSjqrOOR3rb+5TDhCyGVHflu/HEtFjuEQ6y+qw==}
+
   '@libsql/client@0.17.3':
     resolution: {integrity: sha512-HXk9wiAoJbKFbyBH4O+aEhN6ir5ERXuXvwE5OD2eR4/5RUa3Pw/8L9zrnVdU+iNJitRvisPWaIwmhkO3bH7giA==}
 
@@ -4843,6 +4852,9 @@ packages:
 
   '@shikijs/vscode-textmate@10.0.2':
     resolution: {integrity: sha512-83yeghZ2xxin3Nj8z1NMd/NCuca+gsYXswywDy5bHvwlWL8tpTQmzGeUuHd9FC3E/SBEMvzJRwWEOz5gGes9Qg==}
+
+  '@simplewebauthn/browser@14.0.0':
+    resolution: {integrity: sha512-1odWVqeEBTl7lJ9zMKLEsmTlnyrDO5iRcTvfMKKk1WThUnp/i8JJdffdj2icP+tty159s4PgwE3BiMoEW9NFow==}
 
   '@sinclair/typebox@0.27.10':
     resolution: {integrity: sha512-MTBk/3jGLNB2tVxv6uLlFh1iu64iYOQ2PbdOSK3NW8JZsmlaOh2q6sdtKowBhfw8QFLmYNzTW4/oK4uATIi6ZA==}
@@ -13610,6 +13622,8 @@ snapshots:
       react-dom: 19.3.0(react@19.3.0)
       react-native: 0.88.0-rc.3(@babel/core@7.29.7)(@react-native/metro-config@0.88.0-rc.3(@babel/core@7.29.7)(bufferutil@4.1.0)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(utf-8-validate@6.0.6)
 
+  '@levischuck/tiny-cbor@0.3.6': {}
+
   '@libsql/client@0.17.3(bufferutil@4.1.0)(utf-8-validate@6.0.6)':
     dependencies:
       '@libsql/core': 0.17.3
@@ -14776,6 +14790,8 @@ snapshots:
       '@types/hast': 3.0.4
 
   '@shikijs/vscode-textmate@10.0.2': {}
+
+  '@simplewebauthn/browser@14.0.0': {}
 
   '@sinclair/typebox@0.27.10': {}
 

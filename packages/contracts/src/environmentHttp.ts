@@ -22,6 +22,15 @@ import {
   AuthTokenExchangeRequest,
   AuthSessionState,
   AuthWebSocketTicketResult,
+  AuthPasskey,
+  AuthPasskeyLoginInput,
+  AuthPasskeyLoginOptions,
+  AuthPasskeyRegisterInput,
+  AuthPasskeyRegistrationOptions,
+  AuthPasskeyRegistrationOptionsInput,
+  AuthPasskeyRevokeResult,
+  AuthPublicAccessConfig,
+  AuthRevokePasskeyInput,
   ServerAuthSessionMethod,
 } from "./auth.ts";
 import {
@@ -78,6 +87,9 @@ export const EnvironmentRequestInvalidReason = Schema.Literals([
   "scope_not_granted",
   "invalid_command",
   "invalid_history_cursor",
+  "invalid_public_access",
+  "passkey_origin_not_configured",
+  "passkey_registration_invalid",
 ]);
 export type EnvironmentRequestInvalidReason = typeof EnvironmentRequestInvalidReason.Type;
 
@@ -89,6 +101,7 @@ export type EnvironmentAuthInvalidReason = typeof EnvironmentAuthInvalidReason.T
 
 export const EnvironmentOperationForbiddenReason = Schema.Literals([
   "current_session_revoke_not_allowed",
+  "passkey_registration_requires_browser_session",
 ]);
 export type EnvironmentOperationForbiddenReason = typeof EnvironmentOperationForbiddenReason.Type;
 
@@ -109,6 +122,8 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "orchestration_thread_snapshot_failed",
   "orchestration_thread_bounded_snapshot_failed",
   "orchestration_thread_history_failed",
+  "public_access_store_failed",
+  "passkey_session_issuance_failed",
   "internal_error",
 ]);
 export type EnvironmentInternalErrorReason = typeof EnvironmentInternalErrorReason.Type;
@@ -205,7 +220,10 @@ export class EnvironmentInternalError extends Schema.TaggedError<EnvironmentInte
   }
 }
 
-export const EnvironmentResourceNotFoundReason = Schema.Literals(["thread_not_found"]);
+export const EnvironmentResourceNotFoundReason = Schema.Literals([
+  "thread_not_found",
+  "passkeys_unavailable",
+]);
 export type EnvironmentResourceNotFoundReason = typeof EnvironmentResourceNotFoundReason.Type;
 
 export class EnvironmentResourceNotFoundError extends Schema.TaggedError<EnvironmentResourceNotFoundError>()(
@@ -331,6 +349,24 @@ const EnvironmentScopedOperationErrors = [
 const EnvironmentPairingCredentialErrors = [
   EnvironmentRequestInvalidError,
   ...EnvironmentScopedOperationErrors,
+] as const;
+const EnvironmentPublicAccessUpdateErrors = [
+  EnvironmentRequestInvalidError,
+  ...EnvironmentScopedOperationErrors,
+] as const;
+const EnvironmentPasskeyRegistrationErrors = [
+  EnvironmentRequestInvalidError,
+  EnvironmentOperationForbiddenError,
+  EnvironmentInternalError,
+] as const;
+const EnvironmentPasskeyLoginOptionsErrors = [
+  EnvironmentResourceNotFoundError,
+  EnvironmentInternalError,
+] as const;
+const EnvironmentPasskeyLoginErrors = [
+  EnvironmentRequestInvalidError,
+  EnvironmentAuthInvalidError,
+  EnvironmentInternalError,
 ] as const;
 const EnvironmentSessionRevokeErrors = [
   EnvironmentScopeRequiredError,
@@ -504,6 +540,51 @@ class EnvironmentAuthHttpApi extends HttpApiGroup.make("auth")
     HttpApiEndpoint.post("revokeOtherClients", "/api/auth/clients/revoke-others", {
       headers: OptionalBearerHeaders,
       success: AuthOtherClientSessionsRevokeResult,
+      error: EnvironmentScopedOperationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("updatePublicAccess", "/api/auth/public-access", {
+      headers: OptionalBearerHeaders,
+      payload: AuthPublicAccessConfig,
+      success: AuthPublicAccessConfig,
+      error: EnvironmentPublicAccessUpdateErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("passkeyRegistrationOptions", "/api/auth/passkeys/registration-options", {
+      headers: OptionalBearerHeaders,
+      payload: AuthPasskeyRegistrationOptionsInput,
+      success: AuthPasskeyRegistrationOptions,
+      error: EnvironmentPasskeyRegistrationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("registerPasskey", "/api/auth/passkeys/register", {
+      headers: OptionalBearerHeaders,
+      payload: AuthPasskeyRegisterInput,
+      success: AuthPasskey,
+      error: EnvironmentPasskeyRegistrationErrors,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("passkeyLoginOptions", "/api/auth/passkeys/login-options", {
+      success: AuthPasskeyLoginOptions,
+      error: EnvironmentPasskeyLoginOptionsErrors,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("passkeyLogin", "/api/auth/passkeys/login", {
+      payload: AuthPasskeyLoginInput,
+      success: AuthBrowserSessionResult,
+      error: EnvironmentPasskeyLoginErrors,
+    }),
+  )
+  .add(
+    HttpApiEndpoint.post("revokePasskey", "/api/auth/passkeys/revoke", {
+      headers: OptionalBearerHeaders,
+      payload: AuthRevokePasskeyInput,
+      success: AuthPasskeyRevokeResult,
       error: EnvironmentScopedOperationErrors,
     }).middleware(EnvironmentAuthenticatedAuth),
   ) {}

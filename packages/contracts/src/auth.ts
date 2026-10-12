@@ -253,9 +253,38 @@ export const AuthClientSession = Schema.Struct({
 });
 export type AuthClientSession = typeof AuthClientSession.Type;
 
+/**
+ * Public HTTPS origins this environment is served from, typically through a
+ * reverse proxy (for example `https://t3.example.com`). Passkeys can only be
+ * enrolled and used on a configured origin.
+ *
+ * `trustedProxies` lists the peer addresses (IPs or CIDRs) whose
+ * `X-Forwarded-For` header is believed when recording a client's address.
+ */
+export const AuthPublicAccessConfig = Schema.Struct({
+  origins: Schema.Array(TrimmedNonEmptyString),
+  trustedProxies: Schema.Array(TrimmedNonEmptyString),
+});
+export type AuthPublicAccessConfig = typeof AuthPublicAccessConfig.Type;
+
+// Read model only. Public keys and credential ids never leave the server.
+export const AuthPasskey = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  label: TrimmedNonEmptyString,
+  origin: TrimmedNonEmptyString,
+  scopes: AuthEnvironmentScopes,
+  backedUp: Schema.Boolean,
+  createdAt: Schema.DateTimeUtc,
+  lastUsedAt: Schema.NullOr(Schema.DateTimeUtc),
+});
+export type AuthPasskey = typeof AuthPasskey.Type;
+
 export const AuthAccessSnapshot = Schema.Struct({
   pairingLinks: Schema.Array(AuthPairingLink),
   clientSessions: Schema.Array(AuthClientSession),
+  // Optional so older servers' snapshots still decode.
+  passkeys: Schema.optionalKey(Schema.Array(AuthPasskey)),
+  publicAccess: Schema.optionalKey(AuthPublicAccessConfig),
 });
 export type AuthAccessSnapshot = typeof AuthAccessSnapshot.Type;
 
@@ -353,3 +382,98 @@ export const AuthSessionState = Schema.Struct({
   expiresAt: Schema.optionalKey(Schema.DateTimeUtc),
 });
 export type AuthSessionState = typeof AuthSessionState.Type;
+
+export const AuthRevokePasskeyInput = Schema.Struct({
+  id: TrimmedNonEmptyString,
+});
+export type AuthRevokePasskeyInput = typeof AuthRevokePasskeyInput.Type;
+
+export const AuthPasskeyRevokeResult = Schema.Struct({
+  revoked: Schema.Boolean,
+});
+export type AuthPasskeyRevokeResult = typeof AuthPasskeyRevokeResult.Type;
+
+const Base64UrlString = TrimmedNonEmptyString;
+
+const WebAuthnTransports = Schema.Array(Schema.String);
+
+const WebAuthnCredentialDescriptor = Schema.Struct({
+  id: Base64UrlString,
+  type: Schema.Literal("public-key"),
+  transports: Schema.optionalKey(WebAuthnTransports),
+});
+
+/** `PublicKeyCredentialCreationOptionsJSON` as consumed by the browser. */
+export const AuthPasskeyRegistrationOptions = Schema.Struct({
+  challenge: Base64UrlString,
+  rp: Schema.Struct({ id: TrimmedNonEmptyString, name: TrimmedNonEmptyString }),
+  user: Schema.Struct({
+    id: Base64UrlString,
+    name: TrimmedNonEmptyString,
+    displayName: TrimmedNonEmptyString,
+  }),
+  pubKeyCredParams: Schema.Array(
+    Schema.Struct({ type: Schema.Literal("public-key"), alg: Schema.Number }),
+  ),
+  timeout: Schema.Number,
+  excludeCredentials: Schema.Array(WebAuthnCredentialDescriptor),
+  authenticatorSelection: Schema.Struct({
+    residentKey: Schema.Literal("required"),
+    requireResidentKey: Schema.Literal(true),
+    userVerification: Schema.Literal("required"),
+  }),
+  attestation: Schema.Literal("none"),
+});
+export type AuthPasskeyRegistrationOptions = typeof AuthPasskeyRegistrationOptions.Type;
+
+/** `PublicKeyCredentialRequestOptionsJSON` as consumed by the browser. */
+export const AuthPasskeyLoginOptions = Schema.Struct({
+  challenge: Base64UrlString,
+  rpId: TrimmedNonEmptyString,
+  timeout: Schema.Number,
+  allowCredentials: Schema.Array(WebAuthnCredentialDescriptor),
+  userVerification: Schema.Literal("required"),
+});
+export type AuthPasskeyLoginOptions = typeof AuthPasskeyLoginOptions.Type;
+
+export const AuthPasskeyRegistrationOptionsInput = Schema.Struct({
+  label: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type AuthPasskeyRegistrationOptionsInput = typeof AuthPasskeyRegistrationOptionsInput.Type;
+
+/** `RegistrationResponseJSON` produced by the browser. */
+export const AuthPasskeyRegistrationCredential = Schema.Struct({
+  id: Base64UrlString,
+  rawId: Base64UrlString,
+  type: Schema.Literal("public-key"),
+  response: Schema.Struct({
+    clientDataJSON: Base64UrlString,
+    attestationObject: Base64UrlString,
+    transports: Schema.optionalKey(WebAuthnTransports),
+  }),
+});
+export type AuthPasskeyRegistrationCredential = typeof AuthPasskeyRegistrationCredential.Type;
+
+export const AuthPasskeyRegisterInput = Schema.Struct({
+  credential: AuthPasskeyRegistrationCredential,
+});
+export type AuthPasskeyRegisterInput = typeof AuthPasskeyRegisterInput.Type;
+
+/** `AuthenticationResponseJSON` produced by the browser. */
+export const AuthPasskeyLoginCredential = Schema.Struct({
+  id: Base64UrlString,
+  rawId: Base64UrlString,
+  type: Schema.Literal("public-key"),
+  response: Schema.Struct({
+    clientDataJSON: Base64UrlString,
+    authenticatorData: Base64UrlString,
+    signature: Base64UrlString,
+    userHandle: Schema.optionalKey(Base64UrlString),
+  }),
+});
+export type AuthPasskeyLoginCredential = typeof AuthPasskeyLoginCredential.Type;
+
+export const AuthPasskeyLoginInput = Schema.Struct({
+  credential: AuthPasskeyLoginCredential,
+});
+export type AuthPasskeyLoginInput = typeof AuthPasskeyLoginInput.Type;

@@ -34,6 +34,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerConfig from "../config.ts";
 import * as EnvironmentAuthPolicy from "./EnvironmentAuthPolicy.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
+import * as PublicAccess from "./PublicAccess.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { REUSABLE_DEV_SESSION_EXPIRES_AT, resolveReusableDevAuth } from "./ReusableDevAuth.ts";
@@ -1121,6 +1122,7 @@ export const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(EnvironmentAuth, make).pipe(
   Layer.provideMerge(PairingGrantStore.layer),
+  Layer.provideMerge(PublicAccess.layer),
   Layer.provideMerge(SessionStore.layer),
   Layer.provideMerge(EnvironmentAuthPolicy.layer),
 );

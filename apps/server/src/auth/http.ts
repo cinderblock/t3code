@@ -35,6 +35,7 @@ import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
+import * as PublicAccess from "./PublicAccess.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
 import { deriveAuthClientMetadata } from "./utils.ts";
@@ -135,7 +136,9 @@ export function failEnvironmentScopeRequired(requiredScope: AuthEnvironmentScope
   );
 }
 
-function failEnvironmentOperationForbidden(reason: "current_session_revoke_not_allowed") {
+function failEnvironmentOperationForbidden(
+  reason: "current_session_revoke_not_allowed" | "passkey_registration_requires_browser_session",
+) {
   return currentEnvironmentTraceId.pipe(
     Effect.flatMap((traceId) =>
       Effect.fail(
@@ -171,13 +174,19 @@ export function failEnvironmentInternal(reason: EnvironmentInternalErrorReason, 
   });
 }
 
-const appendSessionCookie = (cookieName: string, token: string, expiresAt: DateTime.DateTime) =>
+const appendSessionCookie = (
+  cookieName: string,
+  token: string,
+  expiresAt: DateTime.DateTime,
+  options?: { readonly secure?: boolean },
+) =>
   Effect.fromResult(
     Cookies.set(Cookies.empty, cookieName, token, {
       expires: DateTime.toDate(expiresAt),
       httpOnly: true,
       path: "/",
       sameSite: "lax",
+      ...(options?.secure ? { secure: true } : {}),
     }),
   ).pipe(
     Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")),
@@ -233,6 +242,10 @@ export const authHttpApiLayer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const sessions = yield* SessionStore.SessionStore;
+    const publicAccess = yield* PublicAccess.PublicAccess;
+    const isTrustedProxy = publicAccess.isTrustedProxy;
+    const requestOrigin = (request: HttpServerRequest.HttpServerRequest) =>
+      typeof request.headers.origin === "string" ? request.headers.origin : undefined;
 
     return handlers
       .handle(
@@ -271,7 +284,7 @@ export const authHttpApiLayer = HttpApiBuilder.group(
             const request = yield* HttpServerRequest.HttpServerRequest;
             const result = yield* serverAuth.createBrowserSession(
               args.payload.credential,
-              deriveAuthClientMetadata({ request }),
+              deriveAuthClientMetadata({ request, isTrustedProxy }),
             );
             const cookieName = result.cookieName ?? sessions.cookieName;
             const selectedCookie = yield* Effect.fromResult(
@@ -357,6 +370,7 @@ export const authHttpApiLayer = HttpApiBuilder.group(
               requestedScopes,
               deriveAuthClientMetadata({
                 request,
+                isTrustedProxy,
                 presented: {
                   ...(args.payload.client_label ? { label: args.payload.client_label } : {}),
                   ...(args.payload.client_device_type
@@ -493,6 +507,137 @@ export const authHttpApiLayer = HttpApiBuilder.group(
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("client_session_revoke_failed", error),
+          ),
+        ),
+      )
+      .handle(
+        "updatePublicAccess",
+        Effect.fn("environment.auth.updatePublicAccess")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            yield* requireEnvironmentScope(AuthAccessWriteScope);
+            return yield* publicAccess.setConfig(args.payload);
+          },
+          Effect.catchTags({
+            PublicAccessInvalidConfigError: () =>
+              failEnvironmentInvalidRequest("invalid_public_access"),
+            PublicAccessStoreError: (error) =>
+              failEnvironmentInternal("public_access_store_failed", error),
+          }),
+        ),
+      )
+      .handle(
+        "passkeyRegistrationOptions",
+        Effect.fn("environment.auth.passkeyRegistrationOptions")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            const session = yield* EnvironmentAuthenticatedPrincipal;
+            const client = deriveAuthClientMetadata({ request });
+            const derivedLabel =
+              client.browser && client.os ? `${client.browser} on ${client.os}` : undefined;
+            yield* appendCredentialResponseHeaders;
+            return yield* publicAccess.beginRegistration({
+              origin: requestOrigin(request),
+              session: { ...session, scopes: [...session.scopes] },
+              label: args.payload.label ?? derivedLabel,
+            });
+          },
+          Effect.catchTags({
+            PasskeyOriginNotConfiguredError: () =>
+              failEnvironmentInvalidRequest("passkey_origin_not_configured"),
+            PasskeyRegistrationNotAllowedError: () =>
+              failEnvironmentOperationForbidden("passkey_registration_requires_browser_session"),
+            PublicAccessStoreError: (error) =>
+              failEnvironmentInternal("public_access_store_failed", error),
+          }),
+        ),
+      )
+      .handle(
+        "registerPasskey",
+        Effect.fn("environment.auth.registerPasskey")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            const session = yield* EnvironmentAuthenticatedPrincipal;
+            return yield* publicAccess.finishRegistration({
+              origin: requestOrigin(request),
+              session: { ...session, scopes: [...session.scopes] },
+              credential: args.payload.credential,
+            });
+          },
+          Effect.catchTags({
+            PasskeyOriginNotConfiguredError: () =>
+              failEnvironmentInvalidRequest("passkey_origin_not_configured"),
+            PasskeyRegistrationNotAllowedError: () =>
+              failEnvironmentOperationForbidden("passkey_registration_requires_browser_session"),
+            PasskeyCeremonyError: () =>
+              failEnvironmentInvalidRequest("passkey_registration_invalid"),
+            PublicAccessStoreError: (error) =>
+              failEnvironmentInternal("public_access_store_failed", error),
+          }),
+        ),
+      )
+      .handle(
+        "passkeyLoginOptions",
+        Effect.fn("environment.auth.passkeyLoginOptions")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            yield* appendCredentialResponseHeaders;
+            return yield* publicAccess.beginLogin({ origin: requestOrigin(request) });
+          },
+          // Unauthenticated: answer the same way whether or not the origin is configured.
+          Effect.catchTags({
+            PasskeyOriginNotConfiguredError: () => failEnvironmentNotFound("passkeys_unavailable"),
+            PasskeyUnavailableError: () => failEnvironmentNotFound("passkeys_unavailable"),
+            PublicAccessStoreError: (error) =>
+              failEnvironmentInternal("public_access_store_failed", error),
+          }),
+        ),
+      )
+      .handle(
+        "passkeyLogin",
+        Effect.fn("environment.auth.passkeyLogin")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            const origin = requestOrigin(request);
+            const result = yield* publicAccess.finishLogin({
+              origin,
+              credential: args.payload.credential,
+              client: deriveAuthClientMetadata({ request, isTrustedProxy }),
+            });
+            yield* appendSessionCookie(
+              sessions.cookieName,
+              result.sessionToken,
+              result.response.expiresAt,
+              { secure: origin?.startsWith("https://") === true },
+            );
+            yield* appendCredentialResponseHeaders;
+            return result.response;
+          },
+          Effect.catchTags({
+            PasskeyOriginNotConfiguredError: () => failEnvironmentAuthInvalid("invalid_credential"),
+            PasskeyCeremonyError: () => failEnvironmentAuthInvalid("invalid_credential"),
+            PublicAccessStoreError: (error) =>
+              failEnvironmentInternal("public_access_store_failed", error),
+            PasskeySessionIssueError: (error) =>
+              failEnvironmentInternal("passkey_session_issuance_failed", error),
+          }),
+        ),
+      )
+      .handle(
+        "revokePasskey",
+        Effect.fn("environment.auth.revokePasskey")(
+          function* (args) {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            yield* requireEnvironmentScope(AuthAccessWriteScope);
+            const revoked = yield* publicAccess.revokePasskey(args.payload.id);
+            return { revoked };
+          },
+          Effect.catchTag("PublicAccessStoreError", (error) =>
+            failEnvironmentInternal("public_access_store_failed", error),
           ),
         ),
       );

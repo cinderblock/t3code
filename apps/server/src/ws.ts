@@ -232,6 +232,7 @@ import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
+import * as PublicAccess from "./auth/PublicAccess.ts";
 import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
@@ -1199,6 +1200,7 @@ const makeWsRpcLayer = (
       const withPullRequestViewer = pullRequests.withRoutingCredential;
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
       const sessions = yield* SessionStore.SessionStore;
+      const publicAccess = yield* PublicAccess.PublicAccess;
       const processDiagnostics = yield* ProcessDiagnostics.ProcessDiagnostics;
       const hostResources = yield* HostResources.HostResources;
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
@@ -1583,6 +1585,8 @@ const makeWsRpcLayer = (
         Effect.all({
           pairingLinks: serverAuth.listPairingLinks(),
           clientSessions: serverAuth.listClientSessions(currentSessionId),
+          passkeys: publicAccess.listPasskeys,
+          publicAccess: publicAccess.getConfig,
         }).pipe(
           Effect.mapError(
             (error) =>
@@ -3689,18 +3693,39 @@ const makeWsRpcLayer = (
               const initialSnapshot = yield* loadAuthAccessSnapshot();
               const revisionRef = yield* Ref.make(1);
               const accessChanges: Stream.Stream<
-                PairingGrantStore.BootstrapCredentialChange | SessionStore.SessionCredentialChange
-              > = Stream.merge(bootstrapCredentials.streamChanges, sessions.streamChanges);
-
-              const liveEvents: Stream.Stream<AuthAccessStreamEvent> = accessChanges.pipe(
-                Stream.mapEffect((change) =>
-                  Ref.updateAndGet(revisionRef, (revision) => revision + 1).pipe(
-                    Effect.map((revision) =>
-                      toAuthAccessStreamEvent(change, revision, currentSessionId),
-                    ),
-                  ),
+                | PairingGrantStore.BootstrapCredentialChange
+                | SessionStore.SessionCredentialChange
+                | { readonly type: "publicAccessChanged" }
+              > = Stream.merge(
+                Stream.merge(bootstrapCredentials.streamChanges, sessions.streamChanges),
+                publicAccess.streamChanges.pipe(
+                  Stream.map(() => ({ type: "publicAccessChanged" as const })),
                 ),
               );
+
+              const liveEvents: Stream.Stream<AuthAccessStreamEvent, AuthAccessStreamError> =
+                accessChanges.pipe(
+                  Stream.mapEffect((change) =>
+                    Ref.updateAndGet(revisionRef, (revision) => revision + 1).pipe(
+                      Effect.flatMap((revision) =>
+                        // Passkeys and public origins have no incremental events;
+                        // a fresh snapshot keeps older clients decoding the stream.
+                        change.type === "publicAccessChanged"
+                          ? loadAuthAccessSnapshot().pipe(
+                              Effect.map((payload): AuthAccessStreamEvent => ({
+                                version: 1,
+                                revision,
+                                type: "snapshot",
+                                payload,
+                              })),
+                            )
+                          : Effect.succeed(
+                              toAuthAccessStreamEvent(change, revision, currentSessionId),
+                            ),
+                      ),
+                    ),
+                  ),
+                );
 
               return Stream.concat(
                 rpcInitialItems([
