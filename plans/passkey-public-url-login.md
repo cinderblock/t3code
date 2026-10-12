@@ -115,6 +115,12 @@ excessive — TLS terminates at the proxy.
 - Passkeys/config reach clients as optional fields on the access-stream _snapshot_; a change
   re-sends a snapshot instead of new event types, because older clients fail to decode unknown
   event types but already handle mid-stream snapshots.
+- An HTTPS `AdvertisedEndpoint` with `hostedHttpsApp: "compatible"` gets an `app.t3.codes/pair?host=`
+  link in the share picker (`resolveAdvertisedEndpointPairingUrl`). Public URLs must not be marked
+  compatible, or pairing lands on the hosted app where no passkey for the domain can be saved.
+  Seen live 2026-10-12, fixed in `b291620a2b`.
+- First live run (2026-10-12): config saved and the access stream re-sent its snapshot (trace shows
+  `PublicAccess.setConfig` then `listPasskeys`), so the single-instance/stream wiring works.
 - `ForkMigrations.test.ts` hardcodes the fork migration list; add new entries there too.
 - Unauthenticated `login-options` returns the same 404 whether the origin is unconfigured or has
   no passkeys, so it does not reveal configured origins.
