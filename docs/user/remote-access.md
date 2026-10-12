@@ -134,7 +134,9 @@ a passkey, with no VPN or pairing link after the first visit.
    public URL under **Reach this machine via**, and open the link in the browser
    you want to use. After pairing, choose **Save passkey**.
 
-Later visits to the address show **Sign in with passkey**. A passkey can do what
+After that, open the address on any device that has the passkey (a synced password manager, a
+hardware key, or your phone through the browser's QR prompt) and choose **Sign in with passkey**.
+The pairing link is needed only once, to save the first passkey. A passkey can do what
 the pairing link that set it up allowed. Passkeys work in a browser on the public
 address itself; the desktop and mobile apps and the hosted web app keep using
 pairing.

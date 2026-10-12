@@ -30,7 +30,7 @@ export function PasskeyEnrollmentOffer() {
       const offerId = toastManager.add({
         type: "info",
         title: "Sign in with a passkey next time?",
-        description: `Save a passkey so this browser can sign back in to ${host} without a pairing link.`,
+        description: `Save a passkey to sign in to ${host} from any device that has it, with no pairing link.`,
         timeout: 0,
         actionProps: {
           children: "Save passkey",
