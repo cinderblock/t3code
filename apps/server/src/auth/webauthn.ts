@@ -211,6 +211,9 @@ export function coseKeyToJwk(
     return x ? { jwk: { kty: "OKP", crv: "Ed25519", x }, algorithm: -8 } : null;
   }
   if (alg === -257 && kty === 3) {
+    const modulus = key.get(-1);
+    // Below 2048 bits an RSA key is factorable; refuse it at enrollment.
+    if (!(modulus instanceof Uint8Array) || modulus.length < 256) return null;
     const n = coseBytes(key, -1);
     const e = coseBytes(key, -2);
     return n && e ? { jwk: { kty: "RSA", n, e }, algorithm: -257 } : null;

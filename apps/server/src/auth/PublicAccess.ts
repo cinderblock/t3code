@@ -683,13 +683,21 @@ export const make = Effect.gen(function* () {
       }
 
       const usedAt = DateTime.formatIso(yield* DateTime.now);
-      yield* sql`
+      const stillEnrolled = yield* sql`
         UPDATE fork_auth_passkeys
         SET sign_count = ${verified.signCount},
             backed_up = ${verified.backedUp ? 1 : 0},
             last_used_at = ${usedAt}
         WHERE id = ${stored.id} AND revoked_at IS NULL
+        RETURNING id
       `.pipe(Effect.mapError(storeError("finishLogin")));
+      // Revoked while this sign-in was being verified: issue nothing.
+      if (stillEnrolled.length === 0) {
+        return yield* new PasskeyCeremonyError({
+          code: "unknown_credential",
+          reason: "This passkey is not enrolled here, or it was revoked.",
+        });
+      }
 
       const session = yield* sessions
         .issue({

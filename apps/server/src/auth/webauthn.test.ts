@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { makeSoftwareAuthenticator } from "./testing/softwareAuthenticator.ts";
 import {
+  coseKeyToJwk,
   type StoredWebAuthnCredential,
   verifyAuthenticationResponse,
   verifyRegistrationResponse,
@@ -167,5 +168,20 @@ describe("verifyAuthenticationResponse", () => {
       stored,
     });
     expect(result).toMatchObject({ ok: false, code: "credential_mismatch" });
+  });
+});
+
+describe("coseKeyToJwk", () => {
+  const rsaKey = (modulusBytes: number) =>
+    new Map<number, Uint8Array | number>([
+      [1, 3],
+      [3, -257],
+      [-1, new Uint8Array(modulusBytes).fill(0xff)],
+      [-2, new Uint8Array([1, 0, 1])],
+    ]);
+
+  it("refuses RSA keys under 2048 bits", () => {
+    expect(coseKeyToJwk(rsaKey(128))).toBeNull();
+    expect(coseKeyToJwk(rsaKey(256))).toMatchObject({ algorithm: -257, jwk: { kty: "RSA" } });
   });
 });

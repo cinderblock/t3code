@@ -287,12 +287,16 @@ export const authHttpApiLayer = HttpApiBuilder.group(
               deriveAuthClientMetadata({ request, isTrustedProxy }),
             );
             const cookieName = result.cookieName ?? sessions.cookieName;
+            // A page served over HTTPS (e.g. through a public proxy) must never
+            // have its session cookie sent over plain HTTP.
+            const secure = requestOrigin(request)?.startsWith("https://") === true;
             const selectedCookie = yield* Effect.fromResult(
               Cookies.set(Cookies.empty, cookieName, result.sessionToken, {
                 expires: DateTime.toDate(result.response.expiresAt),
                 httpOnly: true,
                 path: "/",
                 sameSite: "lax",
+                ...(secure ? { secure: true } : {}),
               }),
             ).pipe(Effect.catch(() => failEnvironmentInternal("browser_session_cookie_failed")));
             const sessionCookies = result.expireNormalCookie

@@ -173,12 +173,12 @@ it.effect("enrolls and signs in with a passkey through the HTTP routes", () =>
               requestContext,
             )
           ).json()) as { credential: string };
-          const browserCookie = cookieOf(
-            await environment.handler(
-              postJson("/api/auth/browser-session", { credential: pairing.credential }),
-              requestContext,
-            ),
+          const pairedOverHttps = await environment.handler(
+            postJson("/api/auth/browser-session", { credential: pairing.credential }, { origin }),
+            requestContext,
           );
+          expect(pairedOverHttps.headers.getSetCookie()[0]).toContain("Secure");
+          const browserCookie = cookieOf(pairedOverHttps);
 
           const notConfigured = await environment.handler(
             postJson(
