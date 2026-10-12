@@ -56,6 +56,30 @@ back to the reusable credential. OAuth exchanges create ordinary local bearer
 or DPoP children with normal expiry and revocation. The reusable cookie expires
 after 30 days.
 
+## Passkeys sign in on configured public origins
+
+A passkey is another way into the same session model, not a separate identity.
+Enrollment requires a browser session on a configured public origin, and the
+passkey carries that session's scopes, so the pairing link that admitted the
+browser decides what the passkey can do. Signing in issues an ordinary
+browser-session cookie whose subject names the passkey; revoking the passkey
+revokes those sessions too.
+
+Registration asks for `attestation: "none"`. Trust in a new credential comes
+from the authenticated session that enrolls it, not from the authenticator's
+vendor, which is why [verification](../../apps/server/src/auth/webauthn.ts)
+needs no X.509 handling. The expected origin is checked against the browser's
+signed client data, never against `Host` or forwarding headers, so a reverse
+proxy needs no special trust for sign-in to be safe. `X-Forwarded-For` is read
+only from configured trusted proxies, and only to record client addresses.
+
+Public origins and trusted proxies are access-management state guarded by
+`access:write`. They live with the passkeys in [public
+access](../../apps/server/src/auth/PublicAccess.ts) rather than in server
+settings, whose patch needs only `orchestration:operate`. Clients receive both
+as optional fields of the access-stream snapshot. A change re-sends a snapshot
+instead of introducing new event types, which older clients could not decode.
+
 ## The environment is the filesystem boundary
 
 Projects are organizational boundaries, not filesystem sandboxes.

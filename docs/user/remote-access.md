@@ -118,6 +118,31 @@ For a plain HTTP LAN endpoint, use the direct pairing URL in a browser that can
 open it, or pair from the desktop app. On mobile, an IP address entered without a
 scheme uses HTTP, so include `https://` when your server uses HTTPS.
 
+## Your own domain with a passkey
+
+If you run your own HTTPS reverse proxy (for example Caddy or nginx) in front of
+the host, you can open T3 Code at that address from any browser and sign in with
+a passkey, with no VPN or pairing link after the first visit.
+
+1. Make the host reachable from the proxy: enable **Network access** in the
+   desktop app, or start a command-line server with `t3 serve --host <ip>`. The
+   proxy must forward WebSocket upgrades and the browser's `Origin` header.
+2. On the host, open **Settings → Connections → Public URL & passkeys** and add
+   the address, such as `https://t3.example.com`. If the proxy should be trusted
+   for client addresses, add its IP under **Trusted proxies**.
+3. Create a pairing link with the permissions the passkey should have, choose the
+   public URL under **Reach this machine via**, and open the link in the browser
+   you want to use. After pairing, choose **Save passkey**.
+
+Later visits to the address show **Sign in with passkey**. A passkey can do what
+the pairing link that set it up allowed. Passkeys work in a browser on the public
+address itself; the desktop and mobile apps and the hosted web app keep using
+pairing.
+
+The passkey list in the same section shows when each was last used. Revoking a
+passkey also signs out the sessions it started. Removing a public URL disables
+its passkeys until you add the URL back.
+
 ## Desktop-managed SSH
 
 In the desktop app, open **Settings → Connections → Add environment**, choose
