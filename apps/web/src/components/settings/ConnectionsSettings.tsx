@@ -1105,16 +1105,26 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
 
   return (
     <div className="flex items-center gap-2">
-      <Button
-        size="xs"
-        variant="destructive-outline"
-        disabled={
-          isRevokingOtherClients || clientSessions.every((clientSession) => clientSession.current)
-        }
-        onClick={() => void onRevokeOtherClients()}
-      >
-        {isRevokingOtherClients ? "Revoking…" : "Revoke others"}
-      </Button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              size="xs"
+              variant="destructive-outline"
+              disabled={
+                isRevokingOtherClients ||
+                clientSessions.every((clientSession) => clientSession.current)
+              }
+              onClick={() => void onRevokeOtherClients()}
+            />
+          }
+        >
+          {isRevokingOtherClients ? "Revoking…" : "Revoke others"}
+        </TooltipTrigger>
+        <TooltipPopup side="top">
+          Signs out every other client and revokes every passkey except the one this session used.
+        </TooltipPopup>
+      </Tooltip>
       <Dialog
         open={dialogOpen}
         onOpenChange={(open) => {

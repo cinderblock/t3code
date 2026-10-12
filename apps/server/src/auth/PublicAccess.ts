@@ -18,6 +18,7 @@ import * as NodeNet from "node:net";
 import {
   type AuthBrowserSessionResult,
   type AuthClientMetadata,
+  AuthAccessWriteScope,
   type AuthEnvironmentScope,
   AuthEnvironmentScopes,
   type AuthPasskey,
@@ -52,7 +53,9 @@ import {
 } from "./webauthn.ts";
 
 const CEREMONY_TTL_MS = 5 * 60 * 1000;
-const MAX_PENDING_CEREMONIES = 256;
+// Backstop for the whole map; per-address limits keep one client from filling it.
+const MAX_PENDING_CEREMONIES = 1024;
+const MAX_PENDING_LOGINS_PER_ADDRESS = 8;
 const RP_NAME = "T3 Code";
 const DEFAULT_PASSKEY_LABEL = "Passkey";
 const MAX_PUBLIC_ORIGINS = 16;
@@ -60,6 +63,12 @@ const MAX_TRUSTED_PROXIES = 32;
 
 /** Session subject for sessions a passkey issued; lets revocation find them. */
 export const passkeySessionSubject = (passkeyId: string) => `passkey:${passkeyId}`;
+const PASSKEY_SUBJECT_PREFIX = "passkey:";
+/** The passkey a session came from, if a passkey sign-in issued it. */
+export const passkeyIdFromSessionSubject = (subject: string): string | undefined =>
+  subject.startsWith(PASSKEY_SUBJECT_PREFIX)
+    ? subject.slice(PASSKEY_SUBJECT_PREFIX.length)
+    : undefined;
 
 export class PublicAccessInvalidConfigError extends Schema.TaggedError<PublicAccessInvalidConfigError>()(
   "PublicAccessInvalidConfigError",
@@ -92,10 +101,12 @@ export class PasskeyUnavailableError extends Schema.TaggedError<PasskeyUnavailab
 
 export class PasskeyRegistrationNotAllowedError extends Schema.TaggedError<PasskeyRegistrationNotAllowedError>()(
   "PasskeyRegistrationNotAllowedError",
-  {},
+  { reason: Schema.Literals(["browser_session_required", "access_write_required"]) },
 ) {
   override get message(): string {
-    return "Passkeys can only be enrolled from a browser session.";
+    return this.reason === "browser_session_required"
+      ? "Passkeys can only be enrolled from a browser session."
+      : "Only a session that can manage access may enroll a passkey.";
   }
 }
 
@@ -151,6 +162,10 @@ export class PublicAccess extends Context.Service<
     readonly isTrustedProxy: (address: string) => boolean;
     readonly listPasskeys: Effect.Effect<ReadonlyArray<AuthPasskey>, PublicAccessStoreError>;
     readonly revokePasskey: (id: string) => Effect.Effect<boolean, PublicAccessStoreError>;
+    /** Revokes every passkey and its sessions, except the one named (if any). */
+    readonly revokePasskeysExcept: (
+      keepId: string | undefined,
+    ) => Effect.Effect<number, PublicAccessStoreError>;
     readonly beginRegistration: (input: {
       readonly origin: string | undefined;
       readonly session: PasskeyEnrollingSession;
@@ -172,6 +187,8 @@ export class PublicAccess extends Context.Service<
     >;
     readonly beginLogin: (input: {
       readonly origin: string | undefined;
+      /** Requesting client's address; bounds how many sign-ins it can have pending. */
+      readonly address: string | undefined;
     }) => Effect.Effect<
       AuthPasskeyLoginOptions,
       PasskeyOriginNotConfiguredError | PasskeyUnavailableError | PublicAccessStoreError
@@ -292,6 +309,7 @@ type PendingCeremony =
       readonly kind: "login";
       readonly origin: string;
       readonly expiresAtMs: number;
+      readonly address: string;
     };
 
 const StringArrayJson = Schema.fromJsonString(Schema.Array(Schema.String));
@@ -451,7 +469,18 @@ export const make = Effect.gen(function* () {
       for (const [key, value] of pending) {
         if (value.expiresAtMs <= now) pending.delete(key);
       }
-      // Map iteration is insertion ordered, so this drops the oldest requests.
+      // Map iteration is insertion ordered, so these drop the oldest requests.
+      if (entry.kind === "login") {
+        const sameAddress = [...pending].filter(
+          ([, value]) => value.kind === "login" && value.address === entry.address,
+        );
+        for (const [key] of sameAddress.slice(
+          0,
+          Math.max(0, sameAddress.length - MAX_PENDING_LOGINS_PER_ADDRESS + 1),
+        )) {
+          pending.delete(key);
+        }
+      }
       while (pending.size >= MAX_PENDING_CEREMONIES) {
         const oldest = pending.keys().next().value;
         if (oldest === undefined) break;
@@ -460,10 +489,13 @@ export const make = Effect.gen(function* () {
       pending.set(challenge, entry);
     });
 
+  // A passkey outlives the session that enrolls it, so only access managers may create one.
   const requireBrowserSession = (session: PasskeyEnrollingSession) =>
-    session.method === "browser-session-cookie"
-      ? Effect.void
-      : Effect.fail(new PasskeyRegistrationNotAllowedError({}));
+    session.method !== "browser-session-cookie"
+      ? Effect.fail(new PasskeyRegistrationNotAllowedError({ reason: "browser_session_required" }))
+      : !session.scopes.includes(AuthAccessWriteScope)
+        ? Effect.fail(new PasskeyRegistrationNotAllowedError({ reason: "access_write_required" }))
+        : Effect.void;
 
   const getConfig: PublicAccess["Service"]["getConfig"] = Ref.get(configRef);
 
@@ -496,6 +528,21 @@ export const make = Effect.gen(function* () {
     Effect.withSpan("PublicAccess.listPasskeys"),
   );
 
+  /** Sessions a passkey issued go with it. */
+  const revokeSessionsOf = (passkeyIds: ReadonlyArray<string>) => {
+    const subjects = new Set(passkeyIds.map(passkeySessionSubject));
+    return sessions.listActive().pipe(
+      Effect.flatMap((activeSessions) =>
+        Effect.forEach(
+          activeSessions.filter((session) => subjects.has(session.subject)),
+          (session) => sessions.revoke(session.sessionId),
+          { discard: true },
+        ),
+      ),
+      Effect.mapError(storeError("revokePasskeySessions")),
+    );
+  };
+
   const revokePasskey: PublicAccess["Service"]["revokePasskey"] = Effect.fn(
     "PublicAccess.revokePasskey",
   )(function* (id) {
@@ -507,20 +554,25 @@ export const make = Effect.gen(function* () {
       RETURNING id
     `.pipe(Effect.mapError(storeError("revokePasskey")));
     if (revoked.length === 0) return false;
-    // Sessions the passkey issued go with it.
-    const subject = passkeySessionSubject(id);
-    yield* sessions.listActive().pipe(
-      Effect.flatMap((activeSessions) =>
-        Effect.forEach(
-          activeSessions.filter((session) => session.subject === subject),
-          (session) => sessions.revoke(session.sessionId),
-          { discard: true },
-        ),
-      ),
-      Effect.mapError(storeError("revokePasskeySessions")),
-    );
+    yield* revokeSessionsOf([id]);
     yield* publishChange;
     return true;
+  });
+
+  const revokePasskeysExcept: PublicAccess["Service"]["revokePasskeysExcept"] = Effect.fn(
+    "PublicAccess.revokePasskeysExcept",
+  )(function* (keepId) {
+    const revokedAt = DateTime.formatIso(yield* DateTime.now);
+    const revoked = yield* sql<{ readonly id: string }>`
+      UPDATE fork_auth_passkeys
+      SET revoked_at = ${revokedAt}
+      WHERE revoked_at IS NULL ${keepId === undefined ? sql`` : sql`AND id <> ${keepId}`}
+      RETURNING id
+    `.pipe(Effect.mapError(storeError("revokePasskeysExcept")));
+    if (revoked.length === 0) return 0;
+    yield* revokeSessionsOf(revoked.map((row) => row.id));
+    yield* publishChange;
+    return revoked.length;
   });
 
   const beginRegistration: PublicAccess["Service"]["beginRegistration"] = Effect.fn(
@@ -635,6 +687,7 @@ export const make = Effect.gen(function* () {
       yield* rememberCeremony(challenge, {
         kind: "login",
         origin,
+        address: input.address ?? "unknown",
         expiresAtMs: (yield* Clock.currentTimeMillis) + CEREMONY_TTL_MS,
       });
       // Discoverable credentials: the browser offers every passkey for this RP.
@@ -728,6 +781,7 @@ export const make = Effect.gen(function* () {
     isTrustedProxy,
     listPasskeys,
     revokePasskey,
+    revokePasskeysExcept,
     beginRegistration,
     finishRegistration,
     beginLogin,

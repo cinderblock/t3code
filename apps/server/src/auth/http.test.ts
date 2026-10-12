@@ -167,7 +167,7 @@ it.effect("enrolls and signs in with a passkey through the HTTP routes", () =>
             await environment.handler(
               postJson(
                 "/api/auth/pairing-token",
-                { scopes: ["orchestration:read", "orchestration:operate"] },
+                { scopes: ["orchestration:read", "access:read", "access:write"] },
                 { cookie: devCookie },
               ),
               requestContext,
@@ -269,8 +269,19 @@ it.effect("enrolls and signs in with a passkey through the HTTP routes", () =>
           );
           expect(await session.json()).toMatchObject({
             authenticated: true,
-            scopes: ["orchestration:read", "orchestration:operate"],
+            scopes: ["orchestration:read", "access:read", "access:write"],
           });
+
+          // Repeated bad credentials from one address end in a 429.
+          let lastStatus = 0;
+          for (let attempt = 0; attempt < 21; attempt += 1) {
+            const rejected = await environment.handler(
+              postJson("/api/auth/browser-session", { credential: "NOT-A-REAL-TOKEN" }),
+              requestContext,
+            );
+            lastStatus = rejected.status;
+          }
+          expect(lastStatus).toBe(429);
         }),
       (environment) => Effect.promise(() => environment.dispose()),
     );

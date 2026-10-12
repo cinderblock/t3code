@@ -1,5 +1,8 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { AuthAdministrativeScopes, AuthStandardClientScopes } from "@t3tools/contracts";
+
+// Enrolling needs access:write; the rest shows the passkey keeps exactly these scopes.
+const ENROLLER_SCOPES = ["orchestration:read", "access:read", "access:write"] as const;
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -16,7 +19,6 @@ import { makeSoftwareAuthenticator } from "./testing/softwareAuthenticator.ts";
 import { resolveForwardedClientAddress } from "./utils.ts";
 
 const ORIGIN = "https://t3.example.com";
-const RP_ID = "t3.example.com";
 const client = { deviceType: "desktop" as const, browser: "Chrome", os: "macOS" };
 
 const authLayer = EnvironmentAuth.layer.pipe(
@@ -64,7 +66,7 @@ const enroll = (scopes: ReadonlyArray<(typeof AuthAdministrativeScopes)[number]>
 const signIn = (authenticator: ReturnType<typeof makeSoftwareAuthenticator>, origin = ORIGIN) =>
   Effect.gen(function* () {
     const publicAccess = yield* PublicAccess.PublicAccess;
-    const options = yield* publicAccess.beginLogin({ origin });
+    const options = yield* publicAccess.beginLogin({ origin, address: "198.51.100.7" });
     const credential = authenticator.assert({
       rpId: options.rpId,
       origin,
@@ -80,13 +82,13 @@ it.layer(NodeServices.layer)("PublicAccess", (it) => {
       const sessions = yield* SessionStore.SessionStore;
       yield* publicAccess.setConfig({ origins: [`${ORIGIN}/`], trustedProxies: [] });
 
-      const { passkey, authenticator } = yield* enroll(AuthStandardClientScopes);
+      const { passkey, authenticator } = yield* enroll(ENROLLER_SCOPES);
       expect(passkey).toMatchObject({ label: "Laptop", origin: ORIGIN, lastUsedAt: null });
-      expect(passkey.scopes).toEqual(AuthStandardClientScopes);
+      expect(passkey.scopes).toEqual(ENROLLER_SCOPES);
 
       const { result } = yield* signIn(authenticator);
       expect(result.response.sessionMethod).toBe("browser-session-cookie");
-      expect(result.response.scopes).toEqual(AuthStandardClientScopes);
+      expect(result.response.scopes).toEqual(ENROLLER_SCOPES);
       const verified = yield* sessions.verify(result.sessionToken);
       expect(verified.subject).toBe(PublicAccess.passkeySessionSubject(passkey.id));
       // Labeled from the device signing in, not the one that saved the passkey.
@@ -118,11 +120,15 @@ it.layer(NodeServices.layer)("PublicAccess", (it) => {
   it.effect("only offers sign-in on configured origins that have passkeys", () =>
     Effect.gen(function* () {
       const publicAccess = yield* PublicAccess.PublicAccess;
-      const unconfigured = yield* Effect.flip(publicAccess.beginLogin({ origin: ORIGIN }));
+      const unconfigured = yield* Effect.flip(
+        publicAccess.beginLogin({ origin: ORIGIN, address: "198.51.100.7" }),
+      );
       expect(unconfigured._tag).toBe("PasskeyOriginNotConfiguredError");
 
       yield* publicAccess.setConfig({ origins: [ORIGIN], trustedProxies: [] });
-      const empty = yield* Effect.flip(publicAccess.beginLogin({ origin: ORIGIN }));
+      const empty = yield* Effect.flip(
+        publicAccess.beginLogin({ origin: ORIGIN, address: "198.51.100.7" }),
+      );
       expect(empty._tag).toBe("PasskeyUnavailableError");
     }).pipe(Effect.provide(authLayer)),
   );
@@ -141,7 +147,67 @@ it.layer(NodeServices.layer)("PublicAccess", (it) => {
           label: undefined,
         }),
       );
-      expect(error._tag).toBe("PasskeyRegistrationNotAllowedError");
+      expect(error).toMatchObject({
+        _tag: "PasskeyRegistrationNotAllowedError",
+        reason: "browser_session_required",
+      });
+    }).pipe(Effect.provide(authLayer)),
+  );
+
+  it.effect("only sessions that manage access may enroll", () =>
+    Effect.gen(function* () {
+      const publicAccess = yield* PublicAccess.PublicAccess;
+      yield* publicAccess.setConfig({ origins: [ORIGIN], trustedProxies: [] });
+      const error = yield* Effect.flip(
+        publicAccess.beginRegistration({
+          origin: ORIGIN,
+          session: yield* browserSession(AuthStandardClientScopes),
+          label: undefined,
+        }),
+      );
+      expect(error).toMatchObject({
+        _tag: "PasskeyRegistrationNotAllowedError",
+        reason: "access_write_required",
+      });
+    }).pipe(Effect.provide(authLayer)),
+  );
+
+  it.effect("one address cannot crowd out another's pending sign-in", () =>
+    Effect.gen(function* () {
+      const publicAccess = yield* PublicAccess.PublicAccess;
+      yield* publicAccess.setConfig({ origins: [ORIGIN], trustedProxies: [] });
+      const { authenticator } = yield* enroll(AuthAdministrativeScopes);
+      const options = yield* publicAccess.beginLogin({ origin: ORIGIN, address: "203.0.113.1" });
+      for (let index = 0; index < 2000; index += 1) {
+        yield* publicAccess.beginLogin({ origin: ORIGIN, address: "198.51.100.66" });
+      }
+      const credential = authenticator.assert({
+        rpId: options.rpId,
+        origin: ORIGIN,
+        challenge: options.challenge,
+      });
+      const result = yield* publicAccess.finishLogin({ origin: ORIGIN, credential, client });
+      expect(result.response.authenticated).toBe(true);
+    }).pipe(Effect.provide(authLayer)),
+  );
+
+  it.effect("revoking other clients revokes every passkey but the current one", () =>
+    Effect.gen(function* () {
+      const publicAccess = yield* PublicAccess.PublicAccess;
+      const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+      const sessions = yield* SessionStore.SessionStore;
+      yield* publicAccess.setConfig({ origins: [ORIGIN], trustedProxies: [] });
+      const first = yield* enroll(AuthAdministrativeScopes);
+      const second = yield* enroll(AuthAdministrativeScopes);
+      const { result } = yield* signIn(first.authenticator);
+      const current = yield* sessions.verify(result.sessionToken);
+
+      yield* serverAuth.revokeOtherClientSessions(current.sessionId);
+      const remaining = yield* publicAccess.listPasskeys;
+      expect(remaining.map((passkey) => passkey.id)).toEqual([first.passkey.id]);
+      expect(second.passkey.id).not.toBe(first.passkey.id);
+      // The current session survives.
+      yield* sessions.verify(result.sessionToken);
     }).pipe(Effect.provide(authLayer)),
   );
 

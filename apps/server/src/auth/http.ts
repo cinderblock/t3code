@@ -19,6 +19,7 @@ import {
   EnvironmentResourceNotFoundError,
   type EnvironmentResourceNotFoundReason,
   EnvironmentScopeRequiredError,
+  EnvironmentRateLimitedError,
   EnvironmentAuthenticatedAuth,
   EnvironmentAuthenticatedPrincipal,
 } from "@t3tools/contracts";
@@ -29,12 +30,14 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { identity } from "effect/Function";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import * as Cookies from "effect/unstable/http/Cookies";
 import * as HttpEffect from "effect/unstable/http/HttpEffect";
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
 
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
+import * as AuthAttemptLimiter from "./AuthAttemptLimiter.ts";
 import * as PublicAccess from "./PublicAccess.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { traceAuthenticatedRelayRequest, traceRelayRequest } from "../cloud/traceRelayRequest.ts";
@@ -136,8 +139,27 @@ export function failEnvironmentScopeRequired(requiredScope: AuthEnvironmentScope
   );
 }
 
+function failEnvironmentRateLimited(error: AuthAttemptLimiter.AuthAttemptsExceededError) {
+  return currentEnvironmentTraceId.pipe(
+    Effect.flatMap((traceId) =>
+      Effect.fail(
+        new EnvironmentRateLimitedError({
+          code: "rate_limited",
+          retryAfterSeconds: error.retryAfterSeconds,
+          traceId,
+        }),
+      ),
+    ),
+  );
+}
+
+const isPasskeyCeremonyError = Schema.is(PublicAccess.PasskeyCeremonyError);
+
 function failEnvironmentOperationForbidden(
-  reason: "current_session_revoke_not_allowed" | "passkey_registration_requires_browser_session",
+  reason:
+    | "current_session_revoke_not_allowed"
+    | "passkey_registration_requires_browser_session"
+    | "passkey_registration_requires_access_write",
 ) {
   return currentEnvironmentTraceId.pipe(
     Effect.flatMap((traceId) =>
@@ -243,7 +265,19 @@ export const authHttpApiLayer = HttpApiBuilder.group(
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const sessions = yield* SessionStore.SessionStore;
     const publicAccess = yield* PublicAccess.PublicAccess;
+    const limiter = yield* AuthAttemptLimiter.AuthAttemptLimiter;
     const isTrustedProxy = publicAccess.isTrustedProxy;
+    /** Counts a rejected credential against the client's address. */
+    const recordRejected =
+      (address: string | undefined) =>
+      <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        effect.pipe(
+          Effect.tapError((error) =>
+            EnvironmentAuth.isServerAuthCredentialError(error) || isPasskeyCeremonyError(error)
+              ? limiter.recordFailedSignIn(address)
+              : Effect.void,
+          ),
+        );
     const requestOrigin = (request: HttpServerRequest.HttpServerRequest) =>
       typeof request.headers.origin === "string" ? request.headers.origin : undefined;
 
@@ -282,10 +316,11 @@ export const authHttpApiLayer = HttpApiBuilder.group(
           function* (args) {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const request = yield* HttpServerRequest.HttpServerRequest;
-            const result = yield* serverAuth.createBrowserSession(
-              args.payload.credential,
-              deriveAuthClientMetadata({ request, isTrustedProxy }),
-            );
+            const client = deriveAuthClientMetadata({ request, isTrustedProxy });
+            yield* limiter.checkSignIn(client.ipAddress);
+            const result = yield* serverAuth
+              .createBrowserSession(args.payload.credential, client)
+              .pipe(recordRejected(client.ipAddress));
             const cookieName = result.cookieName ?? sessions.cookieName;
             // A page served over HTTPS (e.g. through a public proxy) must never
             // have its session cookie sent over plain HTTP.
@@ -321,6 +356,7 @@ export const authHttpApiLayer = HttpApiBuilder.group(
               EnvironmentAuth.serverAuthDpopFailureReason(error),
             ),
           ),
+          Effect.catchTag("AuthAttemptsExceededError", failEnvironmentRateLimited),
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("browser_session_issuance_failed", error),
           ),
@@ -369,24 +405,29 @@ export const authHttpApiLayer = HttpApiBuilder.group(
                 )
               : undefined;
             yield* appendCredentialResponseHeaders;
-            return yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
-              args.payload.subject_token,
-              requestedScopes,
-              deriveAuthClientMetadata({
-                request,
-                isTrustedProxy,
-                presented: {
-                  ...(args.payload.client_label ? { label: args.payload.client_label } : {}),
-                  ...(args.payload.client_device_type
-                    ? { deviceType: args.payload.client_device_type }
-                    : {}),
-                  ...(args.payload.client_os ? { os: args.payload.client_os } : {}),
-                },
-              }),
-              proofKeyThumbprint ? { proofKeyThumbprint } : undefined,
-            );
+            const client = deriveAuthClientMetadata({
+              request,
+              isTrustedProxy,
+              presented: {
+                ...(args.payload.client_label ? { label: args.payload.client_label } : {}),
+                ...(args.payload.client_device_type
+                  ? { deviceType: args.payload.client_device_type }
+                  : {}),
+                ...(args.payload.client_os ? { os: args.payload.client_os } : {}),
+              },
+            });
+            yield* limiter.checkSignIn(client.ipAddress);
+            return yield* serverAuth
+              .exchangeBootstrapCredentialForAccessToken(
+                args.payload.subject_token,
+                requestedScopes,
+                client,
+                proofKeyThumbprint ? { proofKeyThumbprint } : undefined,
+              )
+              .pipe(recordRejected(client.ipAddress));
           },
           traceRelayRequest,
+          Effect.catchTag("AuthAttemptsExceededError", failEnvironmentRateLimited),
           Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
             failEnvironmentAuthInvalid(
               EnvironmentAuth.serverAuthCredentialReason(error),
@@ -558,8 +599,12 @@ export const authHttpApiLayer = HttpApiBuilder.group(
           Effect.catchTags({
             PasskeyOriginNotConfiguredError: () =>
               failEnvironmentInvalidRequest("passkey_origin_not_configured"),
-            PasskeyRegistrationNotAllowedError: () =>
-              failEnvironmentOperationForbidden("passkey_registration_requires_browser_session"),
+            PasskeyRegistrationNotAllowedError: (error) =>
+              failEnvironmentOperationForbidden(
+                error.reason === "browser_session_required"
+                  ? "passkey_registration_requires_browser_session"
+                  : "passkey_registration_requires_access_write",
+              ),
             PublicAccessStoreError: (error) =>
               failEnvironmentInternal("public_access_store_failed", error),
           }),
@@ -581,8 +626,12 @@ export const authHttpApiLayer = HttpApiBuilder.group(
           Effect.catchTags({
             PasskeyOriginNotConfiguredError: () =>
               failEnvironmentInvalidRequest("passkey_origin_not_configured"),
-            PasskeyRegistrationNotAllowedError: () =>
-              failEnvironmentOperationForbidden("passkey_registration_requires_browser_session"),
+            PasskeyRegistrationNotAllowedError: (error) =>
+              failEnvironmentOperationForbidden(
+                error.reason === "browser_session_required"
+                  ? "passkey_registration_requires_browser_session"
+                  : "passkey_registration_requires_access_write",
+              ),
             PasskeyCeremonyError: () =>
               failEnvironmentInvalidRequest("passkey_registration_invalid"),
             PublicAccessStoreError: (error) =>
@@ -597,12 +646,15 @@ export const authHttpApiLayer = HttpApiBuilder.group(
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const request = yield* HttpServerRequest.HttpServerRequest;
             yield* appendCredentialResponseHeaders;
-            return yield* publicAccess.beginLogin({ origin: requestOrigin(request) });
+            const address = deriveAuthClientMetadata({ request, isTrustedProxy }).ipAddress;
+            yield* limiter.takeChallenge(address);
+            return yield* publicAccess.beginLogin({ origin: requestOrigin(request), address });
           },
           // Unauthenticated: answer the same way whether or not the origin is configured.
           Effect.catchTags({
             PasskeyOriginNotConfiguredError: () => failEnvironmentNotFound("passkeys_unavailable"),
             PasskeyUnavailableError: () => failEnvironmentNotFound("passkeys_unavailable"),
+            AuthAttemptsExceededError: failEnvironmentRateLimited,
             PublicAccessStoreError: (error) =>
               failEnvironmentInternal("public_access_store_failed", error),
           }),
@@ -615,11 +667,11 @@ export const authHttpApiLayer = HttpApiBuilder.group(
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const request = yield* HttpServerRequest.HttpServerRequest;
             const origin = requestOrigin(request);
-            const result = yield* publicAccess.finishLogin({
-              origin,
-              credential: args.payload.credential,
-              client: deriveAuthClientMetadata({ request, isTrustedProxy }),
-            });
+            const client = deriveAuthClientMetadata({ request, isTrustedProxy });
+            yield* limiter.checkSignIn(client.ipAddress);
+            const result = yield* publicAccess
+              .finishLogin({ origin, credential: args.payload.credential, client })
+              .pipe(recordRejected(client.ipAddress));
             yield* appendSessionCookie(
               sessions.cookieName,
               result.sessionToken,
@@ -636,6 +688,7 @@ export const authHttpApiLayer = HttpApiBuilder.group(
               failEnvironmentInternal("public_access_store_failed", error),
             PasskeySessionIssueError: (error) =>
               failEnvironmentInternal("passkey_session_issuance_failed", error),
+            AuthAttemptsExceededError: failEnvironmentRateLimited,
           }),
         ),
       )

@@ -102,6 +102,7 @@ export type EnvironmentAuthInvalidReason = typeof EnvironmentAuthInvalidReason.T
 export const EnvironmentOperationForbiddenReason = Schema.Literals([
   "current_session_revoke_not_allowed",
   "passkey_registration_requires_browser_session",
+  "passkey_registration_requires_access_write",
 ]);
 export type EnvironmentOperationForbiddenReason = typeof EnvironmentOperationForbiddenReason.Type;
 
@@ -143,6 +144,28 @@ export class EnvironmentRequestInvalidError extends Schema.TaggedError<Environme
 
   override get message(): string {
     return `The environment rejected the request (${this.reason}).`;
+  }
+}
+
+/** A client address made too many sign-in attempts; retry after the given delay. */
+export class EnvironmentRateLimitedError extends Schema.TaggedError<EnvironmentRateLimitedError>()(
+  "EnvironmentRateLimitedError",
+  {
+    code: Schema.Literal("rate_limited"),
+    retryAfterSeconds: Schema.Number,
+    traceId: TrimmedNonEmptyString,
+  },
+  { httpApiStatus: 429 },
+) {
+  [HttpServerRespondable.symbol]() {
+    return HttpServerResponse.schemaJson(EnvironmentRateLimitedError)(this, {
+      status: 429,
+      headers: { "retry-after": String(this.retryAfterSeconds) },
+    });
+  }
+
+  override get message(): string {
+    return `Too many sign-in attempts. Try again in ${this.retryAfterSeconds} seconds.`;
   }
 }
 
@@ -335,11 +358,13 @@ export class EnvironmentCloudEndpointUnavailableError extends Schema.TaggedError
 }
 const EnvironmentSessionCreationErrors = [
   EnvironmentAuthInvalidError,
+  EnvironmentRateLimitedError,
   EnvironmentInternalError,
 ] as const;
 const EnvironmentTokenExchangeErrors = [
   EnvironmentRequestInvalidError,
   EnvironmentAuthInvalidError,
+  EnvironmentRateLimitedError,
   EnvironmentInternalError,
 ] as const;
 const EnvironmentScopedOperationErrors = [
@@ -361,11 +386,13 @@ const EnvironmentPasskeyRegistrationErrors = [
 ] as const;
 const EnvironmentPasskeyLoginOptionsErrors = [
   EnvironmentResourceNotFoundError,
+  EnvironmentRateLimitedError,
   EnvironmentInternalError,
 ] as const;
 const EnvironmentPasskeyLoginErrors = [
   EnvironmentRequestInvalidError,
   EnvironmentAuthInvalidError,
+  EnvironmentRateLimitedError,
   EnvironmentInternalError,
 ] as const;
 const EnvironmentSessionRevokeErrors = [

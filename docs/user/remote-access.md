@@ -130,7 +130,8 @@ a passkey, with no VPN or pairing link after the first visit.
 2. On the host, open **Settings → Connections → Public URL & passkeys** and add
    the address, such as `https://t3.example.com`. If the proxy should be trusted
    for client addresses, add its IP under **Trusted proxies**.
-3. Create a pairing link with the permissions the passkey should have, choose the
+3. Create a pairing link that includes access management (only those sessions
+   can save a passkey) plus whatever else the passkey should allow, choose the
    public URL under **Reach this machine via**, and open the link in the browser
    you want to use. After pairing, choose **Save passkey**.
 
@@ -142,8 +143,13 @@ address itself; the desktop and mobile apps and the hosted web app keep using
 pairing.
 
 The passkey list in the same section shows when each was last used. Revoking a
-passkey also signs out the sessions it started. Removing a public URL disables
-its passkeys until you add the URL back.
+passkey also signs out the sessions it started. **Revoke others** under Authorized
+clients also revokes every passkey except the one you signed in with. Removing a
+public URL disables its passkeys until you add the URL back.
+
+Repeated failed sign-ins from one address lock it out for a few minutes. Behind a
+proxy, add the proxy under **Trusted proxies** so each client is limited by its own
+address instead of sharing the proxy's.
 
 ## Desktop-managed SSH
 

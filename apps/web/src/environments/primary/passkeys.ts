@@ -178,19 +178,6 @@ export async function addPublicOrigin(origin: string): Promise<void> {
   await updatePublicAccess({ ...config, origins: [...config.origins, origin] });
 }
 
-/**
- * Whether this browser session may enroll a passkey on the current origin as
- * things stand, without changing the server's configuration.
- */
-export async function canEnrollPasskeyHere(): Promise<boolean> {
-  try {
-    await fetchRegistrationOptions(undefined);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 export async function updatePublicAccess(
   config: AuthPublicAccessConfig,
 ): Promise<AuthPublicAccessConfig> {

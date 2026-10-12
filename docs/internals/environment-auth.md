@@ -59,11 +59,19 @@ after 30 days.
 ## Passkeys sign in on configured public origins
 
 A passkey is another way into the same session model, not a separate identity.
-Enrollment requires a browser session on a configured public origin, and the
-passkey carries that session's scopes, so the pairing link that admitted the
-browser decides what the passkey can do. Signing in issues an ordinary
-browser-session cookie whose subject names the passkey; revoking the passkey
-revokes those sessions too.
+Enrollment requires a browser session with `access:write` on a configured
+public origin. A passkey outlives the session that created it, so a client that
+cannot manage access must not be able to mint one. The passkey carries that
+session's scopes. Signing in issues an ordinary browser-session cookie whose
+subject names the passkey; revoking the passkey revokes those sessions too, and
+revoking other clients revokes every passkey but the current session's.
+
+The unauthenticated sign-in routes sit on the internet, so an [attempt
+limiter](../../apps/server/src/auth/AuthAttemptLimiter.ts) locks an address out
+after repeated rejected credentials and caps passkey challenge requests and
+pending challenges per address. It counts only failures, so reconnecting clients
+with valid credentials are never throttled. It relies on trusted-proxy
+addresses; behind an untrusted proxy all clients share one budget.
 
 Registration asks for `attestation: "none"`. Trust in a new credential comes
 from the authenticated session that enrolls it, not from the authenticator's

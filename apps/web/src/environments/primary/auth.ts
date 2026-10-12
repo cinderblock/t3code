@@ -7,7 +7,11 @@ import type {
   AuthSessionId,
   AuthSessionState,
 } from "@t3tools/contracts";
-import { EnvironmentHttpCommonError, PRIMARY_LOCAL_ENVIRONMENT_ID } from "@t3tools/contracts";
+import {
+  EnvironmentHttpCommonError,
+  EnvironmentRateLimitedError,
+  PRIMARY_LOCAL_ENVIRONMENT_ID,
+} from "@t3tools/contracts";
 import type { EnvironmentHttpCommonError as EnvironmentHttpCommonErrorType } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -107,6 +111,7 @@ export class PrimaryEnvironmentPairingCredentialRequiredError extends Schema.Tag
 }
 
 const isEnvironmentHttpCommonError = Schema.is(EnvironmentHttpCommonError);
+const isEnvironmentRateLimitedError = Schema.is(EnvironmentRateLimitedError);
 
 export interface ServerPairingLinkRecord {
   readonly id: string;
@@ -239,6 +244,7 @@ async function exchangeBootstrapCredential(credential: string): Promise<AuthBrow
           cause: error,
         });
       }
+      if (isEnvironmentRateLimitedError(error)) throw error;
       throw PrimaryEnvironmentRequestError.fromCause({
         operation: "exchange-bootstrap-credential",
         cause: error,

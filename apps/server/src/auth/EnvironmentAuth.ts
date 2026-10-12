@@ -34,6 +34,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerConfig from "../config.ts";
 import * as EnvironmentAuthPolicy from "./EnvironmentAuthPolicy.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
+import * as AuthAttemptLimiter from "./AuthAttemptLimiter.ts";
 import * as PublicAccess from "./PublicAccess.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
@@ -604,6 +605,7 @@ export const make = Effect.gen(function* () {
   const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
   const sessions = yield* SessionStore.SessionStore;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
+  const publicAccess = yield* PublicAccess.PublicAccess;
   const crypto = yield* Crypto.Crypto;
   const descriptor = yield* policy.getDescriptor();
   const config = yield* ServerConfig.ServerConfig;
@@ -1036,12 +1038,22 @@ export const make = Effect.gen(function* () {
     return yield* revokeSession(targetSessionId);
   });
 
+  // Passkeys are durable sign-in credentials, so "everyone else out" revokes them
+  // too, keeping only the passkey the current session signed in with.
   const revokeOtherClientSessions: EnvironmentAuth["Service"]["revokeOtherClientSessions"] = (
     currentSessionId,
   ) =>
-    revokeOtherSessionsExcept(currentSessionId).pipe(
-      Effect.withSpan("EnvironmentAuth.revokeOtherClientSessions"),
-    );
+    Effect.gen(function* () {
+      const current = (yield* listSessions()).find(
+        (session) => session.sessionId === currentSessionId,
+      );
+      yield* publicAccess
+        .revokePasskeysExcept(
+          current ? PublicAccess.passkeyIdFromSessionSubject(current.subject) : undefined,
+        )
+        .pipe(Effect.mapError((cause) => new ServerAuthOtherSessionsRevocationError({ cause })));
+      return yield* revokeOtherSessionsExcept(currentSessionId);
+    }).pipe(Effect.withSpan("EnvironmentAuth.revokeOtherClientSessions"));
 
   const issueStartupPairingUrl: EnvironmentAuth["Service"]["issueStartupPairingUrl"] = (baseUrl) =>
     issueStartupPairingCredential().pipe(
@@ -1124,6 +1136,7 @@ export const layer = Layer.effect(EnvironmentAuth, make).pipe(
   Layer.provideMerge(PairingGrantStore.layer),
   Layer.provideMerge(PublicAccess.layer),
   Layer.provideMerge(SessionStore.layer),
+  Layer.provideMerge(AuthAttemptLimiter.layer),
   Layer.provideMerge(EnvironmentAuthPolicy.layer),
 );
 

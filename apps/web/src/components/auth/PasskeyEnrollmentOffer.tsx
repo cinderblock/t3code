@@ -4,7 +4,6 @@ import { useEffect } from "react";
 import { fetchSessionState, takePairedWithCredential } from "../../environments/primary/auth";
 import {
   addPublicOrigin,
-  canEnrollPasskeyHere,
   enrollPasskey,
   isPasskeyCapablePage,
   isPasskeyPromptDismissed,
@@ -13,8 +12,8 @@ import { toastManager } from "../ui/toast";
 
 /**
  * Right after a browser pairs with a token on a domain it reached directly,
- * offers to save a passkey so the next visit needs no pairing link. Access
- * managers can enroll on an origin that is not configured yet; saving adds it.
+ * offers to save a passkey so the next visit needs no pairing link. Only
+ * access managers can enroll; saving adds the origin if it is not configured.
  */
 export function PasskeyEnrollmentOffer() {
   useEffect(() => {
@@ -24,7 +23,8 @@ export function PasskeyEnrollmentOffer() {
     void (async () => {
       const session = await fetchSessionState();
       const canManageAccess = session.scopes?.includes(AuthAccessWriteScope) === true;
-      if (!canManageAccess && !(await canEnrollPasskeyHere())) return;
+      // A passkey outlives this session, so only access managers may save one.
+      if (!canManageAccess) return;
 
       const host = window.location.host;
       const offerId = toastManager.add({
@@ -36,7 +36,7 @@ export function PasskeyEnrollmentOffer() {
           children: "Save passkey",
           onClick: () => {
             toastManager.close(offerId);
-            void enrollPasskey(canManageAccess ? { addOrigin: addPublicOrigin } : {}).then(
+            void enrollPasskey({ addOrigin: addPublicOrigin }).then(
               (passkey) =>
                 toastManager.add({
                   type: "success",

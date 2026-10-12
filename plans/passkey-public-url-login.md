@@ -88,6 +88,10 @@ excessive — TLS terminates at the proxy.
   pairing link the user created (user: "I already pick permissions that token gets").
 - Config: server setting + Settings → Connections UI (works for desktop and `npx t3`).
 - Work directly on `master` in the shared main checkout; stage only own files.
+- Enrolling a passkey requires `access:write` (user, 2026-10-12, after the security review).
+- "Revoke other clients" also revokes every passkey except the one the current session used.
+- Rate limiting: both in the backend (per client address, behind trusted proxies) and at
+  Cloudflare (the rule is drafted for approval, since the ops checkout has another agent's edits).
 - v1 surface: web served from the public URL only. Hosted app (Related Origins) and native
   mobile passkeys are follow-ups.
 
@@ -187,3 +191,13 @@ Open design questions for the user (not changed):
    guessable, but a flood of login-options requests can evict pending sign-in challenges (cap 256).
    Cloudflare-side rate limiting is the cheap fix. That's infrastructure, so it needs the user's call.
 3. Cloudflare "Always Use HTTPS" + HSTS for the domain (infrastructure, the user's call).
+
+### Follow-up work from the review (2026-10-12)
+
+- [x] Enrollment requires `access:write` (server, web offer, docs, tests).
+- [x] Revoke-others covers passkeys (keeps the current session's passkey).
+- [x] Backend limits (`AuthAttemptLimiter`: 20 failures/10 min lockout, 30 challenges/min, 8 pending per address): lockout after repeated failed sign-ins per address; sign-in challenge
+      requests per address; pending challenges capped per address so one address cannot evict others.
+- [ ] Draft the Cloudflare rate-limit rule for approval (no ops edits).
+- Live DB check: no passkey stored yet (`fork_auth_passkeys` empty), so first enrollment has not
+  succeeded. Trace files rotate every few minutes, so the failed attempt left no trace.
