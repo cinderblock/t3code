@@ -198,6 +198,11 @@ Open design questions for the user (not changed):
 - [x] Revoke-others covers passkeys (keeps the current session's passkey).
 - [x] Backend limits (`AuthAttemptLimiter`: 20 failures/10 min lockout, 30 challenges/min, 8 pending per address): lockout after repeated failed sign-ins per address; sign-in challenge
       requests per address; pending challenges capped per address so one address cannot evict others.
-- [ ] Draft the Cloudflare rate-limit rule for approval (no ops edits).
+- [x] Cloudflare rate-limit rule live (user approved 2026-10-12): ops `079d03c`, applied by the
+      Cloudflare workflow run 38330255061 (sync-infra created it; its sync-verify step failed on an
+      unrelated Cloudflare API 429 reading web analytics). A local dry run afterwards showed 0
+      changes. Applied from a clean worktree at that commit, because a full sync from the main ops
+      checkout would also push another agent's uncommitted edits. The local token is read-only;
+      applies happen in CI on push.
 - Live DB check: no passkey stored yet (`fork_auth_passkeys` empty), so first enrollment has not
   succeeded. Trace files rotate every few minutes, so the failed attempt left no trace.
