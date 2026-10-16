@@ -305,13 +305,30 @@ if ($Config.Build -eq 'always') {
   $srcRoots = @('apps\server\src', 'apps\desktop\src', 'apps\desktop\scripts',
     'apps\web\src', 'packages') | ForEach-Object { Join-Path $RepoRoot $_ } |
     Where-Object { Test-Path $_ }
-  $newestSrc = Get-ChildItem -Path $srcRoots -Recurse -File -Include *.ts, *.tsx, *.mjs, *.css 2>$null |
-    Where-Object {
-      $_.FullName -notmatch '\\(node_modules|dist|dist-electron)\\' -and
-      # Build-generated sources would otherwise re-trigger staleness forever.
-      $_.Name -notlike '*.generated.*'
-    } |
-    Sort-Object LastWriteTime -Descending | Select-Object -First 1
+  # Walked by hand, pruning node_modules/dist and every reparse point BEFORE
+  # descending. `Get-ChildItem -Recurse` and filtering the paths afterwards
+  # hung forever once pnpm 11 started linking workspace packages to each other
+  # with directory symlinks (packages\a\node_modules\@t3tools\b -> packages\b,
+  # and back again): the recursion followed them in a cycle, pinning a core
+  # silently right after `install : done`.
+  $skipDirs = @('node_modules', 'dist', 'dist-electron')
+  $srcExts = @('.ts', '.tsx', '.mjs', '.css')
+  $newestSrc = $null
+  $pending = New-Object System.Collections.Generic.Stack[string]
+  foreach ($r in $srcRoots) { $pending.Push($r) }
+  while ($pending.Count -gt 0) {
+    foreach ($entry in Get-ChildItem -LiteralPath $pending.Pop() -Force -ErrorAction SilentlyContinue) {
+      if ($entry.Attributes -band [IO.FileAttributes]::ReparsePoint) { continue }
+      if ($entry.PSIsContainer) {
+        if ($skipDirs -notcontains $entry.Name) { $pending.Push($entry.FullName) }
+      } elseif ($srcExts -contains $entry.Extension -and
+        # Build-generated sources would otherwise re-trigger staleness forever.
+        $entry.Name -notlike '*.generated.*' -and
+        (-not $newestSrc -or $entry.LastWriteTime -gt $newestSrc.LastWriteTime)) {
+        $newestSrc = $entry
+      }
+    }
+  }
   if ($newestSrc -and $newestSrc.LastWriteTime -gt $reference) {
     $needsBuild = $true
     $reason = "$($newestSrc.Name) is newer than the last build"
