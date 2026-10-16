@@ -135,6 +135,9 @@ Predecessor: [`merge-upstream-main-2026-10-02.md`](./merge-upstream-main-2026-10
       symlinked-settings tests and one download path, all `/` vs `\`).
 - [x] Commits on `merge/upstream-v0.1.0`: merge `b0b47eefeb`, lint fixes, ISSUES.md, this plan.
 - [x] Fast-forwarded `master` to `d24cc6b05b` (2026-10-16); merge worktree and branches removed.
+- [x] Restyle lint fixed with stock variants (`ae24dbb225`): host-filter toggles take
+      `segmented`'s own colors, count badge puts `tabular-nums` on an inner span, send-later
+      button is `ghost-muted`. Seen in a dev client (composer); host filter needs 2+ hosts.
 - [ ] Next launch: `scripts/start-t3.ps1` reinstalls (lockfile changed) and rebuilds.
 
 ## Open questions for the user
