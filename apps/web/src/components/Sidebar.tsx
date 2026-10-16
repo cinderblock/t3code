@@ -4901,7 +4901,6 @@ export default function Sidebar() {
                 <Toggle
                   variant="segmented"
                   size="segmented"
-                  className="gap-1.5 text-sidebar-muted-foreground data-pressed:text-sidebar-foreground"
                   pressed={hiddenEnvironmentIds.size === 0}
                   onPressedChange={(pressed) => {
                     if (pressed) showAllEnvironments();
@@ -4914,8 +4913,8 @@ export default function Sidebar() {
                 >
                   All
                   {hostFilter.hiddenThreadCount > 0 ? (
-                    <Badge size="sm" variant="warning" className="tabular-nums">
-                      {hostFilter.hiddenThreadCount} hidden
+                    <Badge size="sm" variant="warning">
+                      <span className="tabular-nums">{hostFilter.hiddenThreadCount}</span> hidden
                     </Badge>
                   ) : null}
                 </Toggle>
@@ -4924,7 +4923,7 @@ export default function Sidebar() {
                     key={environment.environmentId}
                     variant="segmented"
                     size="segmented"
-                    className="min-w-0 max-w-full gap-1.5 text-sidebar-muted-foreground data-pressed:text-sidebar-foreground"
+                    className="min-w-0 max-w-full"
                     pressed={!hidden}
                     onPressedChange={(pressed, eventDetails) => {
                       // Alt-click solos the host (the DAW convention); a second

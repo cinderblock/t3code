@@ -22,16 +22,3 @@ Why it matters: the session grants shell-level control of the host. A fix probab
 `Origin` for cookie-authenticated upgrades against the request's own origin, configured public
 origins, and the desktop renderer origins. Careful: cloudflared rewrites `Host` to the local
 service by default, so comparing `Origin` to `Host` alone would break proxied access.
-
-## Fork UI fails upstream's `shadcn/no-restyle` lint
-
-`vp lint` errors on fork-only markup (upstream's rules, not upstream code):
-
-- `apps/web/src/components/Sidebar.tsx` host-filter row: `<Toggle variant="segmented">` with
-  `gap-1.5 text-sidebar-muted-foreground data-pressed:text-sidebar-foreground` (two toggles), and
-  `<Badge className="tabular-nums">` for the hidden-thread count.
-- `apps/web/src/components/chat/ChatComposer.tsx` queue-draft ("send later") button:
-  `<Button className="rounded-full text-muted-foreground/80 …">`.
-
-Each needs a design call: a sidebar-tone segmented `Toggle` variant (and a numeric `Badge`
-variant) in `components/ui`, or reuse of an existing variant. CI's lint step fails on these.

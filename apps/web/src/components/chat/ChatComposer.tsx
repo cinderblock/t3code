@@ -7262,9 +7262,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         render={
                           <Button
                             type="button"
-                            variant="ghost"
+                            variant="ghost-muted"
                             size="icon-sm"
-                            className="rounded-full text-muted-foreground/80"
                             disabled={queueDraftDisabled}
                             aria-label="Queue message to send later"
                           />
