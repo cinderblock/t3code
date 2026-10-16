@@ -292,6 +292,13 @@ it.effect("enrolls and signs in with a passkey through the HTTP routes", () =>
             requestContext,
           );
           expect(login.status).toBe(200);
+          // The passkey carries exactly the enrolling session's permissions, reported
+          // explicitly so a client cannot infer more from the legacy parent scopes.
+          const enrolledPermissions = ["orchestration:read", "access:read", "access:write"];
+          expect(await login.clone().json()).toMatchObject({
+            scopes: enrolledPermissions,
+            permissions: enrolledPermissions,
+          });
           const loginCookie = login.headers.getSetCookie()[0] ?? "";
           expect(loginCookie).toContain("HttpOnly");
           expect(loginCookie).toContain("Secure");
@@ -304,7 +311,8 @@ it.effect("enrolls and signs in with a passkey through the HTTP routes", () =>
           );
           expect(await session.json()).toMatchObject({
             authenticated: true,
-            scopes: ["orchestration:read", "access:read", "access:write"],
+            scopes: enrolledPermissions,
+            permissions: enrolledPermissions,
           });
 
           // Repeated bad credentials from one address end in a 429.

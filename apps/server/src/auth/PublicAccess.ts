@@ -20,6 +20,7 @@ import {
   type AuthBrowserSessionResult,
   type AuthClientMetadata,
   AuthAccessWriteScope,
+  authScopeResponse,
   type AuthEnvironmentScope,
   AuthEnvironmentScopes,
   type AuthPasskey,
@@ -767,7 +768,9 @@ export const make = Effect.gen(function* () {
       return {
         response: {
           authenticated: true,
-          scopes: session.scopes,
+          // Same shape as every other session response: without `permissions`, clients
+          // infer the new fine-grained permissions from the legacy parent scopes.
+          ...authScopeResponse(session.scopes),
           sessionMethod: session.method,
           expiresAt: DateTime.toUtc(session.expiresAt),
         },
