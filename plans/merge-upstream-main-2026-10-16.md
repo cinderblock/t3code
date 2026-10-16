@@ -139,7 +139,7 @@ Predecessor: [`merge-upstream-main-2026-10-02.md`](./merge-upstream-main-2026-10
 
 ## Open questions for the user
 
-1. OK with the connection-supervisor and pong-latency decisions above? Recommendation: yes.
+None open. Answered 2026-10-16: the user approved keeping upstream's supervisor design and dropping pong-latency logging.
 
 ## Things not to do
 
