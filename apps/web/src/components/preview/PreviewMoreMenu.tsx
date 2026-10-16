@@ -1,10 +1,6 @@
 "use client";
 
-import type {
-  DesktopPreviewColorScheme,
-  EnvironmentId,
-  PreviewExternalLinkBehavior,
-} from "@t3tools/contracts";
+import type { DesktopPreviewColorScheme, PreviewExternalLinkBehavior } from "@t3tools/contracts";
 import { Minus, MoreVertical, Plus as PlusIcon, RotateCcw } from "lucide-react";
 
 import type { PreviewExternalLinkOverride } from "~/browser/previewExternalLinkOverrides";
@@ -25,8 +21,6 @@ import {
   MenuTrigger,
 } from "~/components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
-
-import { previewBridge } from "./previewBridge";
 
 const COLOR_SCHEME_OPTIONS: ReadonlyArray<{
   value: DesktopPreviewColorScheme;
@@ -49,153 +43,136 @@ const EXTERNAL_LINK_BEHAVIOR_LABELS: Record<PreviewExternalLinkBehavior, string>
   "in-app": "Open in preview",
 };
 
-interface Props {
-  /** Active preview tab id. Tab-targeting actions are disabled without it. */
-  tabId: string | null;
-  /**
-   * True only after the desktop bridge has registered a `webContentsId` for
-   * the active tab. Tab-targeting actions throw on the desktop side until
-   * then; we disable those items so the menu doesn't fire silent no-ops.
-   */
-  hasWebContents: boolean;
-  /** Current zoom factor as a number (1.0 = 100%). */
-  zoomFactor: number;
-  /** Emulated `prefers-color-scheme` for the guest page. */
-  colorScheme: DesktopPreviewColorScheme;
-  /** This tab's external-link exception, or `null` to follow the setting. */
-  externalLinkOverride: PreviewExternalLinkOverride;
+/** The tab's external-link policy. Only the desktop shell enforces it, so other hosts omit it. */
+export interface PreviewMoreMenuExternalLinks {
+  /** This tab's exception, or `null` to follow the setting. */
+  readonly override: PreviewExternalLinkOverride;
   /** The global setting, shown so "Use default" says what it resolves to. */
-  externalLinkDefault: PreviewExternalLinkBehavior;
+  readonly defaultBehavior: PreviewExternalLinkBehavior;
   /** Set or clear this tab's exception. `null` clears it. */
-  onExternalLinkOverrideChange: (next: PreviewExternalLinkBehavior | null) => void;
-  /** Fixed viewport modes expose the device toolbar and resize rails. */
-  deviceToolbarVisible: boolean;
-  /** Switches between fill-panel mode and a fixed responsive viewport. */
-  onToggleDeviceToolbar: () => void;
-  /** Whether the separate native always-on-top preview window is open. */
-  nativePictureInPicture: boolean;
-  /** Toggles the optional native always-on-top preview window. */
-  onNativePictureInPicture: () => void;
-  /** Environment the tab belongs to; scopes storage clearing to its partitions. */
-  environmentId: EnvironmentId;
-  /** Profile the tab was opened under, if the server recorded one. */
-  /**
-   * Required: the IPC layer reads an absent profile as "every profile", so a
-   * tab whose own profile is unknown must resolve the default before it gets
-   * here rather than passing the gap along.
-   */
-  profileId: string;
-  /** Profile display name, shown so the menu says which data is being cleared. */
-  profileName: string | undefined;
+  readonly onOverrideChange: (next: PreviewExternalLinkBehavior | null) => void;
 }
 
-/**
- * Three-dot menu in the chrome row. Wires Hard reload, DevTools, zoom
- * controls, and storage-clearing actions. Only mounted by `PreviewView`
- * when the desktop bridge is present, so we can call it unconditionally.
- */
+export interface PreviewMoreMenuActions {
+  readonly hardReload: () => void;
+  readonly setColorScheme: (colorScheme: DesktopPreviewColorScheme) => void;
+  readonly zoomIn: () => void;
+  readonly zoomOut: () => void;
+  readonly resetZoom: () => void;
+  readonly clearCookies: () => void;
+  readonly clearCache: () => void;
+  readonly openDevTools?: () => void;
+  readonly toggleNativePictureInPicture?: () => void;
+}
+
+interface Props {
+  enabled: boolean;
+  actions: PreviewMoreMenuActions;
+  zoomFactor: number;
+  colorScheme: DesktopPreviewColorScheme;
+  deviceToolbarVisible: boolean;
+  onToggleDeviceToolbar: () => void;
+  nativePictureInPicture: boolean;
+  profileName: string | undefined;
+  externalLinks?: PreviewMoreMenuExternalLinks;
+  move?: { readonly label: string; readonly onMove: () => void };
+}
+
+const MenuTriggerButton = () => (
+  <Tooltip>
+    <TooltipTrigger
+      render={
+        <MenuTrigger
+          render={<Button variant="ghost" size="icon-xs" type="button" aria-label="Preview menu" />}
+        />
+      }
+    >
+      <MoreVertical />
+    </TooltipTrigger>
+    <TooltipPopup>More</TooltipPopup>
+  </Tooltip>
+);
+
 export function PreviewMoreMenu({
-  tabId,
-  hasWebContents,
+  enabled,
+  actions,
   zoomFactor,
   colorScheme,
-  externalLinkOverride,
-  externalLinkDefault,
-  onExternalLinkOverrideChange,
   deviceToolbarVisible,
   onToggleDeviceToolbar,
   nativePictureInPicture,
-  onNativePictureInPicture,
-  environmentId,
-  profileId,
   profileName,
+  externalLinks,
+  move,
 }: Props) {
-  if (!previewBridge) return null;
-  const bridge = previewBridge;
-  const tabDisabled = !tabId || !hasWebContents;
-  const callTab = (op: (tabId: string) => Promise<void>) => () => {
-    if (!tabId) return;
-    void op(tabId).catch(() => undefined);
-  };
-
   const zoomLabel = `${Math.round(zoomFactor * 100)}%`;
+  const disabled = !enabled;
   return (
     <Menu>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <MenuTrigger
-              render={
-                <Button variant="ghost" size="icon-xs" type="button" aria-label="Preview menu" />
-              }
-            />
-          }
-        >
-          <MoreVertical />
-        </TooltipTrigger>
-        <TooltipPopup>More</TooltipPopup>
-      </Tooltip>
+      <MenuTriggerButton />
       <MenuPopup align="end" sideOffset={6}>
-        <MenuItem onClick={callTab(bridge.hardReload)} disabled={tabDisabled}>
+        <MenuItem onClick={actions.hardReload} disabled={disabled}>
           Hard reload
         </MenuItem>
-        <MenuItem onClick={callTab(bridge.openDevTools)} disabled={tabDisabled}>
-          Open DevTools
-        </MenuItem>
-        <MenuItem onClick={onNativePictureInPicture} disabled={tabDisabled}>
-          {nativePictureInPicture
-            ? "Close separate preview window"
-            : "Open separate preview window"}
-        </MenuItem>
-        <MenuItem onClick={onToggleDeviceToolbar} disabled={tabDisabled}>
+        {actions.openDevTools ? (
+          <MenuItem onClick={actions.openDevTools} disabled={disabled}>
+            Open DevTools
+          </MenuItem>
+        ) : null}
+        {actions.toggleNativePictureInPicture ? (
+          <MenuItem onClick={actions.toggleNativePictureInPicture} disabled={disabled}>
+            {nativePictureInPicture
+              ? "Close separate preview window"
+              : "Open separate preview window"}
+          </MenuItem>
+        ) : null}
+        {move ? <MenuItem onClick={move.onMove}>{move.label}</MenuItem> : null}
+        <MenuItem onClick={onToggleDeviceToolbar} disabled={disabled}>
           {deviceToolbarVisible ? "Hide device toolbar" : "Show device toolbar"}
         </MenuItem>
+        {externalLinks ? (
+          <MenuSub>
+            <MenuSubTrigger disabled={disabled}>External links</MenuSubTrigger>
+            <MenuSubPopup className="min-w-56">
+              <MenuRadioGroup
+                value={externalLinks.override ?? EXTERNAL_LINK_OVERRIDE_DEFAULT}
+                onValueChange={(value) => {
+                  externalLinks.onOverrideChange(
+                    value === EXTERNAL_LINK_OVERRIDE_DEFAULT
+                      ? null
+                      : (value as PreviewExternalLinkBehavior),
+                  );
+                }}
+              >
+                <MenuRadioItem value={EXTERNAL_LINK_OVERRIDE_DEFAULT}>
+                  {`Use default (${EXTERNAL_LINK_BEHAVIOR_LABELS[externalLinks.defaultBehavior].toLowerCase()})`}
+                </MenuRadioItem>
+                <MenuRadioItem value="system-browser">
+                  {EXTERNAL_LINK_BEHAVIOR_LABELS["system-browser"]}
+                </MenuRadioItem>
+                <MenuRadioItem value="in-app">
+                  {EXTERNAL_LINK_BEHAVIOR_LABELS["in-app"]}
+                </MenuRadioItem>
+              </MenuRadioGroup>
+              <MenuSeparator />
+              {/*
+                Spelled out rather than hidden behind a hover tooltip: the scope
+                of the rule is the whole point, and it is easy to read this as
+                "all links" otherwise.
+              */}
+              <p className="px-2 py-1.5 text-xs text-muted-foreground">
+                Applies to links that leave the current site. Links within the site, the address
+                bar, and agent navigation always stay in the preview.
+              </p>
+            </MenuSubPopup>
+          </MenuSub>
+        ) : null}
         <MenuSub>
-          <MenuSubTrigger disabled={!tabId}>External links</MenuSubTrigger>
-          <MenuSubPopup className="min-w-56">
-            <MenuRadioGroup
-              value={externalLinkOverride ?? EXTERNAL_LINK_OVERRIDE_DEFAULT}
-              onValueChange={(value) => {
-                onExternalLinkOverrideChange(
-                  value === EXTERNAL_LINK_OVERRIDE_DEFAULT
-                    ? null
-                    : (value as PreviewExternalLinkBehavior),
-                );
-              }}
-            >
-              <MenuRadioItem value={EXTERNAL_LINK_OVERRIDE_DEFAULT}>
-                {`Use default (${EXTERNAL_LINK_BEHAVIOR_LABELS[externalLinkDefault].toLowerCase()})`}
-              </MenuRadioItem>
-              <MenuRadioItem value="system-browser">
-                {EXTERNAL_LINK_BEHAVIOR_LABELS["system-browser"]}
-              </MenuRadioItem>
-              <MenuRadioItem value="in-app">
-                {EXTERNAL_LINK_BEHAVIOR_LABELS["in-app"]}
-              </MenuRadioItem>
-            </MenuRadioGroup>
-            <MenuSeparator />
-            {/*
-              Spelled out rather than hidden behind a hover tooltip: the scope
-              of the rule is the whole point, and it is easy to read this as
-              "all links" otherwise.
-            */}
-            <p className="px-2 py-1.5 text-xs text-muted-foreground">
-              Applies to links that leave the current site. Links within the site, the address bar,
-              and agent navigation always stay in the preview.
-            </p>
-          </MenuSubPopup>
-        </MenuSub>
-        <MenuSub>
-          <MenuSubTrigger disabled={tabDisabled}>Appearance</MenuSubTrigger>
+          <MenuSubTrigger disabled={disabled}>Appearance</MenuSubTrigger>
           <MenuSubPopup>
             <MenuRadioGroup
               value={colorScheme}
-              onValueChange={(value) => {
-                if (!tabId) return;
-                void bridge
-                  .setColorScheme(tabId, value as DesktopPreviewColorScheme)
-                  .catch(() => undefined);
-              }}
+              onValueChange={(value) => actions.setColorScheme(value as DesktopPreviewColorScheme)}
             >
               {COLOR_SCHEME_OPTIONS.map((option) => (
                 <MenuRadioItem key={option.value} value={option.value}>
@@ -206,15 +183,11 @@ export function PreviewMoreMenu({
           </MenuSubPopup>
         </MenuSub>
         <MenuSeparator />
-        {/*
-          Zoom row: label + inline control cluster. `closeOnClick=false`
-          keeps the menu open while the user clicks the +/− buttons.
-        */}
         <MenuItem
           closeOnClick={false}
           onClick={(event: React.MouseEvent) => event.preventDefault()}
           className="justify-between"
-          disabled={tabDisabled}
+          disabled={disabled}
         >
           <span>Zoom</span>
           <span className="flex items-center gap-1">
@@ -222,9 +195,9 @@ export function PreviewMoreMenu({
               variant="outline"
               size="icon-xs"
               type="button"
-              onClick={callTab(bridge.zoomOut)}
+              onClick={actions.zoomOut}
               aria-label="Zoom out"
-              disabled={tabDisabled}
+              disabled={disabled}
             >
               <Minus />
             </Button>
@@ -235,9 +208,9 @@ export function PreviewMoreMenu({
               variant="outline"
               size="icon-xs"
               type="button"
-              onClick={callTab(bridge.zoomIn)}
+              onClick={actions.zoomIn}
               aria-label="Zoom in"
-              disabled={tabDisabled}
+              disabled={disabled}
             >
               <PlusIcon />
             </Button>
@@ -245,9 +218,9 @@ export function PreviewMoreMenu({
               variant="ghost"
               size="icon-xs"
               type="button"
-              onClick={callTab(bridge.resetZoom)}
+              onClick={actions.resetZoom}
               aria-label="Reset zoom"
-              disabled={tabDisabled}
+              disabled={disabled}
             >
               <RotateCcw />
             </Button>
@@ -255,36 +228,17 @@ export function PreviewMoreMenu({
         </MenuItem>
         <MenuSeparator />
         {/*
-          Grouped so the heading has a `MenuGroup` ancestor — `MenuGroupLabel`
-          reads its context and throws without one. The heading also answers
-          which profile the tab is in, which is otherwise invisible: it is fixed
-          at open and nothing else in the chrome shows it.
-        */}
+         * Grouped so the heading has a `MenuGroup` ancestor — `MenuGroupLabel`
+          reads its context and throws without one.
+         */}
         <MenuGroup>
-          {/*
-            The heading carries the profile so the actions below can keep
-            fixed-length labels: repeating a name of up to 48 characters in
-            each one drove the popup far past its width.
-          */}
           {profileName ? (
-            // Truncation needs a block box: `text-overflow` on an inline child
-            // never applies and a long name would push the popup past its width.
             <MenuGroupLabel className="max-w-64">
               <span className="block truncate">Profile: {profileName}</span>
             </MenuGroupLabel>
           ) : null}
-          <MenuItem
-            onClick={() =>
-              void bridge.clearCookies(environmentId, profileId).catch(() => undefined)
-            }
-          >
-            Clear cookies
-          </MenuItem>
-          <MenuItem
-            onClick={() => void bridge.clearCache(environmentId, profileId).catch(() => undefined)}
-          >
-            Clear cache
-          </MenuItem>
+          <MenuItem onClick={actions.clearCookies}>Clear cookies</MenuItem>
+          <MenuItem onClick={actions.clearCache}>Clear cache</MenuItem>
         </MenuGroup>
       </MenuPopup>
     </Menu>

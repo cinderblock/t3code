@@ -23,7 +23,7 @@ import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 import {
   CommandId,
   MessageId,
@@ -46,7 +46,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
-import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
+import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
 
 const REACTOR_TICK = Duration.seconds(15);
 /** A window read as ≤ this percent counts as freshly reset. */

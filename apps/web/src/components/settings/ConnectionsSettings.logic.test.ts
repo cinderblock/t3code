@@ -2,11 +2,48 @@ import type { AdvertisedEndpoint, DesktopWslState } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
+  canRevokeOtherClients,
   isQrShareableEndpoint,
   publicOriginAdvertisedEndpoints,
   isWslSettingsRowVisible,
   selectQrEndpointOption,
+  togglePairingScopeSelection,
 } from "./ConnectionsSettings.logic";
+
+describe("togglePairingScopeSelection", () => {
+  it.each([
+    {
+      label: "adds terminal:read when terminal:operate is selected",
+      current: ["orchestration:read"],
+      scope: "terminal:operate",
+      checked: true,
+      expected: ["orchestration:read", "terminal:operate", "terminal:read"],
+    },
+    {
+      label: "drops terminal:operate when terminal:read is cleared",
+      current: ["terminal:read", "terminal:operate", "relay:read"],
+      scope: "terminal:read",
+      checked: false,
+      expected: ["relay:read"],
+    },
+    {
+      label: "keeps terminal:read when terminal:operate is cleared",
+      current: ["terminal:read", "terminal:operate"],
+      scope: "terminal:operate",
+      checked: false,
+      expected: ["terminal:read"],
+    },
+    {
+      label: "toggles unrelated scopes on their own",
+      current: ["terminal:read"],
+      scope: "filesystem:read",
+      checked: true,
+      expected: ["terminal:read", "filesystem:read"],
+    },
+  ] as const)("$label", ({ current, scope, checked, expected }) => {
+    expect(togglePairingScopeSelection(current, scope, checked)).toEqual(expected);
+  });
+});
 
 const baseWslState: DesktopWslState = {
   enabled: false,
@@ -197,5 +234,17 @@ describe("publicOriginAdvertisedEndpoints", () => {
     // passkey for this origin cannot be saved.
     expect(endpoint?.compatibility.hostedHttpsApp).not.toBe("compatible");
     expect(endpoint && isQrShareableEndpoint(endpoint)).toBe(true);
+  });
+});
+
+describe("canRevokeOtherClients", () => {
+  it("permits revocation when a write-only grant cannot list clients", () => {
+    expect(canRevokeOtherClients(null)).toBe(true);
+  });
+
+  it("disables revocation only when a loaded list has no other clients", () => {
+    expect(canRevokeOtherClients([])).toBe(false);
+    expect(canRevokeOtherClients([{ current: true }])).toBe(false);
+    expect(canRevokeOtherClients([{ current: true }, { current: false }])).toBe(true);
   });
 });

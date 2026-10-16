@@ -10,28 +10,27 @@ import {
   type ServerSettings,
 } from "@t3tools/contracts";
 import { createServerEnvironmentAtoms } from "@t3tools/client-runtime/state/server";
+import { createOutdatedServerUpdateCommand } from "@t3tools/client-runtime/state/outdatedServerUpdate";
 import { createEnvironmentServerConfigsAtom } from "@t3tools/client-runtime/state/shell";
 import { mergeWithDefaultKeybindings } from "@t3tools/shared/keybindings";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import { environmentCatalog } from "../connection/catalog";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
 import { environmentSession } from "./session";
 
-// Opted in for every environment, not just the primary one. Only the primary
-// environment's themes are rendered, but which environment is primary changes
-// at runtime and the subscription payload is fixed when it is established --
-// gating on "primary right now" would leave a newly promoted environment with
-// no themes until it reconnected. The set is capped server-side and stripped
-// before caching, so following all of them costs a few KB per environment.
+// Only the primary environment's themes are rendered, but which environment is primary changes
+// at runtime and the subscription payload is fixed when it is established -- gating on "primary
+// right now" would leave a newly promoted environment with no themes until it reconnected.
 export const serverEnvironment = createServerEnvironmentAtoms(connectionAtomRuntime, {
   initialConfigValueAtom: environmentSession.initialConfigValueAtom,
   environmentThemes: true,
   usageLimitSources: true,
   usageLimitsCommand: true,
 });
+export const updateOutdatedServer = createOutdatedServerUpdateCommand(connectionAtomRuntime);
 export const environmentServerConfigsAtom = createEnvironmentServerConfigsAtom({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   serverConfigValueAtom: serverEnvironment.configValueAtom,
@@ -114,11 +113,6 @@ export const primaryServerAvailableEditorsAtom = Atom.make(
 
 const EMPTY_ENVIRONMENT_THEMES: ReadonlyArray<EnvironmentTheme> = [];
 
-/**
- * Palettes published by the primary environment's machine. Only the primary
- * environment: a client follows the machine it is anchored to, not every
- * environment it happens to be connected to.
- */
 export const primaryServerEnvironmentThemesAtom = Atom.make(
   (get): ReadonlyArray<EnvironmentTheme> =>
     get(primaryServerConfigAtom)?.environmentThemes ?? EMPTY_ENVIRONMENT_THEMES,

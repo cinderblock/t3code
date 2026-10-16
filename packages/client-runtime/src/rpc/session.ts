@@ -18,13 +18,13 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
-import type * as Rpc from "effect/unstable/rpc/Rpc";
-import * as RpcClient from "effect/unstable/rpc/RpcClient";
-import * as RpcClientError from "effect/unstable/rpc/RpcClientError";
-import * as RpcSerialization from "effect/unstable/rpc/RpcSerialization";
-import * as Socket from "effect/unstable/socket/Socket";
+import type * as Rpc from "effect/rpc/Rpc";
+import * as RpcClient from "effect/rpc/RpcClient";
+import * as RpcClientError from "effect/rpc/RpcClientError";
+import * as RpcSerialization from "effect/rpc/RpcSerialization";
+import * as Socket from "effect/socket/Socket";
 
-import { makeWsRpcProtocolClient, type WsRpcProtocolClient } from "./protocol.ts";
+import { makeWsRpcProtocolClient, PING_TIMEOUT, type WsRpcProtocolClient } from "./protocol.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
 import type {
   ConnectionAttemptError,
@@ -58,7 +58,6 @@ export interface RpcSession {
 export interface RpcSessionOptions {
   readonly environmentThemes?: boolean;
   readonly usageLimitSources?: boolean;
-  /** This client answers /usage-limits itself, so the server may advertise it. */
   readonly usageLimitsCommand?: boolean;
 }
 
@@ -180,20 +179,14 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     // -- 1006 means it died with no close frame (process death, network), 1001
     // going away, 1011 a server error, 1013 try-again-later. Without it the
     // next step is guesswork.
-    let closeInfo: string | undefined;
     const observingWebSocketConstructor = ((url: string, protocols?: string | Array<string>) => {
       const socket = webSocketConstructor(url, protocols);
       try {
         (socket as unknown as EventTarget).addEventListener?.("close", (event: Event) => {
           const closed = event as CloseEvent;
-          closeInfo = `code=${closed.code} clean=${closed.wasClean}${
-            closed.reason ? ` reason=${closed.reason}` : ""
-          }`;
-          // Emit here rather than relying on `closeInfo` being set by the time
-          // `onDisconnect` builds its error. It is not: Effect's socket fiber
-          // observes the end before the browser dispatches this event, so the
-          // first attempt at this reported "[no close event observed]" every
-          // time. Emitting from the listener removes the ordering dependency.
+          // Emitted from the listener: Effect's socket fiber observes the end
+          // before the browser dispatches this event, so `onDisconnect` cannot
+          // carry the close code in its error.
           try {
             (
               globalThis as {
@@ -222,28 +215,9 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       return socket;
     }) as typeof webSocketConstructor;
 
-    // Ping/pong watchdog observation.
-    //
-    // `makeProtocolSocket` runs a watchdog: it writes a Ping every 5s and, if no
-    // Pong arrived since the previous one, fails the read loop with
-    // `SocketError("ping timeout")`. With `retryPolicy: Schedule.recurs(0)`
-    // below, one missed Pong is fatal, and the socket teardown then reports a
-    // hard-coded `close(1000)` -- so this shows up as a clean, deliberate-looking
-    // close roughly 10s after connect.
-    //
-    // Measured connection lifetimes are 86% inside 10.0-11.0s (median 10495ms),
-    // which is a timer firing rather than load: a contended machine produces
-    // scatter. But that is inference from timing. These hooks measure the thing
-    // itself -- how long the server actually takes to answer a Ping.
-    //
-    // The point of `pongLatencyMs` is to locate the fix. The server answers Ping
-    // inside its per-client RPC message loop, and backend bootstrap work is
-    // async subprocess wait -- in-flight, not blocking -- so a Pong can sit
-    // behind slow handlers for seconds while the event loop looks perfectly
-    // healthy. That is exactly why the event-loop lag monitor and the CPU
-    // profiler never saw this: neither can.
-    let pingSentAtMs: number | undefined;
-    let pingSeq = 0;
+    // Ping watchdog observation. `makeProtocolSocket` pings every 5s and treats a
+    // missed Pong as a dead socket. Record each timeout in the crash log so a
+    // drop the server never saw can be told apart from one it caused.
     const monotonicMs = () => (typeof performance !== "undefined" ? performance.now() : 0);
     const emitPingDiagnostic = (data: Record<string, unknown>) => {
       try {
@@ -260,70 +234,53 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       }
     };
 
+    const pingTimedOut = yield* Ref.make(false);
     const hooks = RpcClient.ConnectionHooks.of({
-      onPing: Effect.sync(() => {
-        pingSeq += 1;
-        pingSentAtMs = monotonicMs();
-      }),
-      onPong: Effect.sync(() => {
-        if (pingSentAtMs === undefined) return;
-        const latency = Math.round(monotonicMs() - pingSentAtMs);
-        // The first pong of a connection establishes a baseline; without it a
-        // silent log could mean either "always fast" or "hook never fired".
-        // After that only report the slow ones, so a healthy session stays quiet.
-        if (pingSeq === 1 || latency >= 500) {
-          emitPingDiagnostic({ event: "pong", pingSeq, pongLatencyMs: latency });
-        }
-      }),
-      onPingTimeout: Effect.sync(() => {
-        emitPingDiagnostic({
-          event: "ping-timeout",
-          pingSeq,
-          // No pong arrived for this ping; this is how long it had been waiting
-          // when the watchdog gave up and killed a socket that is very likely
-          // still open.
-          waitedMs: pingSentAtMs === undefined ? null : Math.round(monotonicMs() - pingSentAtMs),
-        });
-      }),
       onConnect: Deferred.succeed(connected, undefined).pipe(Effect.asVoid),
-      onDisconnect: Deferred.isDone(connected).pipe(
-        Effect.flatMap((wasConnected) =>
+      onDisconnect: Effect.all([Deferred.isDone(connected), Ref.get(pingTimedOut)]).pipe(
+        Effect.flatMap(([wasConnected, timedOut]) =>
           Deferred.fail(
             disconnected,
             new ConnectionTransientErrorClass({
               reason: "transport",
               detail: `${
-                wasConnected
-                  ? `${connection.label} disconnected.`
-                  : `${connection.label} could not establish a WebSocket connection.`
-              }${closeInfo ? ` [${closeInfo}]` : " [no close event observed]"}${networkHint}`,
+                !wasConnected
+                  ? `${connection.label} could not establish a WebSocket connection.`
+                  : timedOut
+                    ? `${connection.label} stopped responding.`
+                    : `${connection.label} disconnected.`
+              }${networkHint}`,
             }),
           ),
         ),
         Effect.asVoid,
       ),
     });
-    const socketLayer = Socket.layerWebSocket(connection.socketUrl, {
+    const layerSocket = Socket.layerWebSocket(connection.socketUrl, {
       openTimeout: SOCKET_OPEN_TIMEOUT,
     }).pipe(
       Layer.provide(Layer.succeed(Socket.WebSocketConstructor, observingWebSocketConstructor)),
     );
-    const protocolLayer = Layer.effect(
+    const layerProtocol = Layer.effect(
       RpcClient.Protocol,
       RpcClient.makeProtocolSocket({
+        pingTimeout: PING_TIMEOUT,
         retryTransientErrors: false,
         retryPolicy: Schedule.recurs(0),
+        onPingTimeout: Ref.set(pingTimedOut, true).pipe(
+          Effect.andThen(Effect.sync(() => emitPingDiagnostic({ event: "ping-timeout" }))),
+        ),
       }),
     ).pipe(
       Layer.provide(
         Layer.mergeAll(
-          socketLayer,
+          layerSocket,
           RpcSerialization.layerJson,
           Layer.succeed(RpcClient.ConnectionHooks, hooks),
         ),
       ),
     );
-    const protocolContext = yield* Layer.build(protocolLayer).pipe(
+    const protocolContext = yield* Layer.build(layerProtocol).pipe(
       Effect.withSpan("environment.websocket.connect"),
     );
     const protocolClient = yield* makeWsRpcProtocolClient.pipe(Effect.provide(protocolContext));

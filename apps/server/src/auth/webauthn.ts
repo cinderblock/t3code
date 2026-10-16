@@ -8,6 +8,7 @@
  * `clientDataJSON` is written by the browser and covered by the assertion
  * signature, so it does not depend on proxy headers.
  */
+// @effect-diagnostics-next-line nodeBuiltinImport:off - WebAuthn needs JWK public keys and signature verification, which Effect Crypto does not provide.
 import * as NodeCrypto from "node:crypto";
 
 import type {
@@ -15,7 +16,7 @@ import type {
   AuthPasskeyRegistrationCredential,
 } from "@t3tools/contracts";
 import { decodeCBOR, decodePartialCBOR, type CBORType } from "@levischuck/tiny-cbor";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -94,7 +95,7 @@ const fail = (code: WebAuthnFailureCode, reason: string): WebAuthnFailure => ({
 });
 
 function decodeBase64Url(value: string): Uint8Array | null {
-  const decoded = Encoding.decodeBase64Url(value);
+  const decoded = Base64Url.decode(value);
   return Result.isSuccess(decoded) ? decoded.success : null;
 }
 
@@ -191,7 +192,7 @@ function checkAuthenticatorFlags(
 
 function coseBytes(key: Map<string | number, CBORType>, label: number): string | null {
   const value = key.get(label);
-  return value instanceof Uint8Array ? Encoding.encodeBase64Url(value) : null;
+  return value instanceof Uint8Array ? Base64Url.encode(value) : null;
 }
 
 /** Converts a COSE_Key to a JWK for `node:crypto`. Returns null for anything we do not accept. */
@@ -280,7 +281,7 @@ export function verifyRegistrationResponse(input: {
     return fail("malformed", "The authenticator returned no credential.");
   }
 
-  const credentialId = Encoding.encodeBase64Url(authData.attestedCredential.credentialId);
+  const credentialId = Base64Url.encode(authData.attestedCredential.credentialId);
   if (credentialId !== credential.rawId || credentialId !== credential.id) {
     return fail("credential_mismatch", "The credential id does not match the authenticator data.");
   }

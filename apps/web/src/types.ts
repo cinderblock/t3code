@@ -49,6 +49,7 @@ export interface ChatImageAttachment extends ContractChatImageAttachment {
 export interface ChatFileAttachment extends ContractChatFileAttachment {
   readonly previewUrl?: string;
   readonly downloadable?: boolean;
+  readonly htmlRender?: boolean;
 }
 
 // Attachment types this build does not know pass through with the contract

@@ -12,7 +12,7 @@ import {
   primaryUsageWaitingDriversAtom,
   type UsageAccountView,
 } from "../../state/quota";
-import { getDriverOption } from "../settings/providerDriverMeta";
+import { providerClients } from "../settings/providerDriverMeta";
 import { UsageHistoryChart } from "./UsageHistoryChart";
 import {
   emphasizedWeeklyWindowId,
@@ -213,7 +213,7 @@ function ExpandedPanel(props: { accounts: ReadonlyArray<UsageAccountView>; nowMs
 }
 
 function driverLabel(account: UsageAccountView): string {
-  return getDriverOption(account.driver)?.label ?? String(account.driver);
+  return providerClients.get(account.driver)?.label ?? String(account.driver);
 }
 
 /**
@@ -268,7 +268,7 @@ export function UsageStatusBar() {
     // waiting on its first probe, which can take a while after startup. Say
     // so: an empty strip looks identical to the feature being broken.
     const waitingOn = waitingDrivers
-      .map((driver) => getDriverOption(driver)?.label ?? String(driver))
+      .map((driver) => providerClients.get(driver)?.label ?? String(driver))
       .join(", ");
     return (
       <div className="-mt-2 w-full shrink-0">

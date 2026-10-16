@@ -39,11 +39,8 @@ type ThreadSelectionRouteParams = {
 };
 
 function firstRouteParam(value: string | string[] | undefined): string | null {
-  if (Array.isArray(value)) {
-    return value[0] ?? null;
-  }
-
-  return value ?? null;
+  const first = Array.isArray(value) ? value[0] : value;
+  return first === undefined || first.trim().length === 0 ? null : first;
 }
 
 function latestUserMessageAt(
@@ -59,11 +56,6 @@ function latestUserMessageAt(
   return null;
 }
 
-/**
- * Builds an optimistic thread shell from the detail projection for the window
- * where the shell list has not materialized the thread yet (e.g. a thread that
- * was just created from this device).
- */
 function threadDetailToShell(
   environmentId: EnvironmentId,
   projection: OrchestrationV2ThreadProjection,
@@ -145,8 +137,6 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
       : scopedThreadKey(selectedThreadRef.environmentId, selectedThreadRef.threadId);
   const queuedMessagesByThreadKey = useThreadOutboxMessages();
   const creationOutcome = useAtomValue(pendingThreadCreationOutcomesAtom);
-  // A creation the outbox still holds or just delivered: the thread screen
-  // opened before the server made the thread, so present a stand-in shell.
   const pendingCreation = useMemo<PendingThreadCreation | null>(() => {
     if (selectedThreadKey === null) {
       return null;
@@ -159,7 +149,8 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
     return message === null ? null : { message, outcome };
   }, [creationOutcome, queuedMessagesByThreadKey, selectedThreadKey]);
   // Until the creation is delivered the server has no thread to subscribe
-  // to; subscribing anyway would retry "not found" for the whole setup.
+  // to. Every detail reader must use this ref, not the route id: an earlier
+  // read gets a definitive not-found, which the thread state keeps as deleted.
   const selectedThreadDetailRef =
     selectedThreadShell !== null ||
     pendingCreation === null ||
@@ -167,8 +158,6 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
       ? selectedThreadRef
       : null;
   const [previousCreation, setPreviousCreation] = useState<PendingThreadCreation | null>(null);
-  // Normal selection is shell-only. Detail readers subscribe separately; only
-  // optimistic creation needs the projection here until its prompt arrives.
   const needsDetail =
     selectedThreadShell === null || pendingCreation !== null || previousCreation !== null;
   const selectedThreadDetailState = useEnvironmentThread(

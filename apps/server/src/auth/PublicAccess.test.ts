@@ -10,7 +10,7 @@ import * as Result from "effect/Result";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
-import { SqlitePersistenceMemory } from "../persistence/Layers/Sqlite.ts";
+import * as Sqlite from "../persistence/Sqlite.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import * as PublicAccess from "./PublicAccess.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
@@ -22,9 +22,9 @@ const ORIGIN = "https://t3.example.com";
 const client = { deviceType: "desktop" as const, browser: "Chrome", os: "macOS" };
 
 const authLayer = EnvironmentAuth.layer.pipe(
-  Layer.provideMerge(SqlitePersistenceMemory),
+  Layer.provideMerge(Sqlite.layerMemory),
   Layer.provide(ServerSecretStore.layer),
-  Layer.provide(ServerEnvironment.identityLayer),
+  Layer.provide(ServerEnvironment.layerIdentity),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-public-access-test-" })),
 );
 

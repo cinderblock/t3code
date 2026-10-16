@@ -12,6 +12,7 @@
  * Ceremony challenges live in memory: they are single-use, expire after a few
  * minutes, and are bounded so unauthenticated callers cannot grow the map.
  */
+// @effect-diagnostics-next-line nodeBuiltinImport:off - WebAuthn needs JWK public keys and signature verification, which Effect Crypto does not provide.
 import * as NodeCrypto from "node:crypto";
 import * as NodeNet from "node:net";
 
@@ -34,7 +35,7 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -42,7 +43,7 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/unstable/sql/SqlClient";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SessionStore from "./SessionStore.ts";
 import {
@@ -355,13 +356,13 @@ const toAuthPasskey = (row: PasskeyRow): AuthPasskey => ({
 });
 
 const randomBase64Url = (bytes: number) =>
-  Encoding.encodeBase64Url(new Uint8Array(NodeCrypto.randomBytes(bytes)));
+  Base64Url.encode(new Uint8Array(NodeCrypto.randomBytes(bytes)));
 
 /** Reads the challenge a ceremony answered, to find its pending entry. */
 const ClientDataChallenge = Schema.fromJsonString(Schema.Struct({ challenge: Schema.String }));
 const decodeClientDataChallenge = Schema.decodeUnknownOption(ClientDataChallenge);
 function readCeremonyChallenge(clientDataJson: string): string | null {
-  const bytes = Encoding.decodeBase64UrlString(clientDataJson);
+  const bytes = Base64Url.decodeString(clientDataJson);
   if (Result.isFailure(bytes)) return null;
   return Option.getOrNull(
     Option.map(decodeClientDataChallenge(bytes.success), (data) => data.challenge),

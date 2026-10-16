@@ -2,6 +2,7 @@
  * A software WebAuthn authenticator for tests. It produces the same
  * base64url JSON a browser hands to the server, signed with a real key.
  */
+// @effect-diagnostics-next-line nodeBuiltinImport:off - The test authenticator generates key pairs and signs assertions, which Effect Crypto does not provide.
 import * as NodeCrypto from "node:crypto";
 
 import type {
@@ -9,7 +10,7 @@ import type {
   AuthPasskeyRegistrationCredential,
 } from "@t3tools/contracts";
 import { encodeCBOR, type CBORType } from "@levischuck/tiny-cbor";
-import * as Encoding from "effect/Encoding";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Schema from "effect/Schema";
 
 const encodeClientDataJson = Schema.encodeSync(
@@ -53,7 +54,7 @@ export function makeSoftwareAuthenticator(options: SoftwareAuthenticatorOptions 
       ? NodeCrypto.generateKeyPairSync("ec", { namedCurve: "P-256" })
       : NodeCrypto.generateKeyPairSync("ed25519");
   const credentialId = new Uint8Array(NodeCrypto.randomBytes(32));
-  const credentialIdText = Encoding.encodeBase64Url(credentialId);
+  const credentialIdText = Base64Url.encode(credentialId);
   let userHandle: string | undefined;
 
   const coseKey = (key: NodeCrypto.KeyObject): CBORType => {
@@ -118,10 +119,10 @@ export function makeSoftwareAuthenticator(options: SoftwareAuthenticatorOptions 
         rawId: credentialIdText,
         type: "public-key",
         response: {
-          clientDataJSON: Encoding.encodeBase64Url(
+          clientDataJSON: Base64Url.encode(
             clientData("webauthn.create", input.challenge, input.origin),
           ),
-          attestationObject: Encoding.encodeBase64Url(attestationObject),
+          attestationObject: Base64Url.encode(attestationObject),
           transports: ["internal", "hybrid"],
         },
       };
@@ -148,9 +149,9 @@ export function makeSoftwareAuthenticator(options: SoftwareAuthenticatorOptions 
         rawId: credentialIdText,
         type: "public-key",
         response: {
-          clientDataJSON: Encoding.encodeBase64Url(clientDataBytes),
-          authenticatorData: Encoding.encodeBase64Url(authData),
-          signature: Encoding.encodeBase64Url(new Uint8Array(signature)),
+          clientDataJSON: Base64Url.encode(clientDataBytes),
+          authenticatorData: Base64Url.encode(authData),
+          signature: Base64Url.encode(new Uint8Array(signature)),
           ...(userHandle ? { userHandle } : {}),
         },
       };

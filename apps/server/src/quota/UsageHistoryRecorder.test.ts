@@ -4,7 +4,7 @@ import * as Layer from "effect/Layer";
 import type { ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
-import { makeProviderRegistryLayer } from "../provider/testUtils/providerRegistryMock.ts";
+import * as ProviderRegistryMock from "../provider/testUtils/providerRegistryMock.ts";
 import ForkMigration0001 from "../persistence/Migrations/fork/001_UsageSamples.ts";
 import * as UsageHistoryRecorder from "./UsageHistoryRecorder.ts";
 
@@ -23,7 +23,7 @@ const limitsAt = (checkedAt: string, usedPercent: number): ServerProvider["usage
 const layer = it.layer(
   Layer.mergeAll(
     Layer.effect(UsageHistoryRecorder.UsageHistoryRecorder, UsageHistoryRecorder.make).pipe(
-      Layer.provide(makeProviderRegistryLayer([])),
+      Layer.provide(ProviderRegistryMock.layer([])),
       Layer.provideMerge(NodeSqliteClient.layer({ filename: ":memory:" })),
     ),
   ),

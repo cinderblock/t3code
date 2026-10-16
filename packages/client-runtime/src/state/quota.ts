@@ -1,7 +1,7 @@
 import { WS_METHODS, type QueuedMessage, type QueuedMessageStreamEvent } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
-import type { Atom } from "effect/unstable/reactivity";
+import type { Atom } from "effect/reactivity";
 
 import {
   createEnvironmentRpcCommand,

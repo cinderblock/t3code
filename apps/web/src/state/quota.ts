@@ -8,7 +8,7 @@ import type {
 import { isProviderAvailable } from "@t3tools/contracts";
 import { providersWithLimits } from "@t3tools/shared/usageLimits";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { primaryEnvironmentIdAtom } from "./primaryEnvironment";

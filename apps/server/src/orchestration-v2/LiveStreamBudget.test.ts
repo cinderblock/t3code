@@ -36,12 +36,10 @@ describe("LiveStreamBudget", () => {
               ),
             );
             expect(yield* pull).toEqual([{ text: "first" }]);
-            // The other two items are in the source's pull state, not its queue.
             expect(yield* Queue.size(queue)).toBe(0);
             expect((yield* budget.usage).retainedItems).toBe(3);
             const overflow = yield* budget.retain({ text: "fourth" }).pipe(Effect.result);
             expect(overflow._tag).toBe("Failure");
-            // Do not resume the consumer. Its source scope must close now.
             yield* Deferred.await(sourceClosed);
             yield* budget.closed;
             expect((yield* budget.usage).retainedItems).toBe(1);
@@ -78,8 +76,9 @@ it.effect("stops draining a slow subscriber when its unacknowledged tail fills",
 type Event = { readonly sequence: number; readonly text: string; readonly threadId?: string };
 
 describe("replayAndBufferLiveEvents", () => {
-  for (const phase of ["high-water", "replay"] as const) {
-    it.effect(`unsubscribes and cancels a blocked ${phase} read on live overflow`, () =>
+  it.effect.each(["high-water", "replay"] as const)(
+    "unsubscribes and cancels a blocked %s read on live overflow",
+    (phase) =>
       Effect.scoped(
         Effect.gen(function* () {
           const pubsub = yield* PubSub.unbounded<Event>();
@@ -116,16 +115,15 @@ describe("replayAndBufferLiveEvents", () => {
           expect(result._tag).toBe("Failure");
           if (result._tag === "Failure") expect(result.failure._tag).toBe("LiveStreamBufferError");
           expect(yield* PubSub.size(pubsub)).toBe(0);
-          // Further publications do not accumulate for the abandoned subscriber.
           yield* PubSub.publish(pubsub, { sequence: 4, text: "after overflow" });
           expect(yield* PubSub.size(pubsub)).toBe(0);
         }),
       ),
-    );
-  }
+  );
 
-  for (const limit of ["items", "bytes"] as const) {
-    it.effect(`counts an unacknowledged replay batch toward the live ${limit} limit`, () =>
+  it.effect.each(["items", "bytes"] as const)(
+    "counts an unacknowledged replay batch toward the live %s limit",
+    (limit) =>
       Effect.scoped(
         Effect.gen(function* () {
           const pubsub = yield* PubSub.unbounded<Event>();
@@ -150,7 +148,6 @@ describe("replayAndBufferLiveEvents", () => {
           );
           expect(yield* pull).toEqual([replayed]);
           yield* PubSub.publish(pubsub, live);
-          // The client has not acknowledged replay; cleanup must still finish.
           yield* (yield* Deferred.await(subscribed)).shutdownHook.await;
           expect(yield* PubSub.size(pubsub)).toBe(0);
           const result = yield* pull.pipe(Effect.result);
@@ -158,8 +155,7 @@ describe("replayAndBufferLiveEvents", () => {
           if (result._tag === "Failure") expect(result.failure._tag).toBe("LiveStreamBufferError");
         }),
       ),
-    );
-  }
+  );
 
   it.effect("lets a fast reader replay a database page larger than both buffer limits", () =>
     Effect.scoped(
@@ -264,7 +260,6 @@ describe("replayAndBufferLiveEvents", () => {
             { sequence: 4, text: "raw tail" },
             { sequence: 5, text: "overflow" },
           ]);
-          // Two projected slots and two raw slots cannot retain a fifth event.
           yield* subscription.shutdownHook.await;
           expect(yield* PubSub.size(pubsub)).toBe(0);
           yield* Deferred.succeed(releaseProjection, undefined);

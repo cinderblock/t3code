@@ -11,6 +11,7 @@ import { SourceControlProviderError, SourceControlProviderInfo } from "./sourceC
 import { VcsDriverKind } from "./vcs.ts";
 
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
+const GitFilePath = Schema.String.check(Schema.isNonEmpty());
 const GIT_LIST_BRANCHES_MAX_LIMIT = 200;
 export const GIT_GRAPH_MAX_LIMIT = 500;
 export const GIT_GRAPH_DEFAULT_LIMIT = 200;
@@ -20,8 +21,6 @@ export const GIT_GRAPH_DEFAULT_LIMIT = 200;
  * is a hazard in this codebase.
  */
 export const GIT_WORKTREE_CHANGES_MAX_PATHS = 32;
-
-// Domain Types
 
 export const GitStackedAction = Schema.Literals([
   "commit",
@@ -112,8 +111,6 @@ const GitResolvedPullRequest = Schema.Struct({
 });
 export type GitResolvedPullRequest = typeof GitResolvedPullRequest.Type;
 
-// RPC Inputs
-
 export const VcsStatusInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   // Honored only by vcs.refreshStatus: when false, refresh local status but skip the
@@ -123,6 +120,13 @@ export const VcsStatusInput = Schema.Struct({
   refreshRemote: Schema.optional(Schema.Boolean),
 });
 export type VcsStatusInput = typeof VcsStatusInput.Type;
+
+export const VcsStatusSubscriptionInput = Schema.Struct({
+  ...VcsStatusInput.fields,
+  /** Passive observers receive cached remote status without retaining its refresh loop. */
+  includeRemote: Schema.optional(Schema.Boolean),
+});
+export type VcsStatusSubscriptionInput = typeof VcsStatusSubscriptionInput.Type;
 
 export const VcsPullInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
@@ -135,10 +139,7 @@ export const GitRunStackedActionInput = Schema.Struct({
   action: GitStackedAction,
   commitMessage: Schema.optional(TrimmedNonEmptyStringSchema.check(Schema.isMaxLength(10_000))),
   featureBranch: Schema.optional(Schema.Boolean),
-  filePaths: Schema.optional(
-    Schema.Array(TrimmedNonEmptyStringSchema).check(Schema.isMinLength(1)),
-  ),
-  /** The thread the action runs beside; a pull request it creates is linked to it. */
+  filePaths: Schema.optional(Schema.Array(GitFilePath).check(Schema.isMinLength(1))),
   threadId: Schema.optional(ThreadId),
   projectId: Schema.optional(ProjectId),
 });
@@ -240,8 +241,6 @@ export const VcsInitInput = Schema.Struct({
 });
 export type VcsInitInput = typeof VcsInitInput.Type;
 
-// RPC Results
-
 const VcsStatusChangeRequest = Schema.Struct({
   number: PositiveInt,
   title: TrimmedNonEmptyStringSchema,
@@ -249,13 +248,7 @@ const VcsStatusChangeRequest = Schema.Struct({
   baseRef: TrimmedNonEmptyStringSchema,
   headRef: TrimmedNonEmptyStringSchema,
   state: VcsStatusChangeRequestState,
-  /** Optional for compatibility with older servers and providers. */
   isDraft: Schema.optional(Schema.Boolean),
-  /**
-   * Last provider-side activity (ISO), including comments and metadata edits.
-   * This is not the time a change request closed or merged. Optional for old
-   * servers and providers whose lookups do not report it.
-   */
   updatedAt: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
@@ -269,7 +262,7 @@ const VcsStatusLocalShape = {
   workingTree: Schema.Struct({
     files: Schema.Array(
       Schema.Struct({
-        path: TrimmedNonEmptyStringSchema,
+        path: GitFilePath,
         insertions: NonNegativeInt,
         deletions: NonNegativeInt,
       }),
@@ -277,6 +270,13 @@ const VcsStatusLocalShape = {
     insertions: NonNegativeInt,
     deletions: NonNegativeInt,
   }),
+  branchChanges: Schema.optional(
+    Schema.Struct({
+      baseRef: Schema.NullOr(TrimmedNonEmptyStringSchema),
+      insertions: NonNegativeInt,
+      deletions: NonNegativeInt,
+    }),
+  ),
 };
 
 const VcsStatusRemoteShape = {
@@ -479,7 +479,21 @@ export const VcsPullResult = Schema.Struct({
 });
 export type VcsPullResult = typeof VcsPullResult.Type;
 
-// RPC / domain errors
+// Git's stderr itself stays off the error: it echoes argv and remote URLs,
+// which can hold credentials. The tag names the cause for logs and callers; it
+// does not select a message.
+export const GitCommandFailureReason = Schema.Literals([
+  "authentication_failed",
+  "branch_already_exists",
+  "branch_checked_out_in_worktree",
+  "host_key_unverified",
+  "not_a_repository",
+  "path_already_exists",
+  "remote_unreachable",
+  "tag_would_be_clobbered",
+]);
+export type GitCommandFailureReason = typeof GitCommandFailureReason.Type;
+
 export class GitCommandError extends Schema.TaggedError<GitCommandError>()("GitCommandError", {
   operation: Schema.String,
   command: Schema.String,
@@ -489,11 +503,13 @@ export class GitCommandError extends Schema.TaggedError<GitCommandError>()("GitC
   stdoutLength: Schema.optional(Schema.Number),
   stderrLength: Schema.optional(Schema.Number),
   outputLength: Schema.optional(Schema.Number),
+  reason: Schema.optional(GitCommandFailureReason),
   detail: Schema.String,
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
-    return `Git command failed in ${this.operation} (${this.cwd}): ${this.detail}`;
+    const reason = this.reason === undefined ? "" : ` (${this.reason})`;
+    return `Git command failed in ${this.operation} (${this.cwd}): ${this.detail}${reason}`;
   }
 }
 

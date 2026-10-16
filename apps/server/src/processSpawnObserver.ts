@@ -26,7 +26,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 
 /**
  * How a subprocess finished, from the spawner's point of view.
@@ -208,7 +208,7 @@ export function summarizeRecords(
 }
 
 export const make = Effect.fn("ProcessSpawnObserver.make")(function* () {
-  const platform = yield* HostProcessPlatform;
+  const platform = yield* HostProcess.Platform;
   const isWindows = platform === "win32";
 
   const summarize = Effect.fn("ProcessSpawnObserver.summarize")(function* (

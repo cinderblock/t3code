@@ -21,7 +21,7 @@ import {
 } from "@simplewebauthn/browser";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { HttpClientError } from "effect/unstable/http";
+import { HttpClientError } from "effect/http";
 
 import { runPrimaryHttp } from "../../lib/runtime";
 import { completeBrowserSessionSignIn } from "./auth";

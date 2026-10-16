@@ -5,7 +5,7 @@ import {
   type ServerConfig,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import { AVAILABLE_CONNECTION_STATE, type SupervisorConnectionState } from "../connection/model.ts";
 import {
@@ -15,6 +15,7 @@ import {
   type EnvironmentPresentation,
 } from "../connection/presentation.ts";
 import type { EnvironmentCatalogState } from "./connections.ts";
+import { hasRelayRoute } from "../connection/routes.ts";
 
 function mapsEqual<K, V>(left: ReadonlyMap<K, V>, right: ReadonlyMap<K, V>): boolean {
   if (left.size !== right.size) {
@@ -33,7 +34,6 @@ export function createEnvironmentPresentationAtoms<E>(input: {
   readonly stateAtom: (
     environmentId: EnvironmentId,
   ) => Atom.Atom<AsyncResult.AsyncResult<SupervisorConnectionState, E>>;
-  /** Authoritative live server config, including streamed provider/settings updates. */
   readonly serverConfigValueAtom: (environmentId: EnvironmentId) => Atom.Atom<ServerConfig | null>;
 }) {
   const presentationAtom = Atom.family((environmentId: EnvironmentId) =>
@@ -98,7 +98,7 @@ export function projectEnvironmentConnectionSummary(
     environmentId,
     environmentLabel: environment.entry.target.label,
     displayUrl: connectionCatalogDisplayUrl(environment.entry) ?? "",
-    isRelayManaged: environment.entry.target._tag === "RelayConnectionTarget",
+    isRelayManaged: hasRelayRoute(environment.entry),
     isEnabled: environment.entry.enabled,
     connectionState: environment.connection.phase,
     connectionError: environment.connection.error,
@@ -106,7 +106,6 @@ export function projectEnvironmentConnectionSummary(
   };
 }
 
-// Keep list membership and connection chrome independent of provider/config refreshes.
 export function createEnvironmentSummaryAtoms(input: {
   readonly catalogValueAtom: Atom.Atom<EnvironmentCatalogState>;
   readonly presentationAtom: (
@@ -146,7 +145,6 @@ export function createEnvironmentSummaryAtoms(input: {
       if (presentation === null) return null;
       const next = projectEnvironmentConnectionSummary(environmentId, presentation);
       const previous = Option.getOrNull(get.self<EnvironmentConnectionSummary | null>());
-      // Provider refreshes and transport heartbeats do not change connection UI.
       if (
         previous !== null &&
         previous.environmentId === next.environmentId &&

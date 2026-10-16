@@ -16,6 +16,7 @@ github:aoright
 github:arhxam
 github:bil0000
 github:binbandit
+github:bompus
 github:Brechard
 github:btsouth
 github:cestercian
@@ -25,6 +26,7 @@ github:cursoragent
 github:D3OXY
 github:dbalders
 github:eggfriedrice24
+github:esthor
 github:extoci
 github:f-trycua
 github:flamboh

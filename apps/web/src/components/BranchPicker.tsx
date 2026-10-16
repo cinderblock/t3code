@@ -28,7 +28,6 @@ import {
 } from "./ui/combobox";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
-/** Shared composer picker UI. The caller owns selection and any checkout mutations. */
 export function BranchPicker({
   items,
   filteredItems,
@@ -264,6 +263,7 @@ export function BranchPickerRefItem({
   projectCwd: activeProjectCwd,
   index,
   value,
+  disabled,
   onClick,
   onContextMenu,
 }: {
@@ -271,6 +271,7 @@ export function BranchPickerRefItem({
   projectCwd: string | null;
   index: number;
   value?: string;
+  disabled?: boolean;
   onClick: ComponentProps<typeof ComboboxItem>["onClick"];
   onContextMenu?: ComponentProps<typeof ComboboxItem>["onContextMenu"];
 }) {
@@ -288,6 +289,7 @@ export function BranchPickerRefItem({
           : null;
   return (
     <ComboboxItem
+      disabled={disabled}
       hideIndicator
       key={itemValue}
       index={index}
