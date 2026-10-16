@@ -397,7 +397,7 @@ export const layer = HttpApiBuilder.group(
               EnvironmentAuth.serverAuthDpopFailureReason(error),
             ),
           ),
-          Effect.catchTag("AuthAttemptsExceededError", failEnvironmentRateLimited),
+          Effect.catchTags({ AuthAttemptsExceededError: failEnvironmentRateLimited }),
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("browser_session_issuance_failed", error),
           ),
@@ -456,7 +456,7 @@ export const layer = HttpApiBuilder.group(
               .pipe(recordRejected(client.ipAddress));
           },
           traceRelayRequest,
-          Effect.catchTag("AuthAttemptsExceededError", failEnvironmentRateLimited),
+          Effect.catchTags({ AuthAttemptsExceededError: failEnvironmentRateLimited }),
           Effect.catchIf(EnvironmentAuth.isServerAuthCredentialError, (error) =>
             failEnvironmentAuthInvalid(
               EnvironmentAuth.serverAuthCredentialReason(error),
@@ -731,9 +731,10 @@ export const layer = HttpApiBuilder.group(
             const revoked = yield* publicAccess.revokePasskey(args.payload.id);
             return { revoked };
           },
-          Effect.catchTag("PublicAccessStoreError", (error) =>
-            failEnvironmentInternal("public_access_store_failed", error),
-          ),
+          Effect.catchTags({
+            PublicAccessStoreError: (error) =>
+              failEnvironmentInternal("public_access_store_failed", error),
+          }),
         ),
       );
   }),

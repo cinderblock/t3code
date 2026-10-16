@@ -3,6 +3,7 @@ import { ChevronDownIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { ServerProviderUsageWindow } from "@t3tools/contracts";
 
+import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { primaryEnvironmentIdAtom } from "../../state/primaryEnvironment";
@@ -256,10 +257,7 @@ export function UsageStatusBar() {
       setMetersHeight(metersInner.offsetHeight);
     };
     measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(chartsInner);
-    observer.observe(metersInner);
-    return () => observer.disconnect();
+    return observeResize([chartsInner, metersInner], measure);
   }, [accounts.length]);
 
   if (accounts.length === 0) {
@@ -356,7 +354,7 @@ export function UsageStatusBar() {
                     tabIndex={expanded ? undefined : -1}
                     className={cn(
                       "flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none",
-                      "hover:bg-accent/40 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
+                      "hover:bg-accent/40 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
                     )}
                   >
                     <ChevronDownIcon className="size-3.5" />

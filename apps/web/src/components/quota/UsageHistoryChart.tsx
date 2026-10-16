@@ -190,11 +190,14 @@ export function UsageHistoryChart(props: {
               <span
                 key={window.id}
                 className={cn(
-                  "flex items-center gap-1 text-[10px] text-muted-foreground",
+                  "flex items-center gap-1 text-3xs text-muted-foreground",
                   seriesSlotClassForWindow(window),
                 )}
               >
-                <span className="inline-block size-2 rounded-[2px] bg-[var(--series-color)]" />
+                <span
+                  className="inline-block size-2 rounded-xs"
+                  style={{ backgroundColor: "var(--series-color)" }}
+                />
                 {windowShortLabel(window)}
               </span>
             ))}
