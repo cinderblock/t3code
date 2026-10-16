@@ -134,8 +134,7 @@ Predecessor: [`merge-upstream-main-2026-10-02.md`](./merge-upstream-main-2026-10
       `GIT_SSH_COMMAND` "structured errors", 1 pathspec-magic filename) and 3 in desktop (two
       symlinked-settings tests and one download path, all `/` vs `\`).
 - [x] Commits on `merge/upstream-v0.1.0`: merge `b0b47eefeb`, lint fixes, ISSUES.md, this plan.
-- [ ] Fast-forward `master` in the shared checkout; remove the worktree and branches
-      (`merge/upstream-v0.1.0`, `backup/merge-upstream-v0.1.0-badmsg`).
+- [x] Fast-forwarded `master` to `d24cc6b05b` (2026-10-16); merge worktree and branches removed.
 - [ ] Next launch: `scripts/start-t3.ps1` reinstalls (lockfile changed) and rebuilds.
 
 ## Open questions for the user
