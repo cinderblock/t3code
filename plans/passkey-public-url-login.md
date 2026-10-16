@@ -206,3 +206,21 @@ Open design questions for the user (not changed):
       applies happen in CI on push.
 - Live DB check: no passkey stored yet (`fork_auth_passkeys` empty), so first enrollment has not
   succeeded. Trace files rotate every few minutes, so the failed attempt left no trace.
+
+## Upstream fine-grained permissions (2026-10-16, v0.1.0 merge)
+
+Upstream split the coarse scopes into `settings:write`, `providers:manage`, `environment:maintain`,
+`preview:operate`, `diagnostics:read`, `terminal:read`, `source-control:write`,
+`filesystem:read`/`filesystem:write` (#9786–#9790). How passkeys interact:
+
+- **Fails closed.** Servers never expand stored grants. A passkey replays the scopes stored at
+  enrollment, so the one enrolled on 2026-10-13 (`https://t3.example.com`, "Chrome on iOS",
+  never used) carries only the old set and gets none of the new permissions. Clients show
+  "Permissions have changed for …" for such sessions.
+- **No escalation.** Enrollment still needs a browser cookie session with `access:write`; a
+  passkey copies that session's scopes; a pairing link can only delegate scopes its creator holds.
+- **Browser-session origin check** (#18509) applies to passkey cookies and the WebSocket upgrade.
+- Fixed `7e66f669e3`: the passkey login response now includes `permissions`, so clients no longer
+  infer new permissions from legacy parent scopes on the first response.
+- **To upgrade the existing passkey:** create a pairing link with the permissions you want from the
+  desktop app, pair on the public origin, enroll a new passkey, revoke the old one.
