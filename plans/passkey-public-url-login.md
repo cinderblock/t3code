@@ -224,3 +224,9 @@ Upstream split the coarse scopes into `settings:write`, `providers:manage`, `env
   infer new permissions from legacy parent scopes on the first response.
 - **To upgrade the existing passkey:** create a pairing link with the permissions you want from the
   desktop app, pair on the public origin, enroll a new passkey, revoke the old one.
+- 2026-10-16: the user revoked every passkey and session and asked for reliable passkey access.
+  Root problem: a passkey replays a scope _snapshot_, so each new upstream permission strands it
+  again. Proposed (awaiting the user's yes): a passkey enrolled from a session holding all of
+  `AuthAdministrativeScopes` is stored as an administrator passkey and signs in with the _current_
+  `AuthAdministrativeScopes`. Narrower passkeys keep the snapshot. That's a deliberate exception to
+  upstream's "never expand stored grants", limited to credentials that already held everything.
