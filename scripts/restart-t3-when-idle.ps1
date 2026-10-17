@@ -26,8 +26,9 @@ param(
   # follow-up message to start its run.
   [int]$QuietSeconds = 120,
   [int]$PollSeconds = 20,
-  # Give up, without restarting, after this long.
-  [double]$MaxHours = 12
+  # Give up, without restarting, after this long. 0 waits as long as it takes:
+  # with agents busy all day, an idle window can be many hours away.
+  [double]$MaxHours = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -39,7 +40,8 @@ New-Item -ItemType Directory -Force -Path (Split-Path $LogPath) | Out-Null
 function Write-Log {
   param([string]$Message)
   $line = "$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) $Message"
-  Add-Content -Path $LogPath -Value $line -Encoding utf8
+  # A log write that fails (the file open in an editor) must not end the watch.
+  try { Add-Content -Path $LogPath -Value $line -Encoding utf8 } catch {}
   Write-Host $line
 }
 
@@ -52,12 +54,14 @@ function Get-Busy {
   @($json | ConvertFrom-Json)
 }
 
-Write-Log "watching for idle (quiet ${QuietSeconds}s, poll ${PollSeconds}s, give up after ${MaxHours}h)"
-$deadline = (Get-Date).AddHours($MaxHours)
+$limit = if ($MaxHours -gt 0) { "give up after ${MaxHours}h" } else { 'no time limit' }
+Write-Log "watching for idle (quiet ${QuietSeconds}s, poll ${PollSeconds}s, $limit, pid $PID)"
+$deadline = if ($MaxHours -gt 0) { (Get-Date).AddHours($MaxHours) } else { [datetime]::MaxValue }
 $idleSince = $null
 $lastReport = ''
 while ($true) {
   $busy = @()
+  # Nothing in one poll may end the watch; a failed poll just counts as busy.
   try { $busy = Get-Busy } catch {
     Write-Log "WARN $($_.Exception.Message)"
     $idleSince = $null
@@ -84,7 +88,17 @@ while ($true) {
 
 Write-Log 'idle - starting start-t3.ps1'
 $shell = (Get-Process -Id $PID).Path
-Start-Process -FilePath $shell -WindowStyle Hidden -ArgumentList @(
-  '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot 'start-t3.ps1'), '-KeepOpen', '-WaitForIdle'
-) | Out-Null
-Write-Log 'launcher started; see C:\temp\t3runs\latest.txt for its run'
+foreach ($attempt in 1..3) {
+  try {
+    Start-Process -FilePath $shell -WindowStyle Hidden -ArgumentList @(
+      '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot 'start-t3.ps1'), '-KeepOpen', '-WaitForIdle'
+    ) | Out-Null
+    Write-Log 'launcher started; see C:\temp\t3runs\latest.txt for its run'
+    exit 0
+  } catch {
+    Write-Log "WARN launcher did not start (attempt $attempt): $($_.Exception.Message)"
+    Start-Sleep -Seconds 10
+  }
+}
+Write-Log 'gave up: the launcher would not start; nothing restarted'
+exit 1
