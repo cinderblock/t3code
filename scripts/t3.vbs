@@ -11,6 +11,10 @@
 ' t3.cmd still exists for running from an already-open terminal, where seeing
 ' the output is useful.
 '
+' Safe to run while T3 Code is open: start-t3.ps1 installs and builds what is
+' needed first, then closes the running app (this build or the installed one)
+' and starts the new one. If anything fails, its console comes back and waits.
+'
 ' No arguments, by design. Diagnostics are configured in the RUN CONFIGURATION
 ' block of start-t3.ps1 and committed.
 
@@ -34,5 +38,7 @@ If Err.Number <> 0 Then exe = "powershell"
 On Error Goto 0
 
 ' 0 = hidden window, False = do not wait. start-t3.ps1 handles elevation
-' itself, so the UAC prompt still appears normally.
-shell.Run exe & " -NoProfile -ExecutionPolicy Bypass -File """ & ps1 & """", 0, False
+' itself, so the UAC prompt still appears normally. -KeepOpen makes a failure
+' wait for Enter even when the caller is already elevated and the elevation hop
+' (which adds it) is skipped.
+shell.Run exe & " -NoProfile -ExecutionPolicy Bypass -File """ & ps1 & """ -KeepOpen", 0, False

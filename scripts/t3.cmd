@@ -17,8 +17,8 @@ rem starts, then hides itself once the app has its own window.
 setlocal
 where pwsh >nul 2>&1
 if %ERRORLEVEL%==0 (
-  start "" /b pwsh -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0start-t3.ps1"
+  start "" /b pwsh -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0start-t3.ps1" -KeepOpen
 ) else (
-  start "" /b powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0start-t3.ps1"
+  start "" /b powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0start-t3.ps1" -KeepOpen
 )
 exit /b 0

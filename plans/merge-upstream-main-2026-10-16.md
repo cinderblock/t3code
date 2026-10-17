@@ -138,7 +138,17 @@ Predecessor: [`merge-upstream-main-2026-10-02.md`](./merge-upstream-main-2026-10
 - [x] Restyle lint fixed with stock variants (`ae24dbb225`): host-filter toggles take
       `segmented`'s own colors, count badge puts `tabular-nums` on an inner span, send-later
       button is `ghost-muted`. Seen in a dev client (composer); host filter needs 2+ hosts.
-- [ ] Next launch: `scripts/start-t3.ps1` reinstalls (lockfile changed) and rebuilds.
+- [ ] Next launch: `scripts/start-t3.ps1` reinstalls (lockfile changed) and rebuilds. Not run by an
+      agent: it now stops the running app first, which is the app hosting the agent.
+- [x] Launcher (2026-10-17, user request): `t3.vbs` is safe to run while T3 Code is open. It installs
+      and builds first (a failed build leaves the running app alone), then closes the running app
+      (window close, forced after 20s; this build and the installed app), launches, and waits up to
+      300s for the backend to answer. Failure handling: a `trap` shows the console and waits on any
+      error; a C# watchdog timer on its own thread shows it if a phase overruns (scan 120s, install
+      1500s, build 1200s, stop 90s); a named mutex refuses a second launch while one is starting.
+      Verified: parse, dry runs under pwsh 7 and Windows PowerShell 5.1, watchdog fire/disarm on 5.1,
+      trap on a missing `vp`. The real stop/launch path has not run yet.
+- [x] `fork-restyle-lint` worktree and its merged branches removed (2026-10-17).
 
 ## Open questions for the user
 

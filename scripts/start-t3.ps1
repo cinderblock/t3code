@@ -13,13 +13,27 @@ What a run does:
   1. Re-launches itself elevated (the app is wanted with admin rights).
   2. cd's to the repo root -- an elevated process starts in system32, so this
      is not optional.
-  3. Rebuilds if any source file is newer than the build artifacts. The app
-     runs bundles (apps/server/dist/bin.mjs, apps/desktop/dist-electron/main.cjs),
-     NOT source, so a stale bundle silently runs old code. That has already
-     cost one debugging session.
-  4. Records start/stop markers so the resulting logs can be sliced to exactly
+  3. Reinstalls dependencies when pnpm-lock.yaml moved, and rebuilds if any
+     source file is newer than the build artifacts. The app runs bundles
+     (apps/server/dist/bin.mjs, apps/desktop/dist-electron/main.cjs), NOT
+     source, so a stale bundle silently runs old code. That has already cost
+     one debugging session.
+  4. Stops the T3 Code that is already running (this build or the installed
+     app): asks its window to close, then forces it after a grace period. The
+     build runs BEFORE this, so a failed build leaves the running app alone.
+     An install cannot: pnpm cannot replace Electron's files under a live app.
+  5. Records start/stop markers so the resulting logs can be sliced to exactly
      this run (see "Run markers" below).
-  5. Launches the app, then reports where everything landed.
+  6. Launches the app and waits for its backend to answer. An app that exits
+     early, or a backend that never answers, brings the console back with the
+     tail of the log.
+
+Failure handling: the console is hidden, so a failure must never be silent.
+Any error shows the console and waits for Enter. A watchdog timer, running on
+its own thread, shows the console if a phase runs far longer than it should,
+which is what a hang looks like from outside (the 2026-10-16 staleness scan
+looped through pnpm symlinks at 100% of a core with no window at all). A
+second launch while one is still starting is refused.
 
 .NOTES
 Run markers: each run gets C:\temp\t3runs\<timestamp>\ containing run.json
@@ -126,6 +140,161 @@ function Set-ConsoleVisible {
   }
 }
 
+# A hang inside this script blocks its only thread, so nothing written in
+# PowerShell can notice it. This timer runs on a thread-pool thread instead.
+# C# 5 syntax: Windows PowerShell 5.1 compiles it with the .NET Framework csc.
+if (-not ('T3.Watchdog' -as [type])) {
+  Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Threading;
+
+namespace T3 {
+  public static class Watchdog {
+    [DllImport("kernel32.dll")] static extern IntPtr GetConsoleWindow();
+    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    static readonly object Gate = new object();
+    static Timer timer;
+    public static string LogPath;
+
+    public static void Arm(string phase, int seconds, string hint) {
+      lock (Gate) {
+        Disarm();
+        timer = new Timer(_ => Fire(phase, seconds, hint), null, seconds * 1000L, Timeout.Infinite);
+      }
+    }
+
+    public static void Disarm() {
+      lock (Gate) {
+        if (timer != null) { timer.Dispose(); timer = null; }
+      }
+    }
+
+    static void Fire(string phase, int seconds, string hint) {
+      string line = String.Format("{0:o} STUCK? '{1}' is still running after {2}s. {3}",
+        DateTime.Now, phase, seconds, hint);
+      try { ShowWindow(GetConsoleWindow(), 5); } catch { }
+      try {
+        Console.ForegroundColor = ConsoleColor.Red;
+        Console.WriteLine();
+        Console.WriteLine("  " + line);
+        Console.ResetColor();
+      } catch { }
+      try { if (LogPath != null) File.AppendAllText(LogPath, line + Environment.NewLine); } catch { }
+    }
+  }
+}
+'@
+}
+
+function Start-Phase {
+  param([string]$Name, [int]$Seconds)
+  [T3.Watchdog]::Arm($Name, $Seconds,
+    'If nothing is changing, close this window and run the launcher again.')
+}
+
+# Every terminating error lands here. Without it, a throw in a hidden console
+# (a failed build, a failed install) closed the window with no trace on screen.
+trap {
+  [T3.Watchdog]::Disarm()
+  Set-ConsoleVisible $true
+  Write-Host ''
+  Write-Host "  FAILED  : $($_.Exception.Message)" -ForegroundColor Red
+  Write-Host "            $($_.InvocationInfo.PositionMessage -replace "`n", "`n            ")" -ForegroundColor DarkRed
+  if ($RunDir) { Write-Host "  log     : $(Join-Path $RunDir 'launcher.log')" }
+  try { Stop-Transcript | Out-Null } catch {}
+  if ($KeepOpen) { Read-Host 'press Enter to close' | Out-Null }
+  exit 1
+}
+
+# Main processes of a running T3 Code: this checkout's Electron (main window,
+# helpers and the backend all run electron.exe from node_modules) and the
+# installed app, which shares this build's profile and single-instance lock.
+# Matching on the executable path keeps worktree dev servers, whose Electron
+# lives under their own node_modules, out of it.
+function Get-T3Processes {
+  $electronRoot = (Join-Path $RepoRoot 'node_modules') + '\'
+  $all = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue -Filter (
+      "Name = 'electron.exe' OR Name LIKE 'T3 Code%' OR Name = 'pwsh.exe' OR Name = 'powershell.exe'"))
+  [pscustomobject]@{
+    Apps      = @($all | Where-Object {
+        ($_.Name -eq 'electron.exe' -and $_.ExecutablePath -and
+          $_.ExecutablePath.StartsWith($electronRoot, [StringComparison]::OrdinalIgnoreCase)) -or
+        $_.Name -like 'T3 Code*'
+      })
+    # Earlier runs of this launcher, waiting on the app they started.
+    Launchers = @($all | Where-Object {
+        $_.Name -in @('pwsh.exe', 'powershell.exe') -and $_.ProcessId -ne $PID -and
+        $_.CommandLine -like '*start-t3.ps1*'
+      })
+  }
+}
+
+function Wait-Until {
+  param([scriptblock]$Done, [int]$Seconds)
+  $deadline = (Get-Date).AddSeconds($Seconds)
+  while (-not (& $Done)) {
+    if ((Get-Date) -ge $deadline) { return $false }
+    Start-Sleep -Milliseconds 500
+  }
+  $true
+}
+
+function Stop-RunningT3 {
+  $found = Get-T3Processes
+  if ($found.Apps.Count -eq 0 -and $found.Launchers.Count -eq 0) {
+    Write-Host '  stop    : no T3 Code running'
+    return $false
+  }
+  Write-Host "  stop    : $($found.Apps.Count) T3 Code process(es), $($found.Launchers.Count) earlier launcher(s)" -ForegroundColor Yellow
+  if ($DryRun) {
+    $found.Apps + $found.Launchers | ForEach-Object { Write-Host "            would stop $($_.ProcessId) $($_.Name)" }
+    return $false
+  }
+  Start-Phase 'stopping the running app' 90
+
+  # Closing the window quits the app on Windows (window-all-closed -> app.quit),
+  # which stops the backend cleanly. An earlier launcher then sees a clean exit
+  # and writes its own run.json.
+  foreach ($p in $found.Apps) {
+    $proc = Get-Process -Id $p.ProcessId -ErrorAction SilentlyContinue
+    if ($proc -and $proc.MainWindowHandle -ne [IntPtr]::Zero) { [void]$proc.CloseMainWindow() }
+  }
+  $closed = Wait-Until { (Get-T3Processes).Apps.Count -eq 0 } 20
+
+  if (-not $closed) {
+    Write-Host '            did not close within 20s - forcing' -ForegroundColor Yellow
+    # Launchers first: one whose app is killed reports a failed run and waits
+    # for Enter, which would pop up a stray console.
+    (Get-T3Processes).Launchers | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    (Get-T3Processes).Apps | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    [void](Wait-Until { (Get-T3Processes).Apps.Count -eq 0 } 15)
+  }
+  if (-not (Wait-Until { (Get-T3Processes).Launchers.Count -eq 0 } 10)) {
+    (Get-T3Processes).Launchers | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+  }
+  [T3.Watchdog]::Disarm()
+
+  $left = (Get-T3Processes).Apps
+  if ($left.Count -gt 0) {
+    throw "Could not stop the running T3 Code (pid $(($left | ForEach-Object ProcessId) -join ', '))."
+  }
+  Write-Host "            stopped$(if ($closed) { ' (closed normally)' } else { ' (forced)' })" -ForegroundColor Green
+  return $true
+}
+
+# The backend is the electron.exe running apps\server\dist\bin.mjs. Its port is
+# usually 3773 but moves when that is taken, so read it off the process.
+function Get-T3BackendPort {
+  $backend = (Get-T3Processes).Apps | Where-Object { $_.CommandLine -like '*apps\server\dist\bin.mjs*' } |
+    Select-Object -First 1
+  if (-not $backend) { return $null }
+  Get-NetTCPConnection -State Listen -OwningProcess $backend.ProcessId -ErrorAction SilentlyContinue |
+    Select-Object -ExpandProperty LocalPort -First 1
+}
+
 # Identity of the bytes that will actually execute. The commit at launch time
 # describes the SOURCE tree; it does not prove which build is running, which is
 # precisely how a month-old bundle once silently undid a database repair. The
@@ -200,11 +369,24 @@ $dirty = if ((& git status --porcelain 2>$null)) { ' (dirty)' } else { '' }
 Write-Host "  commit  : $branch @ $sha$dirty"
 Write-Host "  run dir : $RunDir"
 
-$already = @(Get-Process -Name electron -ErrorAction SilentlyContinue)
-if ($already.Count -gt 0) {
-  Write-Host "  WARNING : $($already.Count) electron process(es) already running." -ForegroundColor Yellow
-  Write-Host "            A second instance may contend for the database and port." -ForegroundColor Yellow
+[T3.Watchdog]::LogPath = Join-Path $RunDir 'watchdog.log'
+
+# One launch at a time, held until the app is up. A second click while the
+# first is still building would otherwise stop the app the first one starts.
+# An abandoned mutex (a launcher that was killed) is ours to take.
+$launchMutex = New-Object System.Threading.Mutex($false, 'Local\T3CodeDesktopLauncher')
+$ownsLaunch = $false
+try { $ownsLaunch = $launchMutex.WaitOne(0) } catch [System.Threading.AbandonedMutexException] { $ownsLaunch = $true }
+if (-not $ownsLaunch) {
+  throw 'Another launch of T3 Code is still starting. Wait for it, or close its window first.'
 }
+
+$running = Get-T3Processes
+$appRunning = $running.Apps.Count -gt 0
+if ($appRunning) {
+  Write-Host "  running : T3 Code is running; it will be stopped before the new launch" -ForegroundColor Yellow
+}
+$stoppedPrevious = $false
 
 # --- dependencies --------------------------------------------------------
 # An upstream merge that changes pnpm-lock.yaml leaves node_modules stale, and
@@ -218,16 +400,19 @@ $modulesRecord = Join-Path $RepoRoot 'node_modules\.modules.yaml'
 $lockfile = Join-Path $RepoRoot 'pnpm-lock.yaml'
 $needsInstall = -not (Test-Path $modulesRecord) -or
   ((Get-Item $lockfile).LastWriteTime -gt (Get-Item $modulesRecord).LastWriteTime)
-if ($needsInstall -and $Config.Build -ne 'never') {
+$didInstall = $false
+if ($needsInstall -and $Config.Build -ne 'never' -and $DryRun) {
+  Write-Host '  install : needed - node_modules is older than pnpm-lock.yaml (dry run, skipped)' -ForegroundColor Yellow
+} elseif ($needsInstall -and $Config.Build -ne 'never') {
   Set-ConsoleVisible $true
-  if ($already.Count -gt 0) {
-    Write-Host '  install : REFUSED - app is running' -ForegroundColor Red
-    Write-Host '            pnpm cannot replace Electron files under a live instance.' -ForegroundColor Red
-    Write-Host '            Quit the app, then re-run.' -ForegroundColor Red
-    try { Stop-Transcript | Out-Null } catch {}
-    if ($KeepOpen) { Read-Host 'press Enter to close' | Out-Null }
-    exit 1
+  if ($appRunning) {
+    if ($BuildOnly) {
+      throw 'Dependencies need reinstalling, which cannot happen under the running app. Quit it, then re-run.'
+    }
+    $stoppedPrevious = Stop-RunningT3
+    $appRunning = $false
   }
+  Start-Phase 'installing dependencies' 1500
   Write-Host '  install : node_modules is older than pnpm-lock.yaml - running vp i...' -ForegroundColor Yellow
   # pnpm asks for confirmation before recreating node_modules and aborts
   # without a TTY to ask on; CI=true answers yes. Scoped to the install so the
@@ -257,6 +442,8 @@ if ($needsInstall -and $Config.Build -ne 'never') {
   } finally {
     $env:CI = $previousCI
   }
+  [T3.Watchdog]::Disarm()
+  $didInstall = $true
   Write-Host '  install : done' -ForegroundColor Green
 }
 
@@ -281,8 +468,12 @@ $missing = @($artifacts | Where-Object { -not (Test-Path $_) })
 $needsBuild = $false
 $reason = ''
 
+Start-Phase 'checking whether the build is current' 120
 if ($Config.Build -eq 'always') {
   $needsBuild = $true; $reason = 'Build=always'
+} elseif ($didInstall) {
+  # Sources may be older than the last build, but the packages bundled into it changed.
+  $needsBuild = $true; $reason = 'dependencies were reinstalled'
 } elseif ($missing.Count -gt 0) {
   $needsBuild = $true; $reason = "missing $(($missing | Split-Path -Leaf) -join ', ')"
 } else {
@@ -334,32 +525,29 @@ if ($Config.Build -eq 'always') {
     $reason = "$($newestSrc.Name) is newer than the last build"
   }
 }
+[T3.Watchdog]::Disarm()
 
 # A rebuild regenerates content-hashed web chunks (PreviewPanel-<hash>.js and
 # friends). A RUNNING instance already holds the old names in its loaded entry
 # chunk, so any lazy route it has not visited yet fails with "Failed to fetch
-# dynamically imported module" until the window is reloaded. Harmless but
-# confusing, and entirely avoidable.
-if ($needsBuild -and $already.Count -gt 0 -and $Config.Build -ne 'never') {
-  if ($BuildOnly) {
-    Write-Host '  build   : REFUSED - app is running' -ForegroundColor Red
-    Write-Host '            Pre-warming now would swap the web chunks out from under it' -ForegroundColor Red
-    Write-Host '            and break its lazy routes. Quit the app, then re-run.' -ForegroundColor Red
-    try { Stop-Transcript | Out-Null } catch {}
-    Remove-Item $RunDir -Recurse -Force -ErrorAction SilentlyContinue
-    exit 1
-  }
-  Write-Host '  WARNING : rebuilding while an instance is running will break that' -ForegroundColor Yellow
-  Write-Host '            instance lazy routes until it is reloaded.' -ForegroundColor Yellow
+# dynamically imported module" until the window is reloaded. A normal launch
+# stops that instance right after building, so this only matters for a
+# pre-warm, which leaves it running.
+if ($needsBuild -and $appRunning -and $BuildOnly -and $Config.Build -ne 'never') {
+  throw 'Pre-warming now would swap the web chunks out from under the running app and break its lazy routes. Quit the app, then re-run.'
 }
 
 $didBuild = $false
 if ($needsBuild -and $Config.Build -eq 'never') {
   Write-Host "  build   : STALE ($reason) - running anyway (Build=never)" -ForegroundColor Yellow
+} elseif ($needsBuild -and $DryRun) {
+  Write-Host "  build   : stale ($reason) - would rebuild (dry run, skipped)" -ForegroundColor Yellow
 } elseif ($needsBuild) {
   # A build takes minutes; show the console so it does not look hung, then
-  # hide it again before the app launches.
-  if ($Config.HideConsole -and -not $DryRun) { Set-ConsoleVisible $true }
+  # hide it again before the app launches. The running app, if any, keeps
+  # running meanwhile and is stopped only once there is a build to replace it.
+  if ($Config.HideConsole) { Set-ConsoleVisible $true }
+  Start-Phase 'building' 1200
   Write-Host "  build   : stale ($reason) - rebuilding..." -ForegroundColor Yellow
   # The build is the heaviest thing this launcher does, and it runs elevated on
   # a six-core laptop that is also playing music. `vp run` defaults to four
@@ -382,7 +570,10 @@ if ($needsBuild -and $Config.Build -eq 'never') {
     Write-Host '  build   : cpu-slots broker unavailable - building at normal priority' -ForegroundColor DarkYellow
     & vp run build:desktop
   }
-  if ($LASTEXITCODE -ne 0) { throw "build:desktop failed ($LASTEXITCODE)" }
+  if ($LASTEXITCODE -ne 0) {
+    throw "build:desktop failed ($LASTEXITCODE)$(if ($appRunning) { '. The running app was left alone.' })"
+  }
+  [T3.Watchdog]::Disarm()
   $didBuild = $true
   # After the build, so a wiped dist-electron can't take the stamp with it.
   [ordered]@{
@@ -489,7 +680,16 @@ if ($Config.NetLog) {
 Write-Host "  args    : $($electronArgs -join ' ')"
 Write-Host ''
 
+# --- stop the running app ------------------------------------------------
+# Both the installed app and an earlier run of this build. The installed app
+# shares this build's Electron profile (%APPDATA%\t3code; see
+# apps/desktop/scripts/start-electron.mjs) and its single-instance lock, so
+# while it runs, this build hands off to it and exits 0 within ~2s with nothing
+# in any log -- which looked exactly like "the launcher did nothing".
+if (-not $stoppedPrevious) { $stoppedPrevious = Stop-RunningT3 }
+
 if ($DryRun) {
+  Write-Host ''
   Write-Host 'DRY RUN - would execute:' -ForegroundColor Cyan
   Write-Host "  vp run start:desktop $($electronArgs -join ' ')"
   Write-Host "  NODE_OPTIONS=$($env:NODE_OPTIONS)"
@@ -498,37 +698,78 @@ if ($DryRun) {
   exit 0
 }
 
-# The installed app shares this build's Electron profile (%APPDATA%\t3code; see
-# apps/desktop/scripts/start-electron.mjs), and the Clerk bridge takes Electron's
-# single-instance lock on it. While the installed app runs, this build is the
-# second instance: it hands off to that app and exits 0 within ~2s, with nothing
-# in any log -- which looked exactly like "the launcher did nothing". Its process
-# is named after the product, not electron.exe, so the check above misses it.
-$installed = @(Get-Process -Name 'T3 Code*' -ErrorAction SilentlyContinue)
-if ($installed.Count -gt 0) {
-  Set-ConsoleVisible $true
-  Write-Host "  BLOCKED : the installed T3 Code app is running (pid $($installed[0].Id))." -ForegroundColor Red
-  Write-Host '            It holds the single-instance lock on the shared profile, so this' -ForegroundColor Red
-  Write-Host '            build would exit immediately. Quit it (tray icon > Quit), then re-run.' -ForegroundColor Red
-  try { Stop-Transcript | Out-Null } catch {}
-  if ($KeepOpen) { Read-Host 'press Enter to close' | Out-Null }
-  exit 1
-}
-
 # --- run -----------------------------------------------------------------
 Write-Host 'App starting. Quit it normally when done.' -ForegroundColor Green
 Write-Host ''
 
-# Back to hidden for the launch itself (the build, if any, is done).
-if ($Config.HideConsole -and -not $DryRun) { Set-ConsoleVisible $false }
+# vp.exe directly, not through PATH: a terminal that already has a project's
+# node_modules\.bin on PATH would resolve vp.ps1, which Process.Start cannot run.
+$vpExe = Join-Path $env:USERPROFILE '.vite-plus\bin\vp.exe'
+if (-not (Test-Path $vpExe)) {
+  $vpExe = (Get-Command vp -CommandType Application | Where-Object { $_.Source -like '*.exe' } |
+      Select-Object -First 1).Source
+}
+$startInfo = New-Object System.Diagnostics.ProcessStartInfo $vpExe
+$startInfo.Arguments = (@('run', 'start:desktop') + $electronArgs | ForEach-Object {
+    if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' '
+$startInfo.UseShellExecute = $false
+$startInfo.WorkingDirectory = $RepoRoot
 
 $started = Get-Date
-& vp run start:desktop @electronArgs
-$code = $LASTEXITCODE
-$ended = Get-Date
+$app = [System.Diagnostics.Process]::Start($startInfo)
 
-# A failed run must not disappear silently.
-if ($code -ne 0) { Set-ConsoleVisible $true }
+# Wait for the backend to answer, so a launch that never comes up is reported
+# instead of leaving a hidden console and no window. The app retries its own
+# backend for a while (a 60s readiness timeout has been seen on a healthy run),
+# so this only warns; it never kills what it started.
+$ReadyDeadlineSeconds = 300
+$readySeconds = $null
+$readyDeadline = $started.AddSeconds($ReadyDeadlineSeconds)
+while (-not $app.HasExited -and $null -eq $readySeconds -and (Get-Date) -lt $readyDeadline) {
+  Start-Sleep -Seconds 1
+  $port = Get-T3BackendPort
+  if (-not $port) { continue }
+  try {
+    $probe = Invoke-WebRequest -Uri "http://127.0.0.1:$port/.well-known/t3/environment" -UseBasicParsing -TimeoutSec 3
+    if ($probe.StatusCode -eq 200) { $readySeconds = [int]((Get-Date) - $started).TotalSeconds }
+  } catch {}
+}
+
+function Show-LogTail {
+  if (-not (Test-Path $serverChildLog)) { return }
+  Write-Host '  last lines of server-child.log from this run:' -ForegroundColor DarkYellow
+  Get-Content $serverChildLog -Tail 25 | ForEach-Object { Write-Host "    $_" }
+}
+
+$exitedEarly = $null -eq $readySeconds -and $app.HasExited
+if ($null -ne $readySeconds) {
+  Write-Host "  ready   : backend answered after ${readySeconds}s" -ForegroundColor Green
+  # Up and running: another launch may now replace it.
+  $launchMutex.ReleaseMutex(); $ownsLaunch = $false
+  if ($Config.HideConsole) { Set-ConsoleVisible $false }
+} elseif ($exitedEarly) {
+  Set-ConsoleVisible $true
+  Write-Host "  EXITED  : the app quit after $([int]((Get-Date) - $started).TotalSeconds)s, before its backend answered (exit $($app.ExitCode))." -ForegroundColor Red
+  Show-LogTail
+} else {
+  Set-ConsoleVisible $true
+  Write-Host "  SLOW    : the backend has not answered after ${ReadyDeadlineSeconds}s. The app may still come up;" -ForegroundColor Red
+  Write-Host '            if it does not, quit it and run the launcher again.' -ForegroundColor Red
+  Show-LogTail
+  $launchMutex.ReleaseMutex(); $ownsLaunch = $false
+}
+
+$app.WaitForExit()
+$code = $app.ExitCode
+$ended = Get-Date
+if ($ownsLaunch) { $launchMutex.ReleaseMutex() }
+
+# A failed run must not disappear silently, and neither may one that quit
+# before it came up (exit 0 there is the single-instance handoff).
+if ($code -ne 0 -or $exitedEarly) {
+  Set-ConsoleVisible $true
+  if ($code -eq 0) { $code = 1 }
+}
 $endOffset = if (Test-Path $serverChildLog) { (Get-Item $serverChildLog).Length } else { 0 }
 
 # --- markers + summary ---------------------------------------------------
@@ -549,6 +790,9 @@ if ($Config.CpuProf) {
   dirty             = [bool]$dirty
   rebuilt           = $didBuild
   buildReason       = $reason
+  reinstalled       = $didInstall
+  stoppedPrevious   = $stoppedPrevious
+  readySeconds      = $readySeconds
   # Which bytes actually ran. buildStamp.commit is the commit the bundles were
   # produced from, which is the answer to "which version is running" -- the
   # top-level `commit` above is only the source tree at launch.
