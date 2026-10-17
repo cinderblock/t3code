@@ -149,7 +149,7 @@ Predecessor: [`merge-upstream-main-2026-10-02.md`](./merge-upstream-main-2026-10
       Verified: parse, dry runs under pwsh 7 and Windows PowerShell 5.1, watchdog fire/disarm on 5.1,
       trap on a missing `vp`. The real stop/launch path has not run yet.
 - [x] `fork-restyle-lint` worktree and its merged branches removed (2026-10-17).
-- [~] 2026-10-17 01:04: `scripts/restart-t3-when-idle.ps1` (`19fce52cec`) started via WMI (pid 32160,
+- [~] 2026-10-17 01:04: `scripts/restart-t3-when-idle.ps1` (`19fce52cec`) started via WMI (pid 5232 since 01:19, with the pre-stop re-check `c187ed2023`;
   parent WmiPrvSE, elevated) to run the launcher once no thread is running/queued/waiting for 120s.
   Log: `C:	emp	3runs
 estart-when-idle.log`; gives up after 12h without restarting.
