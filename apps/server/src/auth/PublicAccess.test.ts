@@ -7,6 +7,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -85,6 +86,7 @@ it.layer(NodeServices.layer)("PublicAccess", (it) => {
       const { passkey, authenticator } = yield* enroll(ENROLLER_SCOPES);
       expect(passkey).toMatchObject({ label: "Laptop", origin: ORIGIN, lastUsedAt: null });
       expect(passkey.scopes).toEqual(ENROLLER_SCOPES);
+      expect(passkey.administrative).toBe(false);
 
       const { result } = yield* signIn(authenticator);
       expect(result.response.sessionMethod).toBe("browser-session-cookie");
@@ -100,6 +102,30 @@ it.layer(NodeServices.layer)("PublicAccess", (it) => {
 
       const [listed] = yield* publicAccess.listPasskeys;
       expect(listed?.lastUsedAt).not.toBeNull();
+    }).pipe(Effect.provide(authLayer)),
+  );
+
+  it.effect("an administrator passkey signs in with the current administrative scopes", () =>
+    Effect.gen(function* () {
+      const publicAccess = yield* PublicAccess.PublicAccess;
+      const sessions = yield* SessionStore.SessionStore;
+      const sql = yield* SqlClient.SqlClient;
+      yield* publicAccess.setConfig({ origins: [ORIGIN], trustedProxies: [] });
+
+      const { passkey, authenticator } = yield* enroll(AuthAdministrativeScopes);
+      expect(passkey.administrative).toBe(true);
+      // Stands in for a snapshot taken before upstream added permissions.
+      yield* sql`
+        UPDATE fork_auth_passkeys
+        SET scopes_json = '["orchestration:read","access:write"]'
+        WHERE id = ${passkey.id}
+      `;
+
+      const { result } = yield* signIn(authenticator);
+      expect(result.response.permissions).toEqual(AuthAdministrativeScopes);
+      expect((yield* sessions.verify(result.sessionToken)).scopes).toEqual(
+        AuthAdministrativeScopes,
+      );
     }).pipe(Effect.provide(authLayer)),
   );
 

@@ -170,14 +170,17 @@ a passkey, with no VPN or pairing link after the first visit.
    the address, such as `https://t3.example.com`. If the proxy should be trusted
    for client addresses, add its IP under **Trusted proxies**.
 3. Create a pairing link that includes access management (only those sessions
-   can save a passkey) plus whatever else the passkey should allow, choose the
+   can save a passkey) plus whatever else the passkey should allow (**Full
+   access** for your own devices), choose the
    public URL under **Reach this machine via**, and open the link in the browser
    you want to use. After pairing, choose **Save passkey**.
 
 After that, open the address on any device that has the passkey (a synced password manager, a
 hardware key, or your phone through the browser's QR prompt) and choose **Sign in with passkey**.
 The pairing link is needed only once, to save the first passkey. A passkey can do what
-the pairing link that set it up allowed. Passkeys work in a browser on the public
+the pairing link that set it up allowed. A passkey saved from a link with every permission
+is marked **Full access** and also gets permissions that later versions add, so it never
+needs saving again. Passkeys work in a browser on the public
 address itself; the desktop and mobile apps and the hosted web app keep using
 pairing.
 

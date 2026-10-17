@@ -106,7 +106,11 @@ A passkey is another way into the same session model, not a separate identity.
 Enrollment requires a browser session with `access:write` on a configured
 public origin. A passkey outlives the session that created it, so a client that
 cannot manage access must not be able to mint one. The passkey carries that
-session's scopes. Signing in issues an ordinary browser-session cookie whose
+session's scopes. The exception is a session holding every administrative
+scope: its passkey signs in with the administrative set current at sign-in.
+Servers otherwise never expand stored grants, but a stored snapshot would strand
+the owner's only remote credential each time a scope is added, and a credential
+that already held everything gains nothing a full administrator lacks. Signing in issues an ordinary browser-session cookie whose
 subject names the passkey; revoking the passkey revokes those sessions too, and
 revoking other clients revokes every passkey but the current session's.
 

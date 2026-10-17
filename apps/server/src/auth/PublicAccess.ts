@@ -6,7 +6,10 @@
  * that paired on one of those origins can enroll a passkey; later visits sign
  * in with it and receive an ordinary browser session cookie. A passkey carries
  * the scopes of the session that enrolled it, so the pairing link's scopes
- * decide what it can do. Revoking a passkey also revokes the sessions it
+ * decide what it can do. One enrolled from a session holding every
+ * administrative scope is an administrator passkey: it signs in with the
+ * administrative set current at sign-in, so permissions added later reach it
+ * without re-enrolling. Revoking a passkey also revokes the sessions it
  * issued, and removing an origin disables the passkeys enrolled on it.
  *
  * Ceremony challenges live in memory: they are single-use, expire after a few
@@ -20,6 +23,7 @@ import {
   type AuthBrowserSessionResult,
   type AuthClientMetadata,
   AuthAccessWriteScope,
+  AuthAdministrativeScopes,
   authScopeResponse,
   type AuthEnvironmentScope,
   AuthEnvironmentScopes,
@@ -335,6 +339,7 @@ const PasskeyRow = Schema.Struct({
   origin: Schema.String,
   label: Schema.String,
   scopes: ScopesJson,
+  administrative: Schema.Number,
   backedUp: Schema.Number,
   createdAt: Schema.DateTimeUtcFromString,
   lastUsedAt: Schema.NullOr(Schema.DateTimeUtcFromString),
@@ -346,11 +351,18 @@ const encodeStringArray = Schema.encodeSync(StringArrayJson);
 const encodeScopes = Schema.encodeSync(ScopesJson);
 const encodeJwk = Schema.encodeSync(JwkJson);
 
+const isAdministrativeGrant = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+  AuthAdministrativeScopes.every((scope) => scopes.includes(scope));
+
+const passkeyScopes = (row: PasskeyRow): ReadonlyArray<AuthEnvironmentScope> =>
+  row.administrative !== 0 ? AuthAdministrativeScopes : row.scopes;
+
 const toAuthPasskey = (row: PasskeyRow): AuthPasskey => ({
   id: row.id,
   label: row.label,
   origin: row.origin,
-  scopes: row.scopes,
+  scopes: passkeyScopes(row),
+  administrative: row.administrative !== 0,
   backedUp: row.backedUp !== 0,
   createdAt: row.createdAt,
   lastUsedAt: row.lastUsedAt,
@@ -434,6 +446,7 @@ export const make = Effect.gen(function* () {
           origin AS "origin",
           label AS "label",
           scopes_json AS "scopes",
+          administrative AS "administrative",
           backed_up AS "backedUp",
           created_at AS "createdAt",
           last_used_at AS "lastUsedAt"
@@ -645,10 +658,11 @@ export const make = Effect.gen(function* () {
 
     const id = NodeCrypto.randomUUID();
     const createdAt = yield* DateTime.now;
+    const administrative = isAdministrativeGrant(input.session.scopes);
     yield* sql`
       INSERT INTO fork_auth_passkeys (
         id, credential_id, public_key_jwk, algorithm, sign_count, transports_json,
-        user_handle, rp_id, origin, label, scopes_json, backed_up, created_at
+        user_handle, rp_id, origin, label, scopes_json, administrative, backed_up, created_at
       )
       VALUES (
         ${id},
@@ -662,6 +676,7 @@ export const make = Effect.gen(function* () {
         ${origin},
         ${entry.label},
         ${encodeScopes(input.session.scopes)},
+        ${administrative ? 1 : 0},
         ${verified.backedUp ? 1 : 0},
         ${DateTime.formatIso(createdAt)}
       )
@@ -671,7 +686,8 @@ export const make = Effect.gen(function* () {
       id,
       label: entry.label,
       origin,
-      scopes: input.session.scopes,
+      scopes: administrative ? AuthAdministrativeScopes : input.session.scopes,
+      administrative,
       backedUp: verified.backedUp,
       createdAt: DateTime.toUtc(createdAt),
       lastUsedAt: null,
@@ -758,7 +774,7 @@ export const make = Effect.gen(function* () {
         .issue({
           method: "browser-session-cookie",
           subject: passkeySessionSubject(stored.id),
-          scopes: stored.scopes,
+          scopes: passkeyScopes(stored),
           // Describe the device signing in, not the one that saved the passkey;
           // the subject records which passkey it was.
           client: input.client,

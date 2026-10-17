@@ -308,6 +308,9 @@ export const AuthPasskey = Schema.Struct({
   label: TrimmedNonEmptyString,
   origin: TrimmedNonEmptyString,
   scopes: AuthEnvironmentScopes,
+  // Signs in with the current administrative scopes, not a snapshot. Optional
+  // so older servers' snapshots still decode.
+  administrative: Schema.optionalKey(Schema.Boolean),
   backedUp: Schema.Boolean,
   createdAt: Schema.DateTimeUtc,
   lastUsedAt: Schema.NullOr(Schema.DateTimeUtc),

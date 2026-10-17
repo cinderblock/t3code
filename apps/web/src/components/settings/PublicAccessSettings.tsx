@@ -205,6 +205,11 @@ export function PublicAccessSettings({
                 <div className="flex min-h-5 items-center gap-1.5">
                   <KeyRoundIcon aria-hidden className="size-3.5 text-muted-foreground" />
                   <h3 className="text-sm font-medium text-foreground">{passkey.label}</h3>
+                  {passkey.administrative ? (
+                    <span className="rounded-md border border-border/50 bg-muted/50 px-1 py-0.5 text-3xs text-muted-foreground/80">
+                      Full access
+                    </span>
+                  ) : null}
                   {passkey.backedUp ? (
                     <span className="rounded-md border border-border/50 bg-muted/50 px-1 py-0.5 text-3xs text-muted-foreground/80">
                       Synced
@@ -248,7 +253,7 @@ export function PublicAccessSettings({
         <div className={ITEM_ROW_INNER_CLASSNAME}>
           <p className="min-w-0 flex-1 text-xs text-muted-foreground">
             {canEnrollHere
-              ? `Save a passkey for ${currentOrigin}. It signs in from any device your password manager syncs it to. Revoking a passkey also signs out the sessions it started.`
+              ? `Save a passkey for ${currentOrigin}. It signs in from any device your password manager syncs it to, with this session's permissions; saved from a full-access session, it also gets permissions added in later versions. Revoking a passkey also signs out the sessions it started.`
               : "Open this page on one of the public URLs to save a passkey for that browser. Revoking a passkey also signs out the sessions it started."}
           </p>
           {canEnrollHere ? (

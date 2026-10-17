@@ -31,6 +31,7 @@ import {
   AuthRelayReadScope,
   AuthRelayWriteScope,
   AuthFilesystemReadScope,
+  AuthAdministrativeScopes,
   AuthStandardClientScopes,
   AuthTerminalReadScope,
   type AuthClientSession,
@@ -1181,6 +1182,20 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
                   >
                     Standard
                   </Button>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={isCreatingPairingLink}
+                    onClick={() =>
+                      setPairingScopes(
+                        AuthAdministrativeScopes.filter((scope) =>
+                          delegatableScopes.includes(scope),
+                        ),
+                      )
+                    }
+                  >
+                    Full access
+                  </Button>
                 </div>
               </div>
               <div className="divide-y divide-border/60 rounded-lg border border-input bg-muted/25">
@@ -1208,6 +1223,11 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
               </div>
               {selectedScopes.length === 0 ? (
                 <p className="text-xs text-destructive">Select at least one permission.</p>
+              ) : AuthAdministrativeScopes.every((scope) => selectedScopes.includes(scope)) ? (
+                <p className="text-xs text-warning">
+                  This client can do everything this computer can, including managing access. A
+                  passkey saved from it keeps full access as new permissions are added.
+                </p>
               ) : selectedScopes.includes(AuthAccessWriteScope) ? (
                 <p className="text-xs text-warning">
                   This client can create or revoke access for other devices.
