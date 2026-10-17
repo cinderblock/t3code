@@ -51,7 +51,11 @@ param(
   # Build and write the stamp, then stop without launching. Used to pre-warm
   # the bundles so the next real run starts immediately. Building by hand
   # instead would leave no stamp, and the next launch would rebuild.
-  [switch]$BuildOnly
+  [switch]$BuildOnly,
+  # Before stopping the running app, wait until no thread is working or
+  # waiting on the user. Passed by restart-t3-when-idle.ps1, whose own idle
+  # check is minutes stale by the time an install and build have finished.
+  [switch]$WaitForIdle
 )
 
 $ErrorActionPreference = 'Stop'
@@ -242,8 +246,41 @@ function Wait-Until {
   $true
 }
 
+# Polls until nothing a restart would cut off (see t3-busy.mjs) has been seen
+# for a full minute. No deadline: the caller asked not to interrupt work.
+function Wait-T3Idle {
+  $database = Join-Path $env:USERPROFILE '.t3\userdata\statev2.sqlite'
+  $query = Join-Path $PSScriptRoot 't3-busy.mjs'
+  # A WMI-started watcher's PATH need not include node.
+  $node = Join-Path $env:USERPROFILE '.vite-plus\bin\node.exe'
+  if (-not (Test-Path $node)) { $node = 'node' }
+  $idleSince = $null
+  $last = ''
+  while ($true) {
+    $json = & $node $query $database 2>&1
+    $busy = if ($LASTEXITCODE -eq 0) { @($json | ConvertFrom-Json) } else {
+      @([pscustomobject]@{ status = 'query failed'; title = "$json" })
+    }
+    if ($busy.Count -gt 0) {
+      $idleSince = $null
+      $report = ($busy | ForEach-Object { "$($_.status): $($_.title)" } | Sort-Object -Unique) -join '; '
+      if ($report -ne $last) { Write-Host "  idle?   : busy - $report" -ForegroundColor Yellow; $last = $report }
+    } elseif ($null -eq $idleSince) {
+      $idleSince = Get-Date
+    } elseif (((Get-Date) - $idleSince).TotalSeconds -ge 60) {
+      Write-Host '  idle?   : quiet for 60s' -ForegroundColor Green
+      return
+    }
+    Start-Sleep -Seconds 15
+  }
+}
+
 function Stop-RunningT3 {
   $found = Get-T3Processes
+  if ($WaitForIdle -and -not $DryRun -and $found.Apps.Count -gt 0) {
+    Wait-T3Idle
+    $found = Get-T3Processes
+  }
   if ($found.Apps.Count -eq 0 -and $found.Launchers.Count -eq 0) {
     Write-Host '  stop    : no T3 Code running'
     return $false
@@ -317,6 +354,7 @@ function Get-ArtifactFacts {
 if (-not $NoElevate -and -not (Test-Admin)) {
   $fwd = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath, '-KeepOpen')
   if ($DryRun) { $fwd += '-DryRun' }
+  if ($WaitForIdle) { $fwd += '-WaitForIdle' }
   Start-Process -FilePath (Get-Process -Id $PID).Path -Verb RunAs -ArgumentList $fwd
   exit 0
 }

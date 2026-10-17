@@ -6,8 +6,9 @@ Wait until no T3 Code thread is working or waiting, then relaunch through start-
 For an update that needs a restart without cutting off a running agent. Polls
 the live database READ-ONLY (never written) for runs that are queued or running
 and for requests waiting on the user, across every project. Once the count has
-been zero for -QuietSeconds straight, it starts start-t3.ps1, which installs,
-builds, stops the running app and launches the new build.
+been zero for -QuietSeconds straight, it starts start-t3.ps1 -WaitForIdle,
+which installs and builds, checks again that nothing started meanwhile (the
+build takes minutes), stops the running app and launches the new build.
 
 Run it OUTSIDE the app's process tree, or stopping the app kills it too. From
 inside T3 Code (an agent's shell), start it through WMI, which parents it to
@@ -45,28 +46,8 @@ function Write-Log {
 $node = Join-Path $env:USERPROFILE '.vite-plus\bin\node.exe'
 if (-not (Test-Path $node)) { $node = (Get-Command node -CommandType Application | Select-Object -First 1).Source }
 
-# node:sqlite in read-only mode: the app keeps the database open in WAL mode,
-# and a reader there neither blocks it nor changes anything.
-$query = @'
-const { DatabaseSync } = require("node:sqlite");
-const db = new DatabaseSync(process.argv[1], { readOnly: true });
-const runs = db.prepare(`
-  SELECT r.status, t.title
-  FROM orchestration_v2_projection_runs r
-  JOIN orchestration_v2_projection_threads t USING (thread_id)
-  WHERE r.status IN ('queued', 'starting', 'preparing', 'running', 'waiting')
-`).all();
-const requests = db.prepare(`
-  SELECT q.kind AS status, t.title
-  FROM orchestration_v2_projection_runtime_requests q
-  JOIN orchestration_v2_projection_threads t USING (thread_id)
-  WHERE q.status = 'pending'
-`).all();
-console.log(JSON.stringify([...runs, ...requests]));
-'@
-
 function Get-Busy {
-  $json = & $node -e $query $Database 2>&1
+  $json = & $node (Join-Path $PSScriptRoot 't3-busy.mjs') $Database 2>&1
   if ($LASTEXITCODE -ne 0) { throw "database query failed: $json" }
   @($json | ConvertFrom-Json)
 }
@@ -104,6 +85,6 @@ while ($true) {
 Write-Log 'idle - starting start-t3.ps1'
 $shell = (Get-Process -Id $PID).Path
 Start-Process -FilePath $shell -WindowStyle Hidden -ArgumentList @(
-  '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot 'start-t3.ps1'), '-KeepOpen'
+  '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot 'start-t3.ps1'), '-KeepOpen', '-WaitForIdle'
 ) | Out-Null
 Write-Log 'launcher started; see C:\temp\t3runs\latest.txt for its run'
