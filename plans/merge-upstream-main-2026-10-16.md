@@ -147,11 +147,14 @@ Predecessor: [`merge-upstream-main-2026-10-02.md`](./merge-upstream-main-2026-10
       error; a C# watchdog timer on its own thread shows it if a phase overruns (scan 120s, install
       1500s, build 1200s, stop 90s); a named mutex refuses a second launch while one is starting.
       Verified: parse, dry runs under pwsh 7 and Windows PowerShell 5.1, watchdog fire/disarm on 5.1,
-      trap on a missing `vp`. The real stop/launch path has not run yet.
+      trap on a missing `vp`. First real run 2026-10-17 01:41 (`C:\temp\t3runs\20261017-014138`):
+      stale build rebuilt, idle re-check passed, 5 app processes + 1 old launcher closed normally,
+      backend ready 5s after launch, no watchdog fires.
 - [x] `fork-restyle-lint` worktree and its merged branches removed (2026-10-17).
-- [~] 2026-10-17 01:04: `scripts/restart-t3-when-idle.ps1` (`19fce52cec`) started via WMI (pid 36596 since 01:29, pre-stop re-check `c187ed2023`, no time limit `bfd7c71af2`;
-  parent WmiPrvSE, elevated) to run the launcher once no thread is running/queued/waiting for 120s.
-  Log: `C:\temp\t3runs\restart-when-idle.log`; waits with no time limit.
+- [x] 2026-10-17 01:04: `scripts/restart-t3-when-idle.ps1` (`19fce52cec`) started via WMI (pid 36596 since 01:29, pre-stop re-check `c187ed2023`, no time limit `bfd7c71af2`;
+      parent WmiPrvSE, elevated) to run the launcher once no thread is running/queued/waiting for 120s.
+      Log: `C:\temp\t3runs\restart-when-idle.log`. Went idle 01:39, started the launcher 01:41, exited.
+- [ ] User: re-enroll the passkey through a Full access link from the iOS home-screen app.
 
 ## Open questions for the user
 
