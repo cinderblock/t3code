@@ -6,9 +6,9 @@
  * that paired on one of those origins can enroll a passkey; later visits sign
  * in with it and receive an ordinary browser session cookie. A passkey carries
  * the scopes of the session that enrolled it, so the pairing link's scopes
- * decide what it can do. One enrolled from a session holding every
- * administrative scope is an administrator passkey: it signs in with the
- * administrative set current at sign-in, so permissions added later reach it
+ * decide what it can do. One enrolled from a session holding every standard
+ * scope (a default pairing link) is a full-access passkey: it signs in with the
+ * standard set current at sign-in, so permissions added later reach it
  * without re-enrolling. Revoking a passkey also revokes the sessions it
  * issued, and removing an origin disables the passkeys enrolled on it.
  *
@@ -23,7 +23,6 @@ import {
   type AuthBrowserSessionResult,
   type AuthClientMetadata,
   AuthAccessWriteScope,
-  AuthAdministrativeScopes,
   authScopeResponse,
   type AuthEnvironmentScope,
   AuthEnvironmentScopes,
@@ -34,6 +33,7 @@ import {
   type AuthPasskeyRegistrationOptions,
   type AuthPublicAccessConfig,
   type AuthSessionId,
+  AuthStandardClientScopes,
   type ServerAuthSessionMethod,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -352,10 +352,10 @@ const encodeScopes = Schema.encodeSync(ScopesJson);
 const encodeJwk = Schema.encodeSync(JwkJson);
 
 const isAdministrativeGrant = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
-  AuthAdministrativeScopes.every((scope) => scopes.includes(scope));
+  AuthStandardClientScopes.every((scope) => scopes.includes(scope));
 
 const passkeyScopes = (row: PasskeyRow): ReadonlyArray<AuthEnvironmentScope> =>
-  row.administrative !== 0 ? AuthAdministrativeScopes : row.scopes;
+  row.administrative !== 0 ? AuthStandardClientScopes : row.scopes;
 
 const toAuthPasskey = (row: PasskeyRow): AuthPasskey => ({
   id: row.id,
@@ -686,7 +686,7 @@ export const make = Effect.gen(function* () {
       id,
       label: entry.label,
       origin,
-      scopes: administrative ? AuthAdministrativeScopes : input.session.scopes,
+      scopes: administrative ? AuthStandardClientScopes : input.session.scopes,
       administrative,
       backedUp: verified.backedUp,
       createdAt: DateTime.toUtc(createdAt),

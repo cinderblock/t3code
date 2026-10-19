@@ -7,9 +7,13 @@ identity and relay credentials belong to a separate trust boundary, described in
 ## Authority survives transport changes
 
 Pairing delegates a set of scopes. Exchanging a bootstrap credential can narrow
-that grant but cannot widen it. Ordinary pairing does not grant access-management
-or relay-management authority. Creating another pairing link requires both
-`access:write` and every scope being delegated. The
+that grant but cannot widen it. The default grant includes access and relay
+management: `terminal:operate` is a shell as the server's user and
+`orchestration:operate` can start a full-access agent, and either can mint a
+session with every scope through `t3 auth session issue`, so withholding
+management from the default would not be a boundary. A narrower client gets
+explicit scopes. Creating another pairing link requires both `access:write` and
+every scope being delegated. The
 [auth handlers](../../apps/server/src/auth/http.ts) enforce this at issuance;
 client labels and device metadata have no authorization role.
 
@@ -106,8 +110,9 @@ A passkey is another way into the same session model, not a separate identity.
 Enrollment requires a browser session with `access:write` on a configured
 public origin. A passkey outlives the session that created it, so a client that
 cannot manage access must not be able to mint one. The passkey carries that
-session's scopes. The exception is a session holding every administrative
-scope: its passkey signs in with the administrative set current at sign-in.
+session's scopes. The exception is a session holding every standard scope
+(what a default pairing link grants): its passkey signs in with the standard set
+current at sign-in.
 Servers otherwise never expand stored grants, but a stored snapshot would strand
 the owner's only remote credential each time a scope is added, and a credential
 that already held everything gains nothing a full administrator lacks. Signing in issues an ordinary browser-session cookie whose

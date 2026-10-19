@@ -253,7 +253,7 @@ export function PublicAccessSettings({
         <div className={ITEM_ROW_INNER_CLASSNAME}>
           <p className="min-w-0 flex-1 text-xs text-muted-foreground">
             {canEnrollHere
-              ? `Save a passkey for ${currentOrigin}. It signs in from any device your password manager syncs it to, with this session's permissions; saved from a full-access session, it also gets permissions added in later versions. Revoking a passkey also signs out the sessions it started.`
+              ? `Save a passkey for ${currentOrigin}. It signs in from any device your password manager syncs it to, with this session's permissions; saved from a session with the standard permissions, it also gets permissions added in later versions. Revoking a passkey also signs out the sessions it started.`
               : "Open this page on one of the public URLs to save a passkey for that browser. Revoking a passkey also signs out the sessions it started."}
           </p>
           {canEnrollHere ? (

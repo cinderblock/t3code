@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { AuthAdministrativeScopes, AuthStandardClientScopes } from "@t3tools/contracts";
+import { AuthAccessWriteScope, AuthStandardClientScopes } from "@t3tools/contracts";
 
 // Enrolling needs access:write; the rest shows the passkey keeps exactly these scopes.
 const ENROLLER_SCOPES = ["orchestration:read", "access:read", "access:write"] as const;
@@ -29,7 +29,7 @@ const authLayer = EnvironmentAuth.layer.pipe(
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-public-access-test-" })),
 );
 
-const browserSession = (scopes: ReadonlyArray<(typeof AuthAdministrativeScopes)[number]>) =>
+const browserSession = (scopes: ReadonlyArray<(typeof AuthStandardClientScopes)[number]>) =>
   Effect.gen(function* () {
     const sessions = yield* SessionStore.SessionStore;
     const issued = yield* sessions.issue({
@@ -41,7 +41,7 @@ const browserSession = (scopes: ReadonlyArray<(typeof AuthAdministrativeScopes)[
   });
 
 /** Enrolls a passkey from a fresh browser session and returns it with its authenticator. */
-const enroll = (scopes: ReadonlyArray<(typeof AuthAdministrativeScopes)[number]>) =>
+const enroll = (scopes: ReadonlyArray<(typeof AuthStandardClientScopes)[number]>) =>
   Effect.gen(function* () {
     const publicAccess = yield* PublicAccess.PublicAccess;
     const session = yield* browserSession(scopes);
@@ -105,14 +105,14 @@ it.layer(NodeServices.layer)("PublicAccess", (it) => {
     }).pipe(Effect.provide(authLayer)),
   );
 
-  it.effect("an administrator passkey signs in with the current administrative scopes", () =>
+  it.effect("a full-access passkey signs in with the current standard scopes", () =>
     Effect.gen(function* () {
       const publicAccess = yield* PublicAccess.PublicAccess;
       const sessions = yield* SessionStore.SessionStore;
       const sql = yield* SqlClient.SqlClient;
       yield* publicAccess.setConfig({ origins: [ORIGIN], trustedProxies: [] });
 
-      const { passkey, authenticator } = yield* enroll(AuthAdministrativeScopes);
+      const { passkey, authenticator } = yield* enroll(AuthStandardClientScopes);
       expect(passkey.administrative).toBe(true);
       // Stands in for a snapshot taken before upstream added permissions.
       yield* sql`
@@ -122,9 +122,9 @@ it.layer(NodeServices.layer)("PublicAccess", (it) => {
       `;
 
       const { result } = yield* signIn(authenticator);
-      expect(result.response.permissions).toEqual(AuthAdministrativeScopes);
+      expect(result.response.permissions).toEqual(AuthStandardClientScopes);
       expect((yield* sessions.verify(result.sessionToken)).scopes).toEqual(
-        AuthAdministrativeScopes,
+        AuthStandardClientScopes,
       );
     }).pipe(Effect.provide(authLayer)),
   );
@@ -133,7 +133,7 @@ it.layer(NodeServices.layer)("PublicAccess", (it) => {
     Effect.gen(function* () {
       const publicAccess = yield* PublicAccess.PublicAccess;
       yield* publicAccess.setConfig({ origins: [ORIGIN], trustedProxies: [] });
-      const { authenticator } = yield* enroll(AuthAdministrativeScopes);
+      const { authenticator } = yield* enroll(AuthStandardClientScopes);
       const { credential } = yield* signIn(authenticator);
 
       const replay = yield* Effect.flip(
@@ -167,7 +167,7 @@ it.layer(NodeServices.layer)("PublicAccess", (it) => {
         publicAccess.beginRegistration({
           origin: ORIGIN,
           session: {
-            ...(yield* browserSession(AuthAdministrativeScopes)),
+            ...(yield* browserSession(AuthStandardClientScopes)),
             method: "bearer-access-token",
           },
           label: undefined,
@@ -187,7 +187,9 @@ it.layer(NodeServices.layer)("PublicAccess", (it) => {
       const error = yield* Effect.flip(
         publicAccess.beginRegistration({
           origin: ORIGIN,
-          session: yield* browserSession(AuthStandardClientScopes),
+          session: yield* browserSession(
+            AuthStandardClientScopes.filter((scope) => scope !== AuthAccessWriteScope),
+          ),
           label: undefined,
         }),
       );
@@ -202,7 +204,7 @@ it.layer(NodeServices.layer)("PublicAccess", (it) => {
     Effect.gen(function* () {
       const publicAccess = yield* PublicAccess.PublicAccess;
       yield* publicAccess.setConfig({ origins: [ORIGIN], trustedProxies: [] });
-      const { authenticator } = yield* enroll(AuthAdministrativeScopes);
+      const { authenticator } = yield* enroll(AuthStandardClientScopes);
       const options = yield* publicAccess.beginLogin({ origin: ORIGIN, address: "203.0.113.1" });
       for (let index = 0; index < 2000; index += 1) {
         yield* publicAccess.beginLogin({ origin: ORIGIN, address: "198.51.100.66" });
@@ -223,8 +225,8 @@ it.layer(NodeServices.layer)("PublicAccess", (it) => {
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const sessions = yield* SessionStore.SessionStore;
       yield* publicAccess.setConfig({ origins: [ORIGIN], trustedProxies: [] });
-      const first = yield* enroll(AuthAdministrativeScopes);
-      const second = yield* enroll(AuthAdministrativeScopes);
+      const first = yield* enroll(AuthStandardClientScopes);
+      const second = yield* enroll(AuthStandardClientScopes);
       const { result } = yield* signIn(first.authenticator);
       const current = yield* sessions.verify(result.sessionToken);
 
@@ -242,9 +244,9 @@ it.layer(NodeServices.layer)("PublicAccess", (it) => {
       const publicAccess = yield* PublicAccess.PublicAccess;
       const sessions = yield* SessionStore.SessionStore;
       yield* publicAccess.setConfig({ origins: [ORIGIN], trustedProxies: [] });
-      const { passkey, authenticator } = yield* enroll(AuthAdministrativeScopes);
+      const { passkey, authenticator } = yield* enroll(AuthStandardClientScopes);
       // A second passkey keeps the origin usable so sign-in reaches credential lookup.
-      yield* enroll(AuthAdministrativeScopes);
+      yield* enroll(AuthStandardClientScopes);
       const { result } = yield* signIn(authenticator);
 
       expect(yield* publicAccess.revokePasskey(passkey.id)).toBe(true);
@@ -260,7 +262,7 @@ it.layer(NodeServices.layer)("PublicAccess", (it) => {
     Effect.gen(function* () {
       const publicAccess = yield* PublicAccess.PublicAccess;
       yield* publicAccess.setConfig({ origins: [ORIGIN], trustedProxies: [] });
-      const { authenticator } = yield* enroll(AuthAdministrativeScopes);
+      const { authenticator } = yield* enroll(AuthStandardClientScopes);
       yield* publicAccess.setConfig({ origins: [], trustedProxies: [] });
       const error = yield* Effect.flip(signIn(authenticator));
       expect(error._tag).toBe("PasskeyOriginNotConfiguredError");
