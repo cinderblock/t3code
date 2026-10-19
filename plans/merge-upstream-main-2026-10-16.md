@@ -154,7 +154,9 @@ Predecessor: [`merge-upstream-main-2026-10-02.md`](./merge-upstream-main-2026-10
 - [x] 2026-10-17 01:04: `scripts/restart-t3-when-idle.ps1` (`19fce52cec`) started via WMI (pid 36596 since 01:29, pre-stop re-check `c187ed2023`, no time limit `bfd7c71af2`;
       parent WmiPrvSE, elevated) to run the launcher once no thread is running/queued/waiting for 120s.
       Log: `C:\temp\t3runs\restart-when-idle.log`. Went idle 01:39, started the launcher 01:41, exited.
-- [ ] User: re-enroll the passkey through a Full access link from the iOS home-screen app.
+- [x] User re-enrolled the passkey from a Full access session: "Chrome on iOS" `d7d09b81`, saved
+      2026-10-19 05:35 UTC, `administrative=1`, all 16 administrative scopes, synced (`backed_up=1`).
+- [ ] User: sign out and back in with that passkey (its `last_used_at` is still null).
 
 ## Open questions for the user
 
