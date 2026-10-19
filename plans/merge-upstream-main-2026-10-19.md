@@ -80,14 +80,14 @@ Plus non-textual breakage: fork code importing `AuthAdministrativeScopes`.
 - [x] Tests. Server auth/telemetry/Sqlite/fork-migrations/http/EnvironmentAuth/vcs: 244 pass; the 6
       `GitVcsDriverCore` failures are the known Windows-only ones from 10-16. Upstream's new
       `VcsStatusBroadcaster` "background refresh reconciles…" test needed `startupGrace:
-    Duration.zero` (same fork gotcha as 10-16) → 27/27. Web unit 262 pass; web browser tests
+Duration.zero` (same fork gotcha as 10-16) → 27/27. Web unit 262 pass; web browser tests
       (PreviewView, RightPanelTabs, keyboard, Sidebar pointer) 59 pass after installing Playwright's
       `chromium-headless-shell` (upstream moved these to real-browser mode). Desktop preview Manager
       112 pass. Telemetry "not enabled" test proven to fail with the old default.
 - [x] `vp fmt` on all 133 fork-differing TS files; `vp lint` on touched files clean apart from two
       upstream warnings.
 - [x] Merge commit `bb23081e6b`; `master` fast-forwarded; worktree and branch removed.
-- [ ] Restart via the idle watcher.
+- [~] Restart via the idle watcher: pid 48232 started 2026-10-19 00:52 via WMI; log `C:\temp\t3runs\restart-when-idle.log`.
 
 ## Open questions for the user
 
