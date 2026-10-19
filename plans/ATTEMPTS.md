@@ -513,6 +513,34 @@ Not measured: why that first probe took 36 s (the startup spawn storm is the obv
 `Subprocess spawn storm: 60 spawns in 30s` event sits in the same log), and whether it timed
 out or returned late without capabilities. Worth a look if startup load comes back on the table.
 
+### 2026-10-19 — reconnect storm mid-session, 51 s stall — **not the merge, not a restart; cause of the 51 s spike open**
+
+User saw "reconnecting" around 14:50 on the 10-19 merge build (`bb23081e6b`, backend pid 27056
+up since 01:01 — **no restart**, single PID). Evidence from
+`C:\temp\t3runs\20261019-005837\diagnostics.ndjson` and `~/.t3/userdata/logs/server.trace.ndjson.*`:
+
+- One **51,355 ms** event-loop stall at 14:50:59 (self CPU 22%, system CPU 100%). The 14:00 hour:
+  747 stalls, 539 s blocked. Storm began ~13:00; 01:00–12:59 had ≤5 stalls/hour.
+- **Not new with the merge.** The previous build (run `20261017-014138`) had the same storms:
+  10-18 22:00–00:59 at 356 / 637 / 275 stalls per hour, worst ~3 s. Quiet hours in both builds
+  sit at 1–6 stalls/hour. Storm hours coincide with system CPU pinned at 100%.
+- A `sqlite` span on the **writer** connection lasted 51,535 ms (14:50:07), `db.lock_wait_ms: 0`,
+  under `ws.rpc.orchestration.subscribeThread` (thread `51bf7ebb…`, 194 events). **The query
+  itself is cheap**: replayed read-only with the exact `restoredPayloadJson` CASE it takes
+  11 ms cold / 3 ms warm, plan `SEARCH … idx_orch_events_stream_sequence`, anchor lookup by
+  rowid. So the span's 51 s is the loop being unable to resume it, not SQL cost.
+- Upstream's `persistence/Sqlite.ts` (merged in `bb23081e6b`) now clears `sqlite_stat1` at startup (it is 0 rows now). For this
+  query the stat-less plan is fine (above), so **planner regression refuted for this query**.
+- 328 other spans _ended_ inside the 51 s window, which does not fit a fully blocked loop.
+  Unresolved: either the stall figure is inflated (monitor timer starved under 100% system CPU)
+  or spans run on another thread. Check how the stall monitor measures before trusting a single
+  huge `lagMs`.
+- Exonerated: the agent's own read-only diagnostic scans (full-table COUNT(*) on the 8.9 GB DB)
+  ran at 13:51, an hour earlier.
+- CPU snapshot at 14:53 (5 s): no single hog — MsMpEng 11%, open-task 6.5%, dwm 5.8%, claude
+  5.5%, SearchIndexer 4.5%, cargo 3%; T3 backend 1.8%. Matches the 08-03 "box is oversubscribed"
+  finding.
+
 ## Unverified suspects (not yet tested)
 
 - **HTTP response compression on the WebSocket route.** Upstream's merge added
