@@ -87,7 +87,10 @@ Duration.zero` (same fork gotcha as 10-16) → 27/27. Web unit 262 pass; web bro
 - [x] `vp fmt` on all 133 fork-differing TS files; `vp lint` on touched files clean apart from two
       upstream warnings.
 - [x] Merge commit `bb23081e6b`; `master` fast-forwarded; worktree and branch removed.
-- [~] Restart via the idle watcher: pid 48232 started 2026-10-19 00:52 via WMI; log `C:\temp\t3runs\restart-when-idle.log`.
+- [x] Restart via the idle watcher: pid 48232 started 2026-10-19 00:52 via WMI; log `C:\temp\t3runs\restart-when-idle.log`.
+      Idle at 00:56, launcher 00:58 (`C:\temp\t3runs\20261019-005837`): stopped 5 processes normally,
+      reinstalled, rebuilt from `6db8bc588c`, backend ready after 66s (vs 5s on 10-17; first start on
+      the merged code, likely one-time startup work). Running since 01:01.
 
 ## Open questions for the user
 
