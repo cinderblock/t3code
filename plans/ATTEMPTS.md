@@ -531,15 +531,53 @@ up since 01:01 — **no restart**, single PID). Evidence from
   rowid. So the span's 51 s is the loop being unable to resume it, not SQL cost.
 - Upstream's `persistence/Sqlite.ts` (merged in `bb23081e6b`) now clears `sqlite_stat1` at startup (it is 0 rows now). For this
   query the stat-less plan is fine (above), so **planner regression refuted for this query**.
-- 328 other spans _ended_ inside the 51 s window, which does not fit a fully blocked loop.
-  Unresolved: either the stall figure is inflated (monitor timer starved under 100% system CPU)
-  or spans run on another thread. Check how the stall monitor measures before trusting a single
-  huge `lagMs`.
+- ~~328 other spans _ended_ inside the 51 s window, which does not fit a fully blocked loop.~~
+  **Refuted the same evening** (see the next entry): those were the web client's `otlp-span`
+  records forwarded into `server.trace.ndjson`. Backend-only spans show a true, total block.
 - Exonerated: the agent's own read-only diagnostic scans (full-table COUNT(*) on the 8.9 GB DB)
   ran at 13:51, an hour earlier.
 - CPU snapshot at 14:53 (5 s): no single hog — MsMpEng 11%, open-task 6.5%, dwm 5.8%, claude
   5.5%, SearchIndexer 4.5%, cargo 3%; T3 backend 1.8%. Matches the 08-03 "box is oversubscribed"
   finding.
+
+### 2026-10-19 evening — the stalls are synchronous main-thread SQLite reads that wait, not compute
+
+Follow-up on the entry above. The 14:50 traces had rotated away by 21:27 (11 × 10 MB ≈ 3 h of
+history), so a fresh **13,570 ms** stall at 21:24:35 was analysed instead; copies of its traces
+are in `C:\temp\stall-1019\`.
+
+- **The monitor is right; the loop really is blocked.** Backend-only (`type: "effect-span"`)
+  completions per second: 72, 129, then **zero from 21:24:22 to 21:24:34**, then 31, 237…
+- **Same culprit both times:** a `sqlite` span on the `writer` connection under
+  `ws.rpc.orchestration.subscribeThread` starts at the exact millisecond the block begins
+  (21:24:21.902) and lasts 13,755 ms, `db.lock_wait_ms: 0.003`. Thread `077beb05…` ("Deploy
+  Camera Service to Raspberry Pi", 2,605 events, 5 MB).
+- **The query is not slow by itself.** Every `readApplicationRows` variant replayed read-only
+  against that thread: `readAgentEvents` by thread 24 ms, with `event_type` 77 ms, from the
+  latest sequence 0 ms. Only the `INDEXED BY idx_orchestration_events_application_high_water`
+  form with a thread filter is slow (2,971 ms warm), and no thread-scoped caller uses it.
+- **It waits rather than computes:** self CPU 26% over the 13.6 s window.
+- **Why it blocks the whole server:** `nodeSqliteClient` sends a query to the reader worker only
+  inside `readOnly(...)`. In these traces **10,961 queries ran on the main-thread writer and 13 on
+  the reader**, so thread-history reads are synchronous on the event loop, and any I/O wait inside
+  them freezes every client.
+- Disk is a Samsung 970 EVO Plus NVMe; at 21:3x it showed ~0 ms latency and 88% idle, so it is
+  not saturated in steady state.
+- Only pid 27056 has `statev2.sqlite` open (`handle.exe`), so no other process holds a lock.
+- **Defender real-time scanning of the database: weakened, not refuted.** `~/.t3` is **not** in
+  `ExclusionPath` (`~/git` and many build dirs are). A 3-minute `New-MpPerformanceRecording`
+  (21:33:51–21:36:51, `C:\temp\stall-1019\defender.etl`) shows **zero scans** of
+  `statev2.sqlite*`. Defender scans on open and on close-after-write, and the backend holds the
+  database open, so reads do not trigger scans. T3's log files were scanned (6.9 s in total, max
+  88 ms per scan: `server.trace.ndjson`, provider `events.*.log`, terminal logs). Caveat: no big
+  stall happened in that window (5 stalls, worst 496 ms).
+- **Capture in place for the next big stall.** `C:\temp\stall-1019\capture-on-stall.ps1` (pid 3888
+  from 21:45, launched via WMI, elevated) keeps a `wpr -start CPU` ring buffer and saves it to
+  `C:\temp\stall-1019\stall-*.etl` when `diagnostics.ndjson` logs a stall of 5 s or more (at most
+  3 captures, 24 h). Analyse the backend's main-thread context-switch stacks (pid 27056) across
+  the stall window: a blocking `NtReadFile`, `NtLockFile`, `NtFlushBuffersFile` or plain Ready
+  (CPU starvation) each points to a different fix. Sizing: CPU-only is about 620 MB per save and
+  takes about 2 min to write; adding `FileIO` and `DiskIO` produced 2 GB per 10 s on this machine.
 
 ## Unverified suspects (not yet tested)
 
@@ -553,6 +591,12 @@ up since 01:01 — **no restart**, single PID). Evidence from
 ## Instrumentation traps that have cost real time
 
 Every one of these produced a confident wrong answer:
+
+- **`server.trace.ndjson` also holds the web client's spans.** Records with `"type":"otlp-span"`
+  and `service.name: "t3code-web"` are the renderer's, forwarded to the server. Counting them as
+  backend work made a fully blocked event loop look alive (2026-10-19). Filter on
+  `"type":"effect-span"` for the backend. The files also rotate in ~3 h under load: copy them out
+  before analysing an event.
 
 - **In a pnpm-patched package, `src/` is NOT what runs -- `dist/` is.** The `effect` patch
   applies to `dist/` only; `src/` inside `node_modules/.pnpm/effect@4.0.0-beta.102_patch_*/` is
