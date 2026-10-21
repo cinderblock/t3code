@@ -7189,6 +7189,28 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               message={providerInputSubmissionError ?? composerSubmissionError}
             />
 
+            {/* Outside the footer: opening the OS picker blurs the editor, which
+                collapses the mobile composer and unmounts the footer. A detached
+                input never delivers its change event, so the pick would be lost. */}
+            {showComposerAttachAction ? (
+              <input
+                ref={attachmentInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(event) => {
+                  const files = Array.from(event.currentTarget.files ?? []);
+                  event.currentTarget.value = "";
+                  // Inserting a chip refocuses the editor after the draft renders;
+                  // focusing synchronously here would report the editor's stale text
+                  // over the prompt that was just written.
+                  void addComposerAttachments(files).then((inserted) => {
+                    if (!inserted) focusComposer();
+                  });
+                }}
+              />
+            ) : null}
+
             {isComposerCollapsedMobile || isComposerApprovalState ? null : (
               <div
                 data-chat-composer-footer="true"
@@ -7257,41 +7279,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     </Popover>
                   ) : null}
                   {showComposerAttachAction ? (
-                    <>
-                      <input
-                        ref={attachmentInputRef}
-                        type="file"
-                        multiple
-                        className="hidden"
-                        onChange={(event) => {
-                          const files = Array.from(event.currentTarget.files ?? []);
-                          event.currentTarget.value = "";
-                          // Inserting a chip refocuses the editor after the draft renders;
-                          // focusing synchronously here would report the editor's stale text
-                          // over the prompt that was just written.
-                          void addComposerAttachments(files).then((inserted) => {
-                            if (!inserted) focusComposer();
-                          });
-                        }}
-                      />
-                      <Tooltip>
-                        <TooltipTrigger
-                          render={
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon-sm"
-                              onPointerDown={(event) => event.preventDefault()}
-                              onClick={() => attachmentInputRef.current?.click()}
-                              aria-label="Attach files"
-                            />
-                          }
-                        >
-                          <PaperclipIcon />
-                        </TooltipTrigger>
-                        <TooltipPopup>Attach files</TooltipPopup>
-                      </Tooltip>
-                    </>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon-sm"
+                            onPointerDown={(event) => event.preventDefault()}
+                            onClick={() => attachmentInputRef.current?.click()}
+                            aria-label="Attach files"
+                          />
+                        }
+                      >
+                        <PaperclipIcon />
+                      </TooltipTrigger>
+                      <TooltipPopup>Attach files</TooltipPopup>
+                    </Tooltip>
                   ) : null}
                   <ComposerFooterPrimaryActions
                     compact={isComposerResting || isComposerPrimaryActionsCompact}
