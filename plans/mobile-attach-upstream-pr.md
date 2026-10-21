@@ -43,10 +43,14 @@ Evidence: server traces showed no `attachments.createUploadUrl` / upload POSTs f
 4. [x] Seed dev DB (`vp run migrate-dev-db`), start dev server, give the user the pairing URL.
        Dev server: `vp run dev --host 0.0.0.0` (background task; web 7438, server 15478). Phone
        access via forwarder `C:\temp\t3runs\fwd-7439.mjs` (0.0.0.0:7439 → localhost:7438, PID 27744).
-5. [ ] User repeats the iPhone test on the dev server (existing thread, attach in 2+ messages).
-       ← current
-6. [ ] Push branch to `origin` (fork), open PR against `pingdotgg/t3code:main`, link it.
-7. [ ] Stop the dev server (by its PID), remove the worktree when the PR is merged/closed.
+5. [x] User repeats the iPhone test on the dev server: "Test 1/2/3" in one existing thread
+       (20:27:45, 20:30:02, 20:30:15 UTC), each with an image, uploads 204, all reached the agent.
+6. [x] Rebased onto `upstream/main` `e78f580468` (one trivial conflict: #23049 moved
+       `pastedTextFileNamesRef` out), lint + typecheck re-run, pushed `14e06d8eee` to
+       `origin/fix/mobile-attach-after-first-message`, opened
+       https://github.com/pingdotgg/t3code/pull/23083 and linked it to the thread.
+7. [x] Stopped the dev server and forwarder. [ ] Remove the worktree once the PR is merged or
+       closed (keep it meanwhile for review changes). ← current: waiting on upstream review
 8. [ ] Fork: at the next upstream merge, take upstream's version and drop `3c7d9a8d7e` if the PR
        landed; otherwise re-apply on the refactored composer.
 
@@ -60,8 +64,10 @@ Evidence: server traces showed no `attachments.createUploadUrl` / upload POSTs f
   TCP forwarder works. The attach path needs no secure context (`randomUUID` uses
   `getRandomValues`).
 - Worktree `scripts/setup-worktree.ts` needs `T3CODE_PROJECT_ROOT` when run by hand.
-- Stopping the dev server's background task left Vite and the backend running; they had to be
-  killed via their parent PID (verified by command line, `taskkill /T`).
+- Stopping the dev server's background task left Vite and the backend running, both times; they
+  had to be killed via the `vp run … dev` runner's PID (verified by command line, `taskkill /T`).
+- Upstream was mid-way through a composer refactor series on 2026-10-21 (#22689–#22722, #23049,
+  #23058, #23060); expect more churn in `ChatComposer.tsx` and possible rebase conflicts.
 - Upstream issue #2803 (no paperclip on mobile) is unrelated/closed; its fix (#8236) introduced
   the paperclip this bug is in. No existing report of this bug.
 
@@ -69,6 +75,7 @@ Evidence: server traces showed no `attachments.createUploadUrl` / upload POSTs f
 
 - 2026-10-21: diagnosed, fork fix committed and verified on iPhone; PR worktree created and fix
   ported.
+- 2026-10-21: upstream version verified on iPhone via the worktree dev server; PR #23083 opened.
 
 ## Open questions for the user
 
