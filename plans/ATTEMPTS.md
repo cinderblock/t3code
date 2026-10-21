@@ -515,7 +515,7 @@ out or returned late without capabilities. Worth a look if startup load comes ba
 
 ### 2026-10-19 — reconnect storm mid-session, 51 s stall — **not the merge, not a restart; cause of the 51 s spike open**
 
-User saw "reconnecting" around 14:50 on the 10-19 merge build (`bb23081e6b`, backend pid 27056
+User saw "reconnecting" around 14:50 on the 10-19 merge build (`0f33eeeaee`, backend pid 27056
 up since 01:01 — **no restart**, single PID). Evidence from
 `C:\temp\t3runs\20261019-005837\diagnostics.ndjson` and `~/.t3/userdata/logs/server.trace.ndjson.*`:
 
@@ -529,7 +529,7 @@ up since 01:01 — **no restart**, single PID). Evidence from
   itself is cheap**: replayed read-only with the exact `restoredPayloadJson` CASE it takes
   11 ms cold / 3 ms warm, plan `SEARCH … idx_orch_events_stream_sequence`, anchor lookup by
   rowid. So the span's 51 s is the loop being unable to resume it, not SQL cost.
-- Upstream's `persistence/Sqlite.ts` (merged in `bb23081e6b`) now clears `sqlite_stat1` at startup (it is 0 rows now). For this
+- Upstream's `persistence/Sqlite.ts` (merged in `0f33eeeaee`) now clears `sqlite_stat1` at startup (it is 0 rows now). For this
   query the stat-less plan is fine (above), so **planner regression refuted for this query**.
 - ~~328 other spans _ended_ inside the 51 s window, which does not fit a fully blocked loop.~~
   **Refuted the same evening** (see the next entry): those were the web client's `otlp-span`

@@ -122,7 +122,7 @@ excessive — TLS terminates at the proxy.
 - An HTTPS `AdvertisedEndpoint` with `hostedHttpsApp: "compatible"` gets an `app.t3.codes/pair?host=`
   link in the share picker (`resolveAdvertisedEndpointPairingUrl`). Public URLs must not be marked
   compatible, or pairing lands on the hosted app where no passkey for the domain can be saved.
-  Seen live 2026-10-12, fixed in `b291620a2b`.
+  Seen live 2026-10-12, fixed in `1ad8d4adda`.
 - First live run (2026-10-12): config saved and the access stream re-sent its snapshot (trace shows
   `PublicAccess.setConfig` then `listPasskeys`), so the single-instance/stream wiring works.
 - `ForkMigrations.test.ts` hardcodes the fork migration list; add new entries there too.
@@ -176,7 +176,7 @@ Checked and sound:
 - WebAuthn checks: type, single-use challenge (session-bound for registration), origin from the
   signed client data, RP ID hash, UP+UV, algorithm allow-list, signature, counter, user handle.
 
-Fixed in `71e4ee1dd7`: RSA keys under 2048 bits refused; a revoke racing a sign-in no longer issues
+Fixed in `62ab1ace49`: RSA keys under 2048 bits refused; a revoke racing a sign-in no longer issues
 a session; pairing-exchange cookies over HTTPS are `Secure`.
 
 Logged in `ISSUES.md` (pre-existing, upstream-wide): the WebSocket upgrade does not check `Origin`,
@@ -220,7 +220,7 @@ Upstream split the coarse scopes into `settings:write`, `providers:manage`, `env
 - **No escalation.** Enrollment still needs a browser cookie session with `access:write`; a
   passkey copies that session's scopes; a pairing link can only delegate scopes its creator holds.
 - **Browser-session origin check** (#18509) applies to passkey cookies and the WebSocket upgrade.
-- Fixed `7e66f669e3`: the passkey login response now includes `permissions`, so clients no longer
+- Fixed `125923e1a8`: the passkey login response now includes `permissions`, so clients no longer
   infer new permissions from legacy parent scopes on the first response.
 - **To upgrade the existing passkey:** create a pairing link with the permissions you want from the
   desktop app, pair on the public origin, enroll a new passkey, revoke the old one.

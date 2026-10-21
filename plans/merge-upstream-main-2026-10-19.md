@@ -3,7 +3,7 @@
 ## Goal
 
 Bring `master` up to date with `upstream/main` tip **`1451e7cb23`** (2026-10-18 23:03 -0700):
-**762 commits** since the 10-16 merge (`b0b47eefeb`, upstream `e3b35d1b24`). Includes previews up to
+**762 commits** since the 10-16 merge (`fe5c72318c`, upstream `e3b35d1b24`). Includes previews up to
 `v0.1.1-preview.20261019.3339`. Also: turn upstream's new telemetry off for this fork.
 
 Predecessor: [`merge-upstream-main-2026-10-16.md`](./merge-upstream-main-2026-10-16.md) (read its
@@ -12,7 +12,7 @@ Predecessor: [`merge-upstream-main-2026-10-16.md`](./merge-upstream-main-2026-10
 ## Environment / context
 
 - Dedicated worktree `C:\Users\camer\.t3\worktrees\t3code\merge-upstream-2026-10-19`, branch
-  `merge/upstream-2026-10-19`, from `master` = `8050f6ef98`.
+  `merge/upstream-2026-10-19`, from `master` = `ecb8279b0d`.
 - Shared checkout `C:\Users\camer\git\t3code` stays on `master` until the fast-forward.
 - Use the worktree's own `node_modules/.bin/vp`; `vp i --no-frozen-lockfile` after taking
   upstream's lockfile.
@@ -86,10 +86,10 @@ Duration.zero` (same fork gotcha as 10-16) → 27/27. Web unit 262 pass; web bro
       112 pass. Telemetry "not enabled" test proven to fail with the old default.
 - [x] `vp fmt` on all 133 fork-differing TS files; `vp lint` on touched files clean apart from two
       upstream warnings.
-- [x] Merge commit `bb23081e6b`; `master` fast-forwarded; worktree and branch removed.
+- [x] Merge commit `0f33eeeaee`; `master` fast-forwarded; worktree and branch removed.
 - [x] Restart via the idle watcher: pid 48232 started 2026-10-19 00:52 via WMI; log `C:\temp\t3runs\restart-when-idle.log`.
       Idle at 00:56, launcher 00:58 (`C:\temp\t3runs\20261019-005837`): stopped 5 processes normally,
-      reinstalled, rebuilt from `6db8bc588c`, backend ready after 66s (vs 5s on 10-17; first start on
+      reinstalled, rebuilt from `1d4464ca9b`, backend ready after 66s (vs 5s on 10-17; first start on
       the merged code, likely one-time startup work). Running since 01:01.
 
 ## Open questions for the user

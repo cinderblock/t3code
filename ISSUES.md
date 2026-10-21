@@ -4,7 +4,7 @@ Known problems found while working on something else. Each entry is a seed for a
 
 ## WebSocket upgrade accepts cookie sessions from any Origin
 
-**Fixed upstream** by #18509 (`48595c787c`), arrived in merge `b0b47eefeb`: every cookie-authenticated
+**Fixed upstream** by #18509 (`48595c787c`), arrived in merge `fe5c72318c`: every cookie-authenticated
 request, the upgrade included, must now be same-origin by `Sec-Fetch-Site`, match `Host` /
 `X-Forwarded-Host`, or come from a trusted app origin. Kept below for the record.
 

@@ -19,7 +19,7 @@ Evidence: server traces showed no `attachments.createUploadUrl` / upload POSTs f
 
 ## Environment / context
 
-- Fork fix: `3c7d9a8d7e` on `master` (fork, not pushed). Running in the desktop build since
+- Fork fix: `553f6801d1` on `master` (fork, not pushed). Running in the desktop build since
   2026-10-21 02:24 (restarted by `scripts/restart-t3-when-idle.ps1`).
 - Upstream refactored the composer on 2026-10-21 (#22689, #22719–#22722); the input moved into
   `ComposerAttachButton` in `apps/web/src/components/chat/ComposerAttachmentStrip.tsx`, still
@@ -51,7 +51,7 @@ Evidence: server traces showed no `attachments.createUploadUrl` / upload POSTs f
        https://github.com/pingdotgg/t3code/pull/23083 and linked it to the thread.
 7. [x] Stopped the dev server and forwarder. [ ] Remove the worktree once the PR is merged or
        closed (keep it meanwhile for review changes). ← current: waiting on upstream review
-8. [ ] Fork: at the next upstream merge, take upstream's version and drop `3c7d9a8d7e` if the PR
+8. [ ] Fork: at the next upstream merge, take upstream's version and drop `553f6801d1` if the PR
        landed; otherwise re-apply on the refactored composer.
 
 ## Findings / gotchas
@@ -76,6 +76,16 @@ Evidence: server traces showed no `attachments.createUploadUrl` / upload POSTs f
 - 2026-10-21: diagnosed, fork fix committed and verified on iPhone; PR worktree created and fix
   ported.
 - 2026-10-21: upstream version verified on iPhone via the worktree dev server; PR #23083 opened.
+- 2026-10-21: leak audit. The public fork, PR #23083 and upstream issues never contained the
+  public T3 hostname or the Headscale hostname, but two unpushed plan docs did. Rewrote the 42
+  fork-only commits from 2026-10-12 on (user approved) so neither appears anywhere in unpushed
+  history: `git filter-repo --replace-text` in a bare clone, with `origin/master` and
+  `upstream/main` excluded so upstream commits keep their hashes, then re-signed with the same SSH
+  key (script `C:	emp	3runs
+esign.py`) and moved `master` with a compare-and-swap
+  `update-ref`. Hash citations in plans and ISSUES.md updated to the new hashes. Old master is
+  kept locally as `refs/backup/master-before-hostname-redact-2026-10-21`; it still contains the
+  hostnames, so never push it.
 
 ## Open questions for the user
 
@@ -83,5 +93,9 @@ Evidence: server traces showed no `attachments.createUploadUrl` / upload POSTs f
 
 ## Things not to do
 
-- Don't cherry-pick `3c7d9a8d7e` onto upstream; the code moved.
+- Don't cherry-pick `553f6801d1` onto upstream; the code moved.
 - Don't start the dev server against `~/.t3/userdata`.
+- Don't write private hostnames (the public T3 domain, the Headscale server) into files in this
+  repo; the fork is public.
+- Don't run `git filter-repo` over the fork without excluding `upstream/main`: it rewrites
+  upstream's commits too (it strips their signatures), which detaches the fork from upstream.

@@ -11,7 +11,7 @@ Predecessor: [`merge-upstream-main-2026-10-02.md`](./merge-upstream-main-2026-10
 ## Environment / context
 
 - Dedicated worktree `C:\Users\camer\.t3\worktrees\t3code\merge-upstream-v0.1.0`, branch
-  `merge/upstream-v0.1.0`, branched from `master` = `eec74f49df` (181 ahead of `origin/master`).
+  `merge/upstream-v0.1.0`, branched from `master` = `29c72919d2` (181 ahead of `origin/master`).
 - Shared checkout `C:\Users\camer\git\t3code` stays on `master`, untouched until fast-forward.
 - Use the worktree's own `node_modules/.bin/vp` for tests (see the 10-02 plan's gotchas).
 
@@ -133,9 +133,9 @@ Predecessor: [`merge-upstream-main-2026-10-02.md`](./merge-upstream-main-2026-10
       Remaining failures are Windows-only upstream tests: 6 in `GitVcsDriverCore.test.ts` (5 fake-ssh
       `GIT_SSH_COMMAND` "structured errors", 1 pathspec-magic filename) and 3 in desktop (two
       symlinked-settings tests and one download path, all `/` vs `\`).
-- [x] Commits on `merge/upstream-v0.1.0`: merge `b0b47eefeb`, lint fixes, ISSUES.md, this plan.
-- [x] Fast-forwarded `master` to `d24cc6b05b` (2026-10-16); merge worktree and branches removed.
-- [x] Restyle lint fixed with stock variants (`ae24dbb225`): host-filter toggles take
+- [x] Commits on `merge/upstream-v0.1.0`: merge `fe5c72318c`, lint fixes, ISSUES.md, this plan.
+- [x] Fast-forwarded `master` to `60dbfee8a3` (2026-10-16); merge worktree and branches removed.
+- [x] Restyle lint fixed with stock variants (`3e5f514c82`): host-filter toggles take
       `segmented`'s own colors, count badge puts `tabular-nums` on an inner span, send-later
       button is `ghost-muted`. Seen in a dev client (composer); host filter needs 2+ hosts.
 - [ ] Next launch: `scripts/start-t3.ps1` reinstalls (lockfile changed) and rebuilds. Not run by an
@@ -151,7 +151,7 @@ Predecessor: [`merge-upstream-main-2026-10-02.md`](./merge-upstream-main-2026-10
       stale build rebuilt, idle re-check passed, 5 app processes + 1 old launcher closed normally,
       backend ready 5s after launch, no watchdog fires.
 - [x] `fork-restyle-lint` worktree and its merged branches removed (2026-10-17).
-- [x] 2026-10-17 01:04: `scripts/restart-t3-when-idle.ps1` (`19fce52cec`) started via WMI (pid 36596 since 01:29, pre-stop re-check `c187ed2023`, no time limit `bfd7c71af2`;
+- [x] 2026-10-17 01:04: `scripts/restart-t3-when-idle.ps1` (`b8fc7b4860`) started via WMI (pid 36596 since 01:29, pre-stop re-check `a1b2c8a7fe`, no time limit `cce7775a88`;
       parent WmiPrvSE, elevated) to run the launcher once no thread is running/queued/waiting for 120s.
       Log: `C:\temp\t3runs\restart-when-idle.log`. Went idle 01:39, started the launcher 01:41, exited.
 - [x] User re-enrolled the passkey from a Full access session: "Chrome on iOS" `d7d09b81`, saved
