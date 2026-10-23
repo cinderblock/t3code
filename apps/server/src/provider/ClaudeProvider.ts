@@ -263,6 +263,12 @@ export type ClaudeCapabilitiesProbe = {
    * otherwise successful response mean the account has none (API key).
    */
   readonly usage?: Pick<SDKControlGetUsageResponse, "rate_limits_available" | "rate_limits">;
+  /**
+   * When `usage` was read. The driver caches this probe, so a status check can
+   * reuse a read from minutes ago; stamping it "now" would let it overwrite a
+   * newer turn-driven window.
+   */
+  readonly usageReadAt?: string;
 };
 
 function parseClaudeInitializationCommands(
@@ -411,7 +417,7 @@ const probeClaudeCapabilities = (
           apiKeySource: account?.apiKeySource,
           apiProvider: account?.apiProvider,
           slashCommands: parseClaudeInitializationCommands(init.commands),
-          ...(usage ? { usage } : {}),
+          ...(usage ? { usage, usageReadAt: DateTime.formatIso(yield* DateTime.now) } : {}),
         } satisfies ClaudeCapabilitiesProbe;
       }),
     ),
@@ -643,14 +649,16 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
       subscriptionType: capabilities.subscriptionType,
       authMethod: capabilities.tokenSource,
     }) ?? apiProviderAuthMetadata(capabilities.apiProvider);
+  const usageCheckedAt = capabilities.usageReadAt ?? checkedAt;
   const usageLimits = !capabilities.usage
     ? makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" })
     : scopedLimitNames
       ? yield* recordClaudeUsageResponse(scopedLimitNames, {
           response: capabilities.usage,
-          checkedAt,
+          checkedAt: usageCheckedAt,
         })
-      : claudeUsageResponseToLimits({ response: capabilities.usage, checkedAt }).limits;
+      : claudeUsageResponseToLimits({ response: capabilities.usage, checkedAt: usageCheckedAt })
+          .limits;
   const resetCredits =
     resolveResetCredits &&
     capabilities.subscriptionType &&

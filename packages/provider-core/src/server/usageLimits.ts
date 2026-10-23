@@ -106,5 +106,21 @@ export function resolveUsageLimitsAfterProbe(input: {
   if (probed?.unavailable?.reason === "probeFailed" && published && !published.unavailable) {
     return published;
   }
+  // A driver can answer from a cached read that predates a turn-driven update;
+  // windows the update refreshed since then keep its newer numbers.
+  if (
+    probed &&
+    published &&
+    !probed.unavailable &&
+    !published.unavailable &&
+    Date.parse(published.checkedAt) > Date.parse(probed.checkedAt)
+  ) {
+    const windows = new Map(probed.windows.map((window) => [window.id, window] as const));
+    for (const window of published.windows) windows.set(window.id, window);
+    return {
+      ...probed,
+      ...makeUsageLimits({ checkedAt: published.checkedAt, windows: windows.values() }),
+    };
+  }
   return probed;
 }

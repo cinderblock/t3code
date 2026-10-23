@@ -86,4 +86,25 @@ describe("resolveUsageLimitsAfterProbe", () => {
     expect(resolveUsageLimitsAfterProbe({ published, probed: unsupported })).toBe(unsupported);
     expect(resolveUsageLimitsAfterProbe({ published: undefined, probed: failed })).toBe(failed);
   });
+
+  it("does not let a cached read older than a turn update roll its windows back", () => {
+    const cachedRead = {
+      checkedAt: "2026-09-03T11:58:00.000Z",
+      windows: [{ ...session, usedPercent: 35 }, weekly],
+      resetCredits: { availableCount: 1 },
+    };
+    const afterTurn = {
+      checkedAt: "2026-09-03T12:00:00.000Z",
+      windows: [{ ...session, usedPercent: 42 }, weekly],
+    };
+    expect(resolveUsageLimitsAfterProbe({ published: afterTurn, probed: cachedRead })).toEqual({
+      checkedAt: afterTurn.checkedAt,
+      windows: afterTurn.windows,
+      resetCredits: { availableCount: 1 },
+    });
+    // A read newer than the published snapshot replaces it outright.
+    expect(resolveUsageLimitsAfterProbe({ published: cachedRead, probed: afterTurn })).toBe(
+      afterTurn,
+    );
+  });
 });

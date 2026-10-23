@@ -69,6 +69,7 @@ const CAPABILITIES_PROBE_TTL = Duration.minutes(5);
 const withoutUsage = (capabilities: ClaudeCapabilitiesProbe): ClaudeCapabilitiesProbe => {
   const result = { ...capabilities };
   delete result.usage;
+  delete result.usageReadAt;
   return result;
 };
 
