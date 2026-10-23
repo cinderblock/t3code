@@ -2,12 +2,13 @@
  * UsageHistoryRecorder — turns the usage limits every provider instance publishes into a
  * time series for the meter strip's history chart.
  *
- * Upstream owns the reads: adapters push sparse `account.rate-limits.updated` events during
- * a turn, the capabilities probe does a full `get_usage`, and `makeManagedServerProvider`
- * re-probes on `providerHealthRefreshInterval`. Each of those republishes the instance's
- * `usageLimits` with a new `checkedAt`. This service only watches that stream and writes one
- * `fork_usage_samples` row per window whenever `checkedAt` advances, so there is no second
- * poller and no credentials handling here.
+ * Upstream owns the reads: adapters merge sparse turn-time rate-limit updates into the
+ * instance's snapshot, and the managed provider's status probe does a full read on
+ * `providerHealthRefreshInterval` (plus any client-requested refresh). Each read that changes
+ * anything republishes `usageLimits` with a new `checkedAt`; a cached probe keeps the read's
+ * own time. This service only watches that stream and writes one `fork_usage_samples` row per
+ * window whenever `checkedAt` advances, so there is no second poller and no credentials
+ * handling here.
  *
  * Rows key on the provider instance id (`account_key`), which is stable across restarts
  * because it is the settings key. Rows from the fork's earlier Claude-home-keyed poller are
