@@ -113,6 +113,9 @@ chromium`) and, in this worktree, a port outside Windows' reserved 60690–62189
   the user agreed to delete it (deleted; it was never pushed).
 - 2026-10-23: regression test written, verified both ways, pushed to #23083 (`9ab83e4377`); PR
   body's Verification section mentions it. PR still mergeable against upstream.
+- 2026-10-23: CodeRabbit review of the test: switched `expect.poll` to `vi.waitFor` (upstream
+  AGENTS.md browser-test rule) and made the test click the paperclip and assert it opens the
+  input (spy on `input.click`). Re-verified both ways, pushed `2baf36135a`, replied on the thread.
 
 ## Open questions for the user
 
