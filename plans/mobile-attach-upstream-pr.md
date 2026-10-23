@@ -55,7 +55,8 @@ Evidence: server traces showed no `attachments.createUploadUrl` / upload POSTs f
 7. [x] Stopped the dev server and forwarder. [ ] Remove the worktree once the PR is merged or
        closed (keep it meanwhile for review changes).
 8. [ ] Fork: at the next upstream merge, take upstream's version and drop `553f6801d1` if the PR
-       landed; otherwise re-apply on the refactored composer.
+       landed; otherwise re-apply on the refactored composer. Not this thread's job: the user is
+       running the upstream merge with a separate agent (2026-10-23).
 9. [x] Regression test (user asked 2026-10-23): `apps/web/src/components/chat/ChatComposer.attach.browser.test.tsx`
        on the PR branch, commit `9ab83e4377`. Mounts `ChatComposer` at 390x844, focuses then blurs
        the editor so it collapses, fires `change` on the input it captured before the collapse,
@@ -63,7 +64,9 @@ Evidence: server traces showed no `attachments.createUploadUrl` / upload POSTs f
        reset to `HEAD~1`) it fails with `expected undefined to deeply equal [ 'notes.txt' ]`.
        Lint, fmt and `apps/web` typecheck clean. [x] Pushed (fast-forward, 2026-10-23) and added
        to the PR body's Verification section.
-10. [ ] Respond to maintainer review on #23083. ← current: waiting on review
+10. [ ] Respond to maintainer review on #23083. The thread watches the PR (user agreed
+        2026-10-23); when it is merged or closed, remove the worktree (step 7). ← current:
+        waiting on review
 
 ## Findings / gotchas
 
@@ -102,16 +105,14 @@ chromium`) and, in this worktree, a port outside Windows' reserved 60690–62189
   `upstream/main` excluded so upstream commits keep their hashes, then re-signed with the same SSH
   key (script `C:\temp\t3runs\resign.py`) and moved `master` with a compare-and-swap
   `update-ref`. Hash citations in plans and ISSUES.md updated to the new hashes. Old master is
-  kept locally as `refs/backup/master-before-hostname-redact-2026-10-21`; it still contains the
-  hostnames, so never push it.
+  kept locally as `refs/backup/master-before-hostname-redact-2026-10-21` until 2026-10-23, when
+  the user agreed to delete it (deleted; it was never pushed).
 - 2026-10-23: regression test written, verified both ways, pushed to #23083 (`9ab83e4377`); PR
   body's Verification section mentions it. PR still mergeable against upstream.
 
 ## Open questions for the user
 
-1. Should this thread watch #23083 and respond to maintainer review? Recommendation: yes.
-2. When can `refs/backup/master-before-hostname-redact-2026-10-21` be deleted? Recommendation:
-   now; the rewrite was verified.
+(none)
 
 ## Things not to do
 
