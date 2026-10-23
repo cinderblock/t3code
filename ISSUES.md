@@ -22,3 +22,19 @@ Why it matters: the session grants shell-level control of the host. A fix probab
 `Origin` for cookie-authenticated upgrades against the request's own origin, configured public
 origins, and the desktop renderer origins. Careful: cloudflared rewrites `Host` to the local
 service by default, so comparing `Origin` to `Host` alone would break proxied access.
+
+## Web browser tests can't start on Windows when the hashed port is reserved
+
+`apps/web/vite.config.ts` hashes the checkout path into a browser-test API port in 61000–64999
+(`browserTestApiPort`), with `strictPort: false`. Windows (Hyper-V / WinNAT) reserves blocks of
+ports; on this machine `netsh int ipv4 show excludedportrange protocol=tcp` lists 60690–62189. A
+checkout that hashes into a reserved block fails before any test runs, and `strictPort: false`
+doesn't help because the error is `EACCES`, not `EADDRINUSE`:
+
+    Error: listen EACCES: permission denied ::1:62018
+
+Seen 2026-10-23 in `C:\Users\camer\.t3\worktrees\t3code\mobile-attach-pr`, running
+`vp test run --project browser <file>`. `--browser.api.port` on the command line doesn't
+override it, because the port is set per project. About 30% of the hash range is reserved
+here, so roughly a third of worktrees can't run browser tests on this machine. Upstream has the
+same code.
