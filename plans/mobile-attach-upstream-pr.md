@@ -50,9 +50,16 @@ Evidence: server traces showed no `attachments.createUploadUrl` / upload POSTs f
        `origin/fix/mobile-attach-after-first-message`, opened
        https://github.com/pingdotgg/t3code/pull/23083 and linked it to the thread.
 7. [x] Stopped the dev server and forwarder. [ ] Remove the worktree once the PR is merged or
-       closed (keep it meanwhile for review changes). ← current: waiting on upstream review
+       closed (keep it meanwhile for review changes).
 8. [ ] Fork: at the next upstream merge, take upstream's version and drop `553f6801d1` if the PR
        landed; otherwise re-apply on the refactored composer.
+9. [x] Regression test (user asked 2026-10-23): `apps/web/src/components/chat/ChatComposer.attach.browser.test.tsx`
+       on the PR branch, commit `9ab83e4377`. Mounts `ChatComposer` at 390x844, focuses then blurs
+       the editor so it collapses, fires `change` on the input it captured before the collapse,
+       and expects the file in the draft. Passes with the fix; without it (both component files
+       reset to `HEAD~1`) it fails with `expected undefined to deeply equal [ 'notes.txt' ]`.
+       Lint, fmt and `apps/web` typecheck clean. [ ] Push to the PR branch and add it to the PR
+       body's Verification section. ← current: waiting on the user's go-ahead to push
 
 ## Findings / gotchas
 
@@ -70,6 +77,14 @@ Evidence: server traces showed no `attachments.createUploadUrl` / upload POSTs f
   #23058, #23060); expect more churn in `ChatComposer.tsx` and possible rebase conflicts.
 - Upstream issue #2803 (no paperclip on mobile) is unrelated/closed; its fix (#8236) introduced
   the paperclip this bug is in. No existing report of this bug.
+
+- **Web browser tests on this machine** need Playwright's headless shell (installed 2026-10-23
+  via `node node_modules/.pnpm/playwright@1.60.0/node_modules/playwright/cli.js install --only-shell
+chromium`) and, in this worktree, a port outside Windows' reserved 60690–62189: the hashed
+  `browserTestApiPort` lands on 62018 (`EACCES`). Worked around by temporarily pinning the port in
+  `apps/web/vite.config.ts` (reverted, never committed); logged in `ISSUES.md`.
+- The browser refuses `userEvent.upload` into a detached input (`TypeError ... 'includes'`), so the
+  test sets `input.files` and dispatches `change` itself, which is also what the real picker does.
 
 ## Progress log
 
