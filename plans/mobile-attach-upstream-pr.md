@@ -32,7 +32,10 @@ Evidence: server traces showed no `attachments.createUploadUrl` / upload POSTs f
 
 - Report as a PR, not an issue first (CONTRIBUTING allows small obvious bug fixes directly).
 - User tests the upstream-based branch on the iPhone before the PR is opened.
-- Don't merge upstream into the fork as part of this; that's its own thread later.
+- Don't merge upstream into the fork as part of this; that's its own thread later. The user
+  will run it with a separate agent (2026-10-23); this thread only covers the fix and its test.
+- The regression test goes in PR #23083, not a separate PR: it only proves anything alongside
+  the fix.
 
 ## Plan / steps
 
@@ -58,8 +61,9 @@ Evidence: server traces showed no `attachments.createUploadUrl` / upload POSTs f
        the editor so it collapses, fires `change` on the input it captured before the collapse,
        and expects the file in the draft. Passes with the fix; without it (both component files
        reset to `HEAD~1`) it fails with `expected undefined to deeply equal [ 'notes.txt' ]`.
-       Lint, fmt and `apps/web` typecheck clean. [ ] Push to the PR branch and add it to the PR
-       body's Verification section. ← current: waiting on the user's go-ahead to push
+       Lint, fmt and `apps/web` typecheck clean. [x] Pushed (fast-forward, 2026-10-23) and added
+       to the PR body's Verification section.
+10. [ ] Respond to maintainer review on #23083. ← current: waiting on review
 
 ## Findings / gotchas
 
@@ -96,15 +100,18 @@ chromium`) and, in this worktree, a port outside Windows' reserved 60690–62189
   fork-only commits from 2026-10-12 on (user approved) so neither appears anywhere in unpushed
   history: `git filter-repo --replace-text` in a bare clone, with `origin/master` and
   `upstream/main` excluded so upstream commits keep their hashes, then re-signed with the same SSH
-  key (script `C:	emp	3runs
-esign.py`) and moved `master` with a compare-and-swap
+  key (script `C:\temp\t3runs\resign.py`) and moved `master` with a compare-and-swap
   `update-ref`. Hash citations in plans and ISSUES.md updated to the new hashes. Old master is
   kept locally as `refs/backup/master-before-hostname-redact-2026-10-21`; it still contains the
   hostnames, so never push it.
+- 2026-10-23: regression test written, verified both ways, pushed to #23083 (`9ab83e4377`); PR
+  body's Verification section mentions it. PR still mergeable against upstream.
 
 ## Open questions for the user
 
-(none)
+1. Should this thread watch #23083 and respond to maintainer review? Recommendation: yes.
+2. When can `refs/backup/master-before-hostname-redact-2026-10-21` be deleted? Recommendation:
+   now; the rewrite was verified.
 
 ## Things not to do
 
