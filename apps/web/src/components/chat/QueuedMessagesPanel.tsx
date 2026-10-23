@@ -1,15 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { QueuedMessage, ThreadId } from "@t3tools/contracts";
+import type { EnvironmentId, QueuedMessage, ThreadId } from "@t3tools/contracts";
 import { CircleAlertIcon, ClockIcon, XIcon } from "lucide-react";
-import { memo, useMemo, useState } from "react";
+import { memo, useState } from "react";
 import { cn } from "~/lib/utils";
 import { useAtomCommand } from "../../state/use-atom-command";
-import { primaryEnvironmentIdAtom } from "../../state/primaryEnvironment";
-import {
-  primaryQueuedMessagesAtom,
-  primaryUsageAccountsAtom,
-  usageEnvironment,
-} from "../../state/quota";
+import { queuedMessagesAtom, usageAccountsAtom, usageEnvironment } from "../../state/quota";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import {
@@ -23,12 +18,13 @@ import {
  * or be cancelled; failed rows surface the failure and can be dismissed.
  */
 export const QueuedMessagesPanel = memo(function QueuedMessagesPanel(props: {
+  environmentId: EnvironmentId;
   threadId: ThreadId;
   className?: string;
 }) {
-  const environmentId = useAtomValue(primaryEnvironmentIdAtom);
-  const queuedMessages = useAtomValue(primaryQueuedMessagesAtom);
-  const usageAccounts = useAtomValue(primaryUsageAccountsAtom);
+  const { environmentId } = props;
+  const queuedMessages = useAtomValue(queuedMessagesAtom(environmentId));
+  const usageAccounts = useAtomValue(usageAccountsAtom(environmentId));
   const updateQueuedMessage = useAtomCommand(
     usageEnvironment.updateQueuedMessage,
     "queued message update",
@@ -39,19 +35,13 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel(props: {
   );
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
 
-  const threadQueuedMessages = useMemo<ReadonlyArray<QueuedMessage>>(
-    () =>
-      queuedMessages.filter(
-        (message) =>
-          message.threadId === props.threadId &&
-          (message.status === "pending" ||
-            message.status === "sending" ||
-            message.status === "failed"),
-      ),
-    [props.threadId, queuedMessages],
+  const threadQueuedMessages: ReadonlyArray<QueuedMessage> = queuedMessages.filter(
+    (message) =>
+      message.threadId === props.threadId &&
+      (message.status === "pending" || message.status === "sending" || message.status === "failed"),
   );
 
-  if (environmentId === null || threadQueuedMessages.length === 0) {
+  if (threadQueuedMessages.length === 0) {
     return null;
   }
 
@@ -65,8 +55,8 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel(props: {
           >
             <CircleAlertIcon className="size-3.5 shrink-0 text-destructive" aria-hidden="true" />
             <div className="min-w-0 flex-1">
-              <div className="truncate text-[13px] text-foreground/90">{message.text}</div>
-              <div className="truncate text-[11px] text-destructive/90">
+              <div className="truncate text-xs text-foreground/90">{message.text}</div>
+              <div className="truncate text-2xs text-destructive/90">
                 Failed to send
                 {message.failureDetail ? `: ${message.failureDetail}` : ""}
               </div>
@@ -88,8 +78,8 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel(props: {
           >
             <ClockIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
             <div className="min-w-0 flex-1">
-              <div className="truncate text-[13px] text-foreground/90">{message.text}</div>
-              <div className="truncate text-[11px] text-muted-foreground">
+              <div className="truncate text-xs text-foreground/90">{message.text}</div>
+              <div className="truncate text-2xs text-muted-foreground">
                 {message.origin === "cap-hit-auto" ? "Queued after a usage cap hit — " : null}
                 {describeQueuedMessageTrigger(message.trigger)}
               </div>
@@ -97,7 +87,7 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel(props: {
             {message.status === "sending" ? (
               // Claimed by the server: the turn is starting, so there is nothing left to
               // edit or cancel. The row disappears once the send settles.
-              <span className="shrink-0 text-[11px] text-muted-foreground">Sending…</span>
+              <span className="shrink-0 text-2xs text-muted-foreground">Sending…</span>
             ) : (
               <>
                 <Popover
@@ -105,13 +95,7 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel(props: {
                   onOpenChange={(open) => setEditingMessageId(open ? message.id : null)}
                 >
                   <PopoverTrigger
-                    render={
-                      <Button
-                        size="xs"
-                        variant="ghost"
-                        className="shrink-0 text-muted-foreground"
-                      />
-                    }
+                    render={<Button size="xs" variant="ghost-muted" className="shrink-0" />}
                   >
                     Edit trigger
                   </PopoverTrigger>
@@ -133,8 +117,8 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel(props: {
                 </Popover>
                 <Button
                   size="xs"
-                  variant="ghost"
-                  className="shrink-0 text-muted-foreground"
+                  variant="ghost-muted"
+                  className="shrink-0"
                   onClick={() =>
                     void cancelQueuedMessage({ environmentId, input: { id: message.id } })
                   }

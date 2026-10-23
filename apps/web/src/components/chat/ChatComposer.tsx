@@ -206,7 +206,7 @@ import {
   type TerminalContextSelection,
 } from "../../lib/terminalContext";
 import { useComposerPathSearch } from "../../lib/composerPathSearchState";
-import { primaryUsageAccountsAtom } from "../../state/quota";
+import { usageAccountsAtom } from "../../state/quota";
 import {
   replaceComposerContextReferences,
   toKindScopedComposerContextId,
@@ -2938,7 +2938,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ? "Open composer to compact and send"
       : "Send message";
   // Queue draft ("send later") affordance next to the send button.
-  const usageAccounts = useAtomValue(primaryUsageAccountsAtom);
+  const usageAccounts = useAtomValue(usageAccountsAtom(environmentId));
   const showQueueDraftButton =
     isServerThread &&
     pendingPrimaryAction === null &&

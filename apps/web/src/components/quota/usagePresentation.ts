@@ -3,7 +3,7 @@ import type {
   ServerProviderUsageLimits,
   ServerProviderUsageWindow,
 } from "@t3tools/contracts";
-import { limitsNotice } from "@t3tools/shared/usageLimits";
+import { formatDuration, limitsNotice } from "@t3tools/shared/usageLimits";
 
 import type { UsageAccountView } from "../../state/quota";
 
@@ -13,8 +13,8 @@ import type { UsageAccountView } from "../../state/quota";
  *
  * Windows are upstream's `ServerProviderUsageWindow`: a provider-assigned id
  * (`five_hour`, `seven_day`, `seven_day_fable`), a kind, a label and a used
- * percentage. A model-scoped window carries the model's display name as its
- * label; an account-wide window carries the kind's generic label.
+ * percentage. A model-scoped window is labelled `<Kind> · <Model>` (Claude's
+ * `Weekly · Fable`); an account-wide window carries the kind's generic label.
  */
 
 const ACCOUNT_WIDE_LABELS = new Set(["session", "weekly", "monthly", "primary", "secondary"]);
@@ -22,47 +22,39 @@ const ACCOUNT_WIDE_IDS = new Set(["five_hour", "seven_day", "primary", "secondar
 
 /**
  * The model a window is scoped to, or null for an account-wide window. Claude
- * scoped weeklies extend the base id (`seven_day_<model>`) and are labelled by
- * model; everything a provider labels with its kind is account-wide.
+ * scoped weeklies extend the base id (`seven_day_<model>`) and put the model
+ * after the kind in the label; everything labelled with its kind alone is
+ * account-wide.
  */
 export function windowScopeName(window: ServerProviderUsageWindow): string | null {
   if (ACCOUNT_WIDE_IDS.has(window.id) || ACCOUNT_WIDE_LABELS.has(window.label.toLowerCase())) {
     return null;
   }
-  return window.label;
+  const separator = window.label.lastIndexOf(" · ");
+  return separator === -1 ? window.label : window.label.slice(separator + 3);
+}
+
+export interface SeriesStyle {
+  readonly color: string;
+  readonly dashArray: string | undefined;
 }
 
 /**
- * Fixed categorical series slots (validated palette — see the dataviz
- * reference instance). Identity is bound to the scope, never to the order
- * windows happen to arrive in.
+ * Chart series drawn from the active theme rather than a fixed palette, so
+ * every theme (including imported VS Code ones) colours them. Themes carry no
+ * categorical palette, so series past the first step away from the accent in
+ * colour and dash together; the direct label at each line end carries
+ * identity, never colour alone.
  */
-const SERIES_SLOT_CLASSES: ReadonlyArray<string> = [
-  // slot 1 blue — account-wide
-  "[--series-color:#2a78d6] dark:[--series-color:#3987e5]",
-  // slot 2 green — Fable
-  "[--series-color:#008300] dark:[--series-color:#008300]",
-  // slot 3 magenta — Opus
-  "[--series-color:#e87ba4] dark:[--series-color:#d55181]",
-  // slot 4 yellow — Sonnet
-  "[--series-color:#eda100] dark:[--series-color:#c98500]",
-  // slot 5 aqua — anything else
-  "[--series-color:#1baf7a] dark:[--series-color:#199e70]",
+const SERIES_STYLES: ReadonlyArray<SeriesStyle> = [
+  { color: "var(--primary)", dashArray: undefined },
+  { color: "color-mix(in oklab, var(--primary) 50%, var(--foreground))", dashArray: "6 3" },
+  { color: "var(--muted-foreground)", dashArray: "2 3" },
 ];
 
-const KNOWN_MODEL_SLOTS: Readonly<Record<string, number>> = {
-  fable: 1,
-  opus: 2,
-  sonnet: 3,
-};
-
-export function seriesSlotClassForWindow(window: ServerProviderUsageWindow): string {
-  const scope = windowScopeName(window);
-  if (scope === null) {
-    return SERIES_SLOT_CLASSES[0]!;
-  }
-  const slot = KNOWN_MODEL_SLOTS[scope.toLowerCase()];
-  return SERIES_SLOT_CLASSES[slot ?? 4]!;
+/** Style for the `index`th series of a chart whose windows are in display order. */
+export function seriesStyle(index: number): SeriesStyle {
+  return SERIES_STYLES[Math.min(index, SERIES_STYLES.length - 1)]!;
 }
 
 /** Nominal window length in hours, from the provider when it says, else by kind. */
@@ -191,33 +183,71 @@ export function windowSeverity(window: ServerProviderUsageWindow): UsageSeverity
   return "normal";
 }
 
+/** Theme roles only, so the meters follow whichever theme is active. */
 export function severityMeterClass(window: ServerProviderUsageWindow): string {
   switch (windowSeverity(window)) {
     case "exceeded":
     case "critical":
-      return "bg-[var(--color-red-500)]";
+      return "bg-destructive";
     case "warning":
-      return "bg-[var(--color-amber-500)]";
+      return "bg-warning";
     case "normal":
-      return "bg-[var(--color-blue-500)]";
+      return "bg-primary";
   }
 }
 
-export function formatResetEta(resetsAt: string | undefined, nowMs: number): string | null {
-  if (resetsAt === undefined) return null;
-  const resetMs = Date.parse(resetsAt);
-  if (!Number.isFinite(resetMs)) return null;
-  const deltaMs = resetMs - nowMs;
-  if (deltaMs <= 0) return "resetting…";
-  const totalMinutes = Math.round(deltaMs / 60_000);
-  if (totalMinutes < 60) return `resets in ${totalMinutes}m`;
-  const hours = Math.floor(totalMinutes / 60);
-  if (hours < 48) {
-    const minutes = totalMinutes % 60;
-    return minutes === 0 ? `resets in ${hours}h` : `resets in ${hours}h ${minutes}m`;
+/**
+ * Slack past the server's own refresh interval before the strip asks for a
+ * read itself. The server's ticks keep `checkedAt` inside the interval while
+ * it sees a focused window, so the strip only fills the gaps it leaves.
+ */
+const REFRESH_GRACE_MS = 60_000;
+/** Numbers younger than this never read as stale, however short the interval. */
+const MIN_STALE_AFTER_MS = 10 * 60_000;
+
+/**
+ * The oldest read among accounts that can report limits; that is the one a
+ * refresh would bring forward. Unsupported accounts never get newer.
+ */
+export function oldestUsageCheckMs(
+  accounts: ReadonlyArray<Pick<UsageAccountView, "limits">>,
+): number | null {
+  let oldest: number | null = null;
+  for (const account of accounts) {
+    if (account.limits.unavailable?.reason === "unsupported") continue;
+    const checkedMs = Date.parse(account.limits.checkedAt);
+    if (Number.isFinite(checkedMs) && (oldest === null || checkedMs < oldest)) oldest = checkedMs;
   }
-  const days = Math.floor(hours / 24);
-  return `resets in ${days}d ${hours % 24}h`;
+  return oldest;
+}
+
+/**
+ * Whether an on-screen strip should ask the server for fresh limits. A
+ * non-positive interval means the user turned background refresh off, which
+ * the strip honours too.
+ */
+export function usageRefreshDue(
+  checkedMs: number | null,
+  nowMs: number,
+  refreshIntervalMs: number,
+): boolean {
+  if (checkedMs === null || refreshIntervalMs <= 0) return false;
+  return nowMs - checkedMs > refreshIntervalMs + REFRESH_GRACE_MS;
+}
+
+/** Old enough that the meters should say so instead of passing for current. */
+export function usageIsStale(
+  checkedMs: number | null,
+  nowMs: number,
+  refreshIntervalMs: number,
+): boolean {
+  if (checkedMs === null) return false;
+  return nowMs - checkedMs > Math.max(MIN_STALE_AFTER_MS, 2 * refreshIntervalMs);
+}
+
+export function formatUsageAge(checkedMs: number, nowMs: number): string {
+  const ageMs = nowMs - checkedMs;
+  return ageMs < 60_000 ? "just now" : `${formatDuration(ageMs)} ago`;
 }
 
 export function formatPercent(percent: number): string {

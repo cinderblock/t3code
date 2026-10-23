@@ -5,8 +5,11 @@ import {
   accountWindowIdForKind,
   emphasizedWeeklyWindowId,
   formatPercent,
-  formatResetEta,
+  formatUsageAge,
+  oldestUsageCheckMs,
   sortWindowsForDisplay,
+  usageIsStale,
+  usageRefreshDue,
   windowScopeName,
   windowSeverity,
   windowShortLabel,
@@ -46,6 +49,10 @@ describe("windowScopeName", () => {
 
   it("reads a model-scoped window's model off its label", () => {
     expect(windowScopeName(weeklyFable)).toBe("Fable");
+    // Claude's probe labels scoped weeklies `Weekly · <model>`.
+    expect(windowScopeName(makeWindow({ id: "seven_day_fable", label: "Weekly · Fable" }))).toBe(
+      "Fable",
+    );
   });
 });
 
@@ -121,21 +128,49 @@ describe("windowSeverity", () => {
   });
 });
 
-describe("formatResetEta", () => {
+describe("usage freshness", () => {
   const nowMs = Date.parse("2026-09-10T12:00:00Z");
+  const fiveMinutes = 5 * 60_000;
+  const minutesAgo = (minutes: number) => nowMs - minutes * 60_000;
 
-  it("returns null when no reset time is reported", () => {
-    expect(formatResetEta(undefined, nowMs)).toBeNull();
+  it("asks for a read only once the server's own interval has clearly lapsed", () => {
+    expect(usageRefreshDue(minutesAgo(5.5), nowMs, fiveMinutes)).toBe(false);
+    expect(usageRefreshDue(minutesAgo(7), nowMs, fiveMinutes)).toBe(true);
   });
 
-  it("formats minutes, hours and days", () => {
-    expect(formatResetEta("2026-09-10T12:30:00Z", nowMs)).toBe("resets in 30m");
-    expect(formatResetEta("2026-09-10T14:15:00Z", nowMs)).toBe("resets in 2h 15m");
-    expect(formatResetEta("2026-09-13T15:00:00Z", nowMs)).toBe("resets in 3d 3h");
+  it("never asks when background refresh is off or nothing has been read", () => {
+    expect(usageRefreshDue(minutesAgo(120), nowMs, 0)).toBe(false);
+    expect(usageRefreshDue(null, nowMs, fiveMinutes)).toBe(false);
   });
 
-  it("reads as resetting once the moment has passed", () => {
-    expect(formatResetEta("2026-09-10T11:00:00Z", nowMs)).toBe("resetting…");
+  it("marks numbers stale after twice the interval, and never inside ten minutes", () => {
+    expect(usageIsStale(minutesAgo(9), nowMs, fiveMinutes)).toBe(false);
+    expect(usageIsStale(minutesAgo(11), nowMs, fiveMinutes)).toBe(true);
+    expect(usageIsStale(minutesAgo(25), nowMs, 15 * 60_000)).toBe(false);
+    expect(usageIsStale(minutesAgo(31), nowMs, 15 * 60_000)).toBe(true);
+  });
+
+  it("dates by the oldest account that can still get newer", () => {
+    const at = (iso: string, reason?: "unsupported" | "probeFailed") => ({
+      limits: {
+        checkedAt: iso,
+        windows: [],
+        ...(reason ? { unavailable: { reason } } : {}),
+      },
+    });
+    expect(
+      oldestUsageCheckMs([
+        at("2026-09-10T11:50:00Z"),
+        at("2026-09-10T09:00:00Z", "unsupported"),
+        at("2026-09-10T11:20:00Z", "probeFailed"),
+      ]),
+    ).toBe(Date.parse("2026-09-10T11:20:00Z"));
+    expect(oldestUsageCheckMs([at("2026-09-10T09:00:00Z", "unsupported")])).toBeNull();
+  });
+
+  it("formats the age of a read", () => {
+    expect(formatUsageAge(nowMs - 20_000, nowMs)).toBe("just now");
+    expect(formatUsageAge(minutesAgo(125), nowMs)).toBe("2h 5m ago");
   });
 });
 

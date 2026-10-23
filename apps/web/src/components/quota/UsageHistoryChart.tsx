@@ -9,11 +9,11 @@ import type {
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 
-import { cn } from "~/lib/utils";
 import { usageEnvironment } from "../../state/quota";
 import {
   formatPercent,
-  seriesSlotClassForWindow,
+  seriesStyle,
+  type SeriesStyle,
   windowHours,
   windowScopeName,
   windowShortLabel,
@@ -75,11 +75,12 @@ function SeriesLine(props: {
   environmentId: EnvironmentId;
   instanceId: ProviderInstanceId;
   window: ServerProviderUsageWindow;
+  style: SeriesStyle;
   since: string;
   domain: ChartDomain;
   hoverTimeMs: number | null;
 }) {
-  const { environmentId, instanceId, window, since, domain, hoverTimeMs } = props;
+  const { environmentId, instanceId, window, style, since, domain, hoverTimeMs } = props;
   const history = useAtomValue(
     usageEnvironment.usageHistory({
       environmentId,
@@ -87,7 +88,6 @@ function SeriesLine(props: {
     }),
   );
   const samples = Option.getOrNull(AsyncResult.value(history))?.samples ?? [];
-  const colorClass = seriesSlotClassForWindow(window);
 
   const points = samples
     .map((sample) => {
@@ -104,16 +104,17 @@ function SeriesLine(props: {
   const hoverSample = hoverTimeMs === null ? null : nearestSample(samples, hoverTimeMs);
 
   return (
-    <g className={colorClass}>
+    <g style={{ color: style.color }}>
       <polyline
         points={points.join(" ")}
         fill="none"
-        stroke="var(--series-color)"
+        stroke="currentColor"
+        strokeDasharray={style.dashArray}
         strokeWidth={2}
         strokeLinejoin="round"
         strokeLinecap="round"
       />
-      <circle cx={lastX} cy={lastY} r={3} fill="var(--series-color)" />
+      <circle cx={lastX} cy={lastY} r={3} fill="currentColor" />
       {/* Direct label at the line end — identity is never color-alone. */}
       <text
         x={lastX > CHART_WIDTH - 90 ? lastX - 6 : lastX + 6}
@@ -130,7 +131,7 @@ function SeriesLine(props: {
             cx={timeToX(Date.parse(hoverSample.capturedAt), domain)}
             cy={percentToY(hoverSample.percent)}
             r={3.5}
-            fill="var(--series-color)"
+            fill="currentColor"
             stroke="var(--color-background)"
             strokeWidth={1.5}
           />
@@ -156,9 +157,11 @@ export function UsageHistoryChart(props: {
   environmentId: EnvironmentId;
   instanceId: ProviderInstanceId;
   windows: ReadonlyArray<ServerProviderUsageWindow>;
+  /** The strip's clock, so the chart's "now" ticks with the meters. */
+  nowMs: number;
   title: string;
 }) {
-  const { environmentId, instanceId, windows, title } = props;
+  const { environmentId, instanceId, windows, nowMs, title } = props;
   const [hoverX, setHoverX] = useState<number | null>(null);
 
   const referenceWindow =
@@ -166,7 +169,6 @@ export function UsageHistoryChart(props: {
   const hours = referenceWindow === null ? 5 : windowHours(referenceWindow);
   const resetMs =
     referenceWindow?.resetsAt !== undefined ? Date.parse(referenceWindow.resetsAt) : Number.NaN;
-  const nowMs = Date.now();
   const anchorMs = Number.isFinite(resetMs)
     ? resetMs
     : Math.floor(nowMs / ANCHOR_BUCKET_MS) * ANCHOR_BUCKET_MS;
@@ -186,21 +188,28 @@ export function UsageHistoryChart(props: {
         {/* Legend — always present for multi-series; chips + text labels. */}
         {windows.length > 1 ? (
           <span className="flex flex-wrap items-center gap-2">
-            {windows.map((window) => (
-              <span
-                key={window.id}
-                className={cn(
-                  "flex items-center gap-1 text-3xs text-muted-foreground",
-                  seriesSlotClassForWindow(window),
-                )}
-              >
+            {windows.map((window, index) => {
+              const style = seriesStyle(index);
+              return (
                 <span
-                  className="inline-block size-2 rounded-xs"
-                  style={{ backgroundColor: "var(--series-color)" }}
-                />
-                {windowShortLabel(window)}
-              </span>
-            ))}
+                  key={window.id}
+                  className="flex items-center gap-1 text-3xs text-muted-foreground"
+                >
+                  <svg aria-hidden width={12} height={4} style={{ color: style.color }}>
+                    <line
+                      x1={0}
+                      x2={12}
+                      y1={2}
+                      y2={2}
+                      stroke="currentColor"
+                      strokeWidth={2}
+                      strokeDasharray={style.dashArray}
+                    />
+                  </svg>
+                  {windowShortLabel(window)}
+                </span>
+              );
+            })}
           </span>
         ) : null}
       </div>
@@ -296,12 +305,13 @@ export function UsageHistoryChart(props: {
             </text>
           </g>
         ) : null}
-        {windows.map((window) => (
+        {windows.map((window, index) => (
           <SeriesLine
             key={window.id}
             environmentId={environmentId}
             instanceId={instanceId}
             window={window}
+            style={seriesStyle(index)}
             since={since}
             domain={domain}
             hoverTimeMs={hoverTimeMs}

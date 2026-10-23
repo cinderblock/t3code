@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import type { ServerProvider } from "@t3tools/contracts";
 import { ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 
-import { groupUsageAccounts, usageWaitingDrivers } from "./quota";
+import { groupUsageAccounts, orderUsageAccountsForSelection, usageWaitingDrivers } from "./quota";
 
 const makeProvider = (driver: string, overrides: Partial<ServerProvider> = {}): ServerProvider => ({
   instanceId: ProviderInstanceId.make(driver),
@@ -76,5 +76,28 @@ describe("groupUsageAccounts", () => {
     expect(accounts).toHaveLength(1);
     expect(accounts[0]?.instanceIds).toEqual(["a", "b"]);
     expect(accounts[0]?.limits.checkedAt).toBe("2026-09-26T01:00:00.000Z");
+  });
+});
+
+describe("orderUsageAccountsForSelection", () => {
+  const accounts = groupUsageAccounts([
+    makeProvider("codex", { usageLimits: limits }),
+    makeProvider("claudeAgent", {
+      instanceId: ProviderInstanceId.make("work"),
+      auth: { status: "authenticated", email: "work@example.com" },
+      usageLimits: limits,
+    }),
+  ]);
+
+  it("leads with the account behind the selected instance", () => {
+    const ordered = orderUsageAccountsForSelection(accounts, ProviderInstanceId.make("work"));
+    expect(ordered.map((account) => account.instanceId)).toEqual(["work", "codex"]);
+  });
+
+  it("keeps the grouped order with no selection or an unknown one", () => {
+    expect(orderUsageAccountsForSelection(accounts, null)).toBe(accounts);
+    expect(orderUsageAccountsForSelection(accounts, ProviderInstanceId.make("gone"))).toBe(
+      accounts,
+    );
   });
 });

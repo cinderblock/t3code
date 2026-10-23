@@ -8174,7 +8174,11 @@ export default function ChatView(props: ChatViewProps) {
                       </div>
                     </div>
                   ) : activeThread ? (
-                    <QueuedMessagesPanel threadId={activeThread.id} className="relative z-0" />
+                    <QueuedMessagesPanel
+                      environmentId={environmentId}
+                      threadId={activeThread.id}
+                      className="relative z-0"
+                    />
                   ) : null}
                   <div
                     ref={draftHeroComposerAnchorRef}
@@ -8462,7 +8466,10 @@ export default function ChatView(props: ChatViewProps) {
                     {/* Usage meters come after the safe-area spacer so the
                         bubble sits flush against the bottom edge of the
                         window, sharing the composer's inset and max-width. */}
-                    <UsageStatusBar />
+                    <UsageStatusBar
+                      environmentId={environmentId}
+                      selectedInstanceId={activeProviderInstanceId}
+                    />
                   </div>
                 </div>
               </div>

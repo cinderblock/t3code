@@ -1,5 +1,6 @@
 import { createUsageEnvironmentAtoms } from "@t3tools/client-runtime/state/quota";
 import type {
+  EnvironmentId,
   ProviderInstanceId,
   QueuedMessage,
   ServerProvider,
@@ -11,8 +12,7 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
-import { primaryEnvironmentIdAtom } from "./primaryEnvironment";
-import { primaryServerProvidersAtom } from "./server";
+import { serverEnvironment } from "./server";
 
 export const usageEnvironment = createUsageEnvironmentAtoms(connectionAtomRuntime);
 
@@ -74,6 +74,20 @@ export function groupUsageAccounts(
 }
 
 /**
+ * The account behind the thread's selected provider instance first, the rest
+ * in their grouped order. Pure, exported for tests.
+ */
+export function orderUsageAccountsForSelection(
+  accounts: ReadonlyArray<UsageAccountView>,
+  selectedInstanceId: ProviderInstanceId | null,
+): ReadonlyArray<UsageAccountView> {
+  if (selectedInstanceId === null) return accounts;
+  const index = accounts.findIndex((account) => account.instanceIds.includes(selectedInstanceId));
+  if (index <= 0) return accounts;
+  return [accounts[index]!, ...accounts.slice(0, index), ...accounts.slice(index + 1)];
+}
+
+/**
  * Drivers whose probe publishes `usageLimits` (the server's Claude, Codex,
  * Cursor, Grok and OpenCode drivers). A ready provider on one of these with no
  * limits yet is waiting on its first successful probe, which can take tens of
@@ -113,30 +127,41 @@ export function usageWaitingDrivers(
 
 const EMPTY_ACCOUNTS: ReadonlyArray<UsageAccountView> = [];
 const EMPTY_DRIVERS: ReadonlyArray<ServerProvider["driver"]> = [];
+const EMPTY_PROVIDERS: ReadonlyArray<ServerProvider> = [];
 const EMPTY_QUEUED_MESSAGES: ReadonlyArray<QueuedMessage> = [];
 
-/** Accounts with usage limits on the primary environment. */
-export const primaryUsageAccountsAtom = Atom.make((get): ReadonlyArray<UsageAccountView> => {
-  const accounts = groupUsageAccounts(get(primaryServerProvidersAtom));
-  return accounts.length === 0 ? EMPTY_ACCOUNTS : accounts;
-}).pipe(Atom.withLabel("web-primary-usage-accounts"));
+/**
+ * Accounts with usage limits on one environment. Reads the raw provider list,
+ * not `providersIgnoringCheckedAtAtom`: the strip shows how old the numbers
+ * are, so a push that only moves `checkedAt` matters here.
+ */
+export const usageAccountsAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get): ReadonlyArray<UsageAccountView> => {
+    const accounts = groupUsageAccounts(
+      get(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_PROVIDERS,
+    );
+    return accounts.length === 0 ? EMPTY_ACCOUNTS : accounts;
+  }).pipe(Atom.withLabel(`web-usage-accounts:${environmentId}`)),
+);
 
-/** Usage-reporting drivers on the primary environment whose limits have not arrived. */
-export const primaryUsageWaitingDriversAtom = Atom.make(
-  (get): ReadonlyArray<ServerProvider["driver"]> => {
-    const drivers = usageWaitingDrivers(get(primaryServerProvidersAtom));
+/** Usage-reporting drivers on one environment whose limits have not arrived. */
+export const usageWaitingDriversAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get): ReadonlyArray<ServerProvider["driver"]> => {
+    const drivers = usageWaitingDrivers(
+      get(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_PROVIDERS,
+    );
     return drivers.length === 0 ? EMPTY_DRIVERS : drivers;
-  },
-).pipe(Atom.withLabel("web-primary-usage-waiting-drivers"));
+  }).pipe(Atom.withLabel(`web-usage-waiting-drivers:${environmentId}`)),
+);
 
-/** All queued messages for the primary environment. */
-export const primaryQueuedMessagesAtom = Atom.make((get): ReadonlyArray<QueuedMessage> => {
-  const environmentId = get(primaryEnvironmentIdAtom);
-  if (environmentId === null) {
-    return EMPTY_QUEUED_MESSAGES;
-  }
-  const projection = Option.getOrNull(
-    AsyncResult.value(get(usageEnvironment.queuedMessagesProjection({ environmentId, input: {} }))),
-  );
-  return projection?.messages ?? EMPTY_QUEUED_MESSAGES;
-}).pipe(Atom.withLabel("web-primary-queued-messages"));
+/** All queued messages on one environment; each server owns its own queue. */
+export const queuedMessagesAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get): ReadonlyArray<QueuedMessage> => {
+    const projection = Option.getOrNull(
+      AsyncResult.value(
+        get(usageEnvironment.queuedMessagesProjection({ environmentId, input: {} })),
+      ),
+    );
+    return projection?.messages ?? EMPTY_QUEUED_MESSAGES;
+  }).pipe(Atom.withLabel(`web-queued-messages:${environmentId}`)),
+);
