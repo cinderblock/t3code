@@ -93,6 +93,10 @@ chromium`) and, in this worktree, a port outside Windows' reserved 60690–62189
 - The browser refuses `userEvent.upload` into a detached input (`TypeError ... 'includes'`), so the
   test sets `input.files` and dispatches `change` itself, which is also what the real picker does.
 
+- **"Checks failed" on #23083 with `action_required` is not a failure**: upstream's CI, Web
+  Preview and Mobile workflows don't run on a fork's PR until a maintainer approves them. Seen on
+  both `14e06d8eee` and `9ab83e4377`; nothing to fix on our side.
+
 ## Progress log
 
 - 2026-10-21: diagnosed, fork fix committed and verified on iPhone; PR worktree created and fix
