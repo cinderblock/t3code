@@ -697,9 +697,10 @@ function TerminalSessionViewport({
         }
         const { lineStart, lineEnd } = terminalSelectionLineRange(selectionPosition);
         const bounds = mountElement.getBoundingClientRect();
+        const selectionEnd = activeTerminal.getSelectionEndClientRect();
         const position = resolveSelectionActionPosition({
           bounds,
-          selectionRect: activeTerminal.getSelectionEndClientRect(),
+          selectionFocus: selectionEnd && { x: selectionEnd.right, bottom: selectionEnd.bottom },
           pointer,
           viewport: { width: window.innerWidth, height: window.innerHeight },
         });

@@ -2,16 +2,32 @@ export type SelectionActionPoint = { x: number; y: number };
 
 export const SELECTION_MULTI_CLICK_INTERVAL_MS = 500;
 
+type LineRect = { left: number; right: number; bottom: number };
+
+/**
+ * A backward (right-to-left) selection's focus is its start, so its actions belong under the
+ * first line rather than after the last one.
+ */
+export function resolveSelectionFocus(
+  lines: ArrayLike<LineRect>,
+  backward: boolean,
+): { x: number; bottom: number } | null {
+  const line = lines[backward ? 0 : lines.length - 1];
+  if (!line) return null;
+  return { x: backward ? line.left : line.right, bottom: line.bottom };
+}
+
 export function resolveSelectionActionPosition(options: {
   bounds: { left: number; top: number; width: number; height: number };
-  selectionRect: { right: number; bottom: number } | null;
+  /** Where the selection's focus (caret) sits, with the bottom of that line. */
+  selectionFocus: { x: number; bottom: number } | null;
   pointer: SelectionActionPoint | null;
   viewport: { width: number; height: number };
 }): SelectionActionPoint {
-  const { bounds, selectionRect, pointer, viewport } = options;
+  const { bounds, selectionFocus, pointer, viewport } = options;
   const preferred = pointer ?? {
-    x: selectionRect?.right ?? bounds.left + bounds.width - 140,
-    y: selectionRect ? selectionRect.bottom + 4 : bounds.top + 12,
+    x: selectionFocus?.x ?? bounds.left + bounds.width - 140,
+    y: selectionFocus ? selectionFocus.bottom + 4 : bounds.top + 12,
   };
   return {
     x: Math.max(

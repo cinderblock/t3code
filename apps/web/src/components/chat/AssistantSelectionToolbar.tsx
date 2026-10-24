@@ -14,6 +14,7 @@ import {
 import {
   observeSelectionActions,
   resolveSelectionActionPosition,
+  resolveSelectionFocus,
   type SelectionActionPoint,
 } from "~/lib/selectionActions";
 import { Button } from "../ui/button";
@@ -80,7 +81,11 @@ export function AssistantSelectionToolbar({
         },
         position: resolveSelectionActionPosition({
           bounds: viewportRect,
-          selectionRect: rects.item(rects.length - 1) ?? rect,
+          // A right-to-left drag is often released past the start of the text.
+          selectionFocus: resolveSelectionFocus(
+            rects.length > 0 ? rects : [rect],
+            nativeSelection?.direction === "backward",
+          ),
           pointer: pointerOnText ? pointer : null,
           viewport: { width: window.innerWidth, height: window.innerHeight },
         }),

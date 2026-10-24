@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { observeSelectionActions, resolveSelectionActionPosition } from "./selectionActions";
+import {
+  observeSelectionActions,
+  resolveSelectionActionPosition,
+  resolveSelectionFocus,
+} from "./selectionActions";
 
 function event(type: string, values: Record<string, unknown> = {}) {
   return Object.assign(new Event(type, { cancelable: true }), values);
@@ -390,13 +394,13 @@ describe("interactive selection actions", () => {
 describe("selection action positioning", () => {
   const bounds = { left: 100, top: 50, width: 500, height: 220 };
   const viewport = { width: 1024, height: 768 };
-  const selectionRect = { right: 260, bottom: 140 };
+  const selectionFocus = { x: 260, bottom: 140 };
 
   it("prefers the cursor release over the selection's bounding box", () => {
     expect(
       resolveSelectionActionPosition({
         bounds,
-        selectionRect,
+        selectionFocus,
         pointer: { x: 520, y: 200 },
         viewport,
       }),
@@ -405,7 +409,7 @@ describe("selection action positioning", () => {
 
   it("anchors keyboard selections just below the text end", () => {
     expect(
-      resolveSelectionActionPosition({ bounds, selectionRect, pointer: null, viewport }),
+      resolveSelectionActionPosition({ bounds, selectionFocus, pointer: null, viewport }),
     ).toEqual({ x: 260, y: 144 });
   });
 
@@ -419,16 +423,26 @@ describe("selection action positioning", () => {
       { x: 100, y: 50 },
     ],
   ])("keeps an outside release %j within the surface", (pointer, expected) => {
-    expect(resolveSelectionActionPosition({ bounds, selectionRect, pointer, viewport })).toEqual(
+    expect(resolveSelectionActionPosition({ bounds, selectionFocus, pointer, viewport })).toEqual(
       expected,
     );
+  });
+
+  it("anchors a backward selection under the start of its first line", () => {
+    const lines = [
+      { left: 180, right: 400, bottom: 100 },
+      { left: 120, right: 300, bottom: 120 },
+    ];
+    expect(resolveSelectionFocus(lines, true)).toEqual({ x: 180, bottom: 100 });
+    expect(resolveSelectionFocus(lines, false)).toEqual({ x: 300, bottom: 120 });
+    expect(resolveSelectionFocus([], true)).toBeNull();
   });
 
   it("keeps the anchor inside the browser even if the surface extends beyond it", () => {
     expect(
       resolveSelectionActionPosition({
         bounds: { left: -100, top: -100, width: 2000, height: 2000 },
-        selectionRect,
+        selectionFocus,
         pointer: { x: 1800, y: -50 },
         viewport,
       }),
