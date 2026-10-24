@@ -180,11 +180,13 @@ Web (fork strip):
 - [x] Checks: server + web + provider-core typecheck clean; targeted lint clean; tests
       green (claudeUsageLimits 8, provider-core usageLimits 6, ProviderRegistry Claude 19,
       web quota 25).
-- [ ] Desktop rebuild: `scripts/start-t3.ps1 -NoElevate -BuildOnly` refused while the app
-      runs ("Pre-warming now would swap the web chunks out from under the running app").
-      Needs the app quit first; then rebuild + relaunch.
+- [x] Desktop rebuild: `-BuildOnly` refuses while the app runs ("Pre-warming now would
+      swap the web chunks out from under the running app"), so it went through
+      `scripts/restart-t3-when-idle.ps1` (started via WMI). All threads went idle and it
+      rebuilt from `01680c2919` and relaunched at 2026-10-23 5:04 PM PDT (00:04Z). Run log:
+      `C:\temp\t3runs\20261023-170231\launcher.log`. The watcher is one-shot and has exited.
 - [ ] Integrated pass in a real client — needs the user's OK (AGENTS.md: ask before
-      browsers / computer use), or the user restarts the desktop app and looks.
+      browsers / computer use), or the user looks at the strip in the running app.
 
 ## Findings during implementation
 
