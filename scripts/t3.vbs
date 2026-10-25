@@ -41,4 +41,9 @@ On Error Goto 0
 ' itself, so the UAC prompt still appears normally. -KeepOpen makes a failure
 ' wait for Enter even when the caller is already elevated and the elevation hop
 ' (which adds it) is skipped.
-shell.Run exe & " -NoProfile -ExecutionPolicy Bypass -File """ & ps1 & """ -KeepOpen", 0, False
+'
+' conhost.exe, because Windows Terminal is the default terminal: a console it
+' hosts that starts hidden can never be shown again, so a build or a failure
+' happened invisibly (2026-10-25, the logon task after a power cut). Under
+' conhost the script can show its console when there is something to watch.
+shell.Run "conhost.exe " & exe & " -NoProfile -ExecutionPolicy Bypass -File """ & ps1 & """ -KeepOpen", 0, False

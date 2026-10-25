@@ -131,16 +131,25 @@ if (-not ('T3.Win32' -as [type])) {
   Add-Type -Namespace T3 -Name Win32 -MemberDefinition @'
 [DllImport("kernel32.dll")] public static extern System.IntPtr GetConsoleWindow();
 [DllImport("user32.dll")] public static extern bool ShowWindow(System.IntPtr hWnd, int nCmdShow);
+[DllImport("user32.dll")] public static extern bool SetForegroundWindow(System.IntPtr hWnd);
 '@
 }
 $SW_HIDE = 0
 $SW_SHOW = 5
 
+# Only works on a real conhost window. With Windows Terminal as the default
+# terminal, a console started hidden gets an invisible ConPTY stand-in from
+# GetConsoleWindow, and ShowWindow on it does nothing -- so every "show the
+# console" below was a no-op when launched from t3.vbs or the logon task. Both
+# of those, and the elevation hop, therefore start pwsh under conhost.exe.
 function Set-ConsoleVisible {
   param([bool]$Visible)
   $h = [T3.Win32]::GetConsoleWindow()
   if ($h -ne [IntPtr]::Zero) {
     [void][T3.Win32]::ShowWindow($h, $(if ($Visible) { $SW_SHOW } else { $SW_HIDE }))
+    # Best effort: Windows may refuse focus to a background process, but the
+    # window is on screen either way.
+    if ($Visible) { [void][T3.Win32]::SetForegroundWindow($h) }
   }
 }
 
@@ -355,7 +364,12 @@ if (-not $NoElevate -and -not (Test-Admin)) {
   $fwd = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $PSCommandPath, '-KeepOpen')
   if ($DryRun) { $fwd += '-DryRun' }
   if ($WaitForIdle) { $fwd += '-WaitForIdle' }
-  Start-Process -FilePath (Get-Process -Id $PID).Path -Verb RunAs -ArgumentList $fwd
+  # Under conhost so the elevated console can hide and re-show itself (see
+  # Set-ConsoleVisible).
+  # Start-Process joins -ArgumentList without quoting, and pwsh lives under
+  # "Program Files".
+  Start-Process -FilePath 'conhost.exe' -Verb RunAs -ArgumentList (
+    @("`"$((Get-Process -Id $PID).Path)`"") + ($fwd | ForEach-Object { "`"$_`"" }))
   exit 0
 }
 
