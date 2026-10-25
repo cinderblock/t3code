@@ -38,3 +38,16 @@ Seen 2026-10-23 in `C:\Users\camer\.t3\worktrees\t3code\mobile-attach-pr`, runni
 override it, because the port is set per project. About 30% of the hash range is reserved
 here, so roughly a third of worktrees can't run browser tests on this machine. Upstream has the
 same code.
+
+## React Compiler skips GitGraphPanel and PublicAccessSettings
+
+`vp test run src/reactCompilerCoverage.test.ts` (in `apps/web`) fails on two committed files, as of
+2026-10-24 10:33 PM PDT (2026-10-25 05:33Z) on `master` at `4f581b52c7`:
+
+- `apps/web/src/components/gitGraph/GitGraphPanel.tsx`: five components or hooks skipped (one near
+  line 43's pill class list).
+- `apps/web/src/components/settings/PublicAccessSettings.tsx`: one skip,
+  `react-compiler(Todo): (BuildHIR::lowerStatement) Handle TryStatement with` a `finally`.
+
+Neither file is touched by uncommitted work. CI would fail this test, and a skipped component loses
+all memoization. The last commits to touch them are the upstream merge `0f33eeeaee` and `8212f66f55`.
