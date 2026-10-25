@@ -53,6 +53,10 @@ const buttonVariants = cva(
           "[--control-icon-color:currentColor] border-transparent text-muted-foreground data-pressed:bg-accent [:hover,[data-pressed]]:bg-accent [:hover,[data-pressed]]:text-destructive",
         glass:
           "surface-glass [--control-icon-color:var(--contrast-muted-foreground)] rounded-full border-border/60 text-foreground shadow-sm before:rounded-full [:hover,[data-pressed]]:border-border",
+        // An action that appears on demand, such as over a text selection: tinted so the eye
+        // finds it, and it pops in once when it mounts.
+        "glass-accent":
+          "accent-glass attention-enter [--control-icon-color:var(--primary)] rounded-full border-primary/45 text-foreground shadow-sm before:rounded-full [:hover,[data-pressed]]:border-primary/70",
         link: "border-transparent underline-offset-4 [:hover,[data-pressed]]:underline",
         "media-close":
           "[--control-icon-color:currentColor] border-transparent bg-black/65 text-white shadow-sm ring-1 ring-white/20 [:hover,[data-pressed]]:bg-black/80 focus-visible:ring-white",

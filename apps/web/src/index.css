@@ -377,6 +377,51 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   }
 }
 
+@utility accent-glass {
+  background:
+    linear-gradient(
+      color-mix(in srgb, var(--primary) 10%, transparent),
+      color-mix(in srgb, var(--primary) 10%, transparent)
+    ),
+    color-mix(in srgb, var(--background) var(--glass-opacity), transparent);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+
+  @supports not ((-webkit-backdrop-filter: blur(1px)) or (backdrop-filter: blur(1px))) {
+    background: color-mix(in srgb, var(--primary) 10%, var(--background)) !important;
+  }
+}
+
+@keyframes attention-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(3px) scale(0.92);
+  }
+}
+
+@keyframes attention-halo {
+  from {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 55%, transparent);
+  }
+  to {
+    box-shadow: 0 0 0 7px transparent;
+  }
+}
+
+/* Plays once per mount, so an action that appears on demand gets noticed without
+   anything repainting while it sits there. `backwards` rather than `both` hands
+   opacity and box-shadow back to the element's own states (disabled, focus) once
+   it ends, and `transform` stays clear of the `scale` that Button presses with. */
+@utility attention-enter {
+  @media (prefers-reduced-motion: no-preference) and (forced-colors: none) {
+    animation: attention-pop-in 170ms cubic-bezier(0.2, 0.9, 0.3, 1.25) backwards;
+
+    &::before {
+      animation: attention-halo 620ms ease-out 120ms backwards;
+    }
+  }
+}
+
 /* Paint find results without changing rendered markdown or copied text. */
 ::highlight(t3-thread-find) {
   color: var(--app-theme-search-match-foreground, oklch(0.216164 0.028283 77.423));

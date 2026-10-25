@@ -51,11 +51,14 @@ async function dragSelect(from: number, to: number, release: { x: number; y: num
   window.dispatchEvent(
     new MouseEvent("mouseup", { bubbles: true, button: 0, clientX: release.x, clientY: release.y }),
   );
-  return vi.waitFor(() => {
+  const button = await vi.waitFor(() => {
     const button = document.querySelector<HTMLButtonElement>("button[aria-label^='Cite']");
     expect(button).not.toBeNull();
-    return button!.getBoundingClientRect();
+    return button!;
   });
+  // Its entrance animates transform, so measure where it settles.
+  await Promise.all(button.getAnimations({ subtree: true }).map((animation) => animation.finished));
+  return button.getBoundingClientRect();
 }
 
 function selectedLines(start: number, end: number) {
