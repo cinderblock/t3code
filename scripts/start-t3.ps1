@@ -540,7 +540,10 @@ if ($Config.Build -eq 'always') {
   # with directory symlinks (packages\a\node_modules\@t3tools\b -> packages\b,
   # and back again): the recursion followed them in a cycle, pinning a core
   # silently right after `install : done`.
-  $skipDirs = @('node_modules', 'dist', 'dist-electron')
+  # Tests (*.test.* files and packages' test\ dirs) never reach a bundle. On
+  # 2026-10-25 a lone edited *.browser.test.tsx made the logon-task launch after
+  # a power cut rebuild for ~100s before any window appeared.
+  $skipDirs = @('node_modules', 'dist', 'dist-electron', 'test')
   $srcExts = @('.ts', '.tsx', '.mjs', '.css')
   $newestSrc = $null
   $pending = New-Object System.Collections.Generic.Stack[string]
@@ -553,6 +556,7 @@ if ($Config.Build -eq 'always') {
       } elseif ($srcExts -contains $entry.Extension -and
         # Build-generated sources would otherwise re-trigger staleness forever.
         $entry.Name -notlike '*.generated.*' -and
+        $entry.Name -notlike '*.test.*' -and
         (-not $newestSrc -or $entry.LastWriteTime -gt $newestSrc.LastWriteTime)) {
         $newestSrc = $entry
       }
