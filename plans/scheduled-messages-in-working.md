@@ -64,8 +64,19 @@ idle restart that applies a T3 Code update.
   Windows regardless (already in ISSUES.md).
 - `packages/contracts/src/settings.ts:269` `no-low-value-comments` predates this work.
 
-## Not covered (follow-ups)
+## Auto-settle (done, user asked 2026-10-27)
 
-- Server auto-settle (`ThreadSettlementService.isAutoSettlementCandidate`) does not know
-  about send-later messages, so a thread idle 3 days with a weekly-reset message can still
-  auto-settle; sending the message brings it back.
+- User: "threads with pending work shouldn't settle", sitting in Working (or a new
+  "waiting" section). Kept Working; a separate section is still open as an idea.
+- `apps/server/src/queue/PendingQueuedThreads.ts`: read-only service over
+  `fork_queued_messages` (`pending` + `sending`). Deliberately NOT `QueuedMessageService`:
+  building that starts its dispatcher, and its `claim` (UPDATE then re-read) is not safe
+  across two dispatchers; a second instance's startup would also mark the first's in-flight
+  sends failed.
+- `ThreadSettlementService.sweep` drops those threads before both the inactivity and the
+  pull-request paths, re-checks just before dispatching `thread.auto-settle`, and settles
+  nothing if the queue can't be read. Server-wide rule, independent of the client option.
+- A cancelled message frees the thread on the next one-minute full sweep.
+- Tests: `ThreadSettlementService.test.ts` "never settles a thread holding a send-later
+  message" (fails without the change, verified), `PendingQueuedThreads.test.ts` (SQL).
+- Takes effect after the server restarts.

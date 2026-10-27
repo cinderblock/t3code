@@ -34,6 +34,7 @@ import { TestClock } from "effect/testing";
 import * as GitManager from "../git/GitManager.ts";
 import * as ProjectSetupScriptRunner from "../project/ProjectSetupScriptRunner.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
+import * as PendingQueuedThreads from "../queue/PendingQueuedThreads.ts";
 import * as ServerActivation from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
@@ -562,6 +563,7 @@ interface HarnessOptions {
   ) => Effect.Effect<void>;
   readonly onCloseIdle?: () => Effect.Effect<void>;
   readonly currentThreads?: ReadonlyArray<OrchestrationV2AppThread>;
+  readonly queuedThreadIds?: ReadonlyArray<ThreadId>;
 }
 
 const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options: HarnessOptions) {
@@ -688,6 +690,9 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
           Effect.as({ status: "no-script" } as const),
         ),
     }),
+    Layer.mock(PendingQueuedThreads.PendingQueuedThreads)({
+      threadIds: Effect.succeed(new Set(options.queuedThreadIds ?? [])),
+    }),
     Layer.mock(GitManager.GitManager)({
       branchPullRequest,
       invalidateStatus: (cwd) => Ref.update(invalidatedCwds, (cwds) => [...cwds, cwd]),
@@ -807,6 +812,31 @@ describe("ThreadSettlementServiceV2 worker", () => {
           expect((yield* Ref.get(fixture.commands)).map((command) => command.threadId)).toEqual([
             thread.id,
           ]);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("never settles a thread holding a send-later message", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const queued = makeThread("queued", {
+          latestRunCompletedAt: DateTime.makeUnsafe("2026-08-20T00:00:00.000Z"),
+        });
+        const idle = makeThread("idle", {
+          latestRunCompletedAt: DateTime.makeUnsafe("2026-08-20T00:00:00.000Z"),
+        });
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([queued, idle]),
+          settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: 3 },
+          queuedThreadIds: [queued.id],
+        });
+        yield* Effect.gen(function* () {
+          const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+          yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+          const commands = yield* Ref.get(fixture.commands);
+          expect(commands.map((command) => command.threadId)).toEqual([idle.id]);
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),

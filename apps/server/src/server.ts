@@ -114,6 +114,7 @@ import * as ProviderAutoUpdater from "./provider/ProviderAutoUpdater.ts";
 import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as EventLoopLagMonitor from "./observability/EventLoopLagMonitor.ts";
 import * as CpuProfiler from "./observability/CpuProfiler.ts";
+import * as PendingQueuedThreads from "./queue/PendingQueuedThreads.ts";
 import * as QueuedMessageService from "./queue/QueuedMessageService.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
@@ -534,7 +535,11 @@ const layerOrchestrationApplication = CheckpointDiffQuery.layer.pipe(
 
 const layerThreadSettlementWorker = Layer.effectDiscard(
   ThreadSettlementService.make.pipe(Effect.flatMap((service) => service.start())),
-).pipe(Layer.provide(layerPullRequestService), Layer.provide(ProjectionStoreV2.layer));
+).pipe(
+  Layer.provide(layerPullRequestService),
+  Layer.provide(ProjectionStoreV2.layer),
+  Layer.provide(PendingQueuedThreads.layer),
+);
 
 const layerIdleCompactionWorker = Layer.effectDiscard(
   IdleCompactionService.make.pipe(Effect.flatMap((service) => service.start())),
