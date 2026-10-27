@@ -134,16 +134,15 @@ Three modify/delete: `web/RightPanelTabs.browser.test.tsx`, `web/RightPanelTabs.
       (see "Second merge"). Typecheck clean in all 8 packages; inbox/priority/auto-updater/
       orchestration/web/mobile tests pass apart from the logged mobile CRLF suite.
 - [x] Fast-forward `master`.
-- [ ] Remove worktree + branch after the fast-forward.
-- [ ] Push / restart the running app (user's call).
+- [x] Worktree + branch removed.
+- [x] Idle restart watcher started 2026-10-27 3:27 PM PDT (22:27Z), pid 17752, via WMI; log
+      `C:\temp\t3runs\restart-when-idle.log`. It waits for this thread to go idle.
+- [ ] Push `master` (1,522 commits ahead of `origin/master`) — user's call.
 
 ## Open questions for the user
 
-1. Fast-forward `master`: wait for the provider-auto-update thread to commit, then fast-forward
-   (recommended), or something else?
-2. Push `master` to `origin` after the fast-forward?
-3. Restart the running app on the merged build via the idle watcher, as on 10-19?
-4. Mobile crash reports (new upstream, to Axiom via the relay) default on; turn off by default
+1. Push `master` to `origin`?
+2. Mobile crash reports (new upstream, to Axiom via the relay) default on; turn off by default
    for the fork like product telemetry and relay tracing? Recommendation: yes, for consistency.
 
 ## Things not to do
