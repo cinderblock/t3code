@@ -314,6 +314,15 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         case "mark_unread":
           command = { ...common, type: "thread.mark-unread" };
           break;
+        case "set_priority":
+          if (input.priority === undefined) {
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: "set_priority requires priority (use null for normal).",
+            });
+          }
+          command = { ...common, type: "thread.priority.set", priority: input.priority };
+          break;
         default:
           command = { ...common, type: `thread.${input.action}` };
       }

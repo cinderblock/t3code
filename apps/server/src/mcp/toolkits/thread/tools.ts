@@ -15,6 +15,7 @@ import {
   OrchestratorMcpFailure,
   OrchestrationV2DispatchCommandResult,
   ThreadId,
+  ThreadPriority,
   RunId,
   NonNegativeInt,
   ProjectId,
@@ -30,7 +31,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   description:
-    "Pin, snooze, settle, archive, or mark a thread unread. Omit threadId for this thread. snooze requires snoozedUntil. Existing thread lifecycle rules apply. Settling this thread takes effect when your turn completes, returning settlesWhenTurnEnds=true; a turn that fails or is interrupted, or a queued message, leaves it active.",
+    "Pin, snooze, settle, archive, prioritize, or mark a thread unread. Omit threadId for this thread. snooze requires snoozedUntil. set_priority takes priority: 1 high, -1 low, 0 or null normal; higher sorts first in the user's inbox. Existing thread lifecycle rules apply. Settling this thread takes effect when your turn completes, returning settlesWhenTurnEnds=true; a turn that fails or is interrupted, or a queued message, leaves it active.",
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     action: Schema.Literals([
@@ -43,8 +44,10 @@ const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
       "archive",
       "unarchive",
       "mark_unread",
+      "set_priority",
     ]),
     snoozedUntil: Schema.optional(IsoDateTime),
+    priority: Schema.optional(Schema.NullOr(ThreadPriority)),
   }),
   success: Schema.Union([
     OrchestrationV2DispatchCommandResult,
