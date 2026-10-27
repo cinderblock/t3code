@@ -61,6 +61,13 @@ function environmentSupportsPinReorder(environmentId: EnvironmentThreadShell["en
   );
 }
 
+function environmentSupportsPriority(environmentId: EnvironmentThreadShell["environmentId"]) {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadPriority === true
+  );
+}
+
 function environmentSupportsAutoSettleOptOut(
   environmentId: EnvironmentThreadShell["environmentId"],
 ) {
@@ -226,6 +233,10 @@ export function useThreadListActions(): {
     thread: EnvironmentThreadShell,
     enabled: boolean,
   ) => Promise<boolean>;
+  readonly setThreadPriority: (
+    thread: EnvironmentThreadShell,
+    priority: number | null,
+  ) => Promise<boolean>;
   readonly moveThread: (
     thread: EnvironmentThreadShell,
     direction: ThreadMoveDestination,
@@ -239,6 +250,9 @@ export function useThreadListActions(): {
   const pinMutation = useAtomCommand(threadEnvironment.pin, { reportFailure: false });
   const unpinMutation = useAtomCommand(threadEnvironment.unpin, { reportFailure: false });
   const setAutoSettleMutation = useAtomCommand(threadEnvironment.setAutoSettle, {
+    reportFailure: false,
+  });
+  const setPriorityMutation = useAtomCommand(threadEnvironment.setPriority, {
     reportFailure: false,
   });
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
@@ -434,6 +448,31 @@ export function useThreadListActions(): {
         error instanceof Error && error.message.trim().length > 0
           ? error.message
           : "The auto-settle setting could not be changed.",
+      );
+      return false;
+    }
+    return true;
+  };
+  const setThreadPriority = async (thread: EnvironmentThreadShell, priority: number | null) => {
+    if (!environmentSupportsPriority(thread.environmentId)) {
+      Dialog.alert(
+        "Could not set priority",
+        "This environment's server does not support thread priority yet. Update the server to use it.",
+      );
+      return false;
+    }
+    selectionHaptic();
+    const result = await setPriorityMutation({
+      environmentId: thread.environmentId,
+      input: { threadId: thread.id, priority },
+    });
+    if (result._tag === "Failure") {
+      const error = Cause.squash(result.cause);
+      Dialog.alert(
+        "Could not set priority",
+        error instanceof Error && error.message.trim().length > 0
+          ? error.message
+          : "The thread priority could not be changed.",
       );
       return false;
     }
@@ -676,6 +715,7 @@ export function useThreadListActions(): {
     pinThread,
     unpinThread,
     setThreadAutoSettle,
+    setThreadPriority,
     moveThread,
     renameThread,
     regenerateThreadTitle,
