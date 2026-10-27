@@ -1,3 +1,4 @@
+import type { SidebarInboxSortDirections } from "@t3tools/contracts/settings";
 import { threadRuntimeIsActive, type EnvironmentThreadShell } from "./models.ts";
 import { toSortableTimestamp } from "./threadSort.ts";
 
@@ -31,10 +32,32 @@ export function isThreadWorking(thread: WorkingThreadInput): boolean {
 type InboxThreadInput = Pick<
   EnvironmentThreadShell,
   "id" | "environmentId" | "createdAt" | "unsettledAt" | "latestRun"
->;
+> & { readonly priority?: number | null | undefined };
 
+export function inboxPriorityGroup(
+  priority: number | null | undefined,
+): keyof SidebarInboxSortDirections {
+  if (priority == null || priority === 0) return "normal";
+  return priority > 0 ? "high" : "low";
+}
+
+/** One step through high / normal / low. Finer levels only come from agents;
+    stepping moves them into the named range, never further out. */
+export function stepThreadPriority(
+  priority: number | null | undefined,
+  delta: 1 | -1,
+): number | null {
+  const current = priority ?? 0;
+  const clamped = Math.max(-1, Math.min(1, current + delta));
+  const next = delta > 0 ? Math.max(current, clamped) : Math.min(current, clamped);
+  return next === 0 ? null : next;
+}
+
+/** Higher priority first; within a priority, by when the thread last came
+    back to the user, in that priority group's chosen direction. */
 export function sortInboxThreadsByReturn<T extends InboxThreadInput>(
   threads: readonly T[],
+  directions: SidebarInboxSortDirections,
   observedReturnAt?: (thread: T) => number | undefined,
 ): T[] {
   const timestamps = new Map(
@@ -49,7 +72,18 @@ export function sortInboxThreadsByReturn<T extends InboxThreadInput>(
       ),
     ]),
   );
-  return sortNewestFirst(threads, timestamps);
+  return [...threads].sort((left, right) => {
+    const leftPriority = left.priority ?? 0;
+    const rightPriority = right.priority ?? 0;
+    if (leftPriority !== rightPriority) return rightPriority - leftPriority;
+    const newestFirst = directions[inboxPriorityGroup(leftPriority)] === "newest_first";
+    const byTime = timestamps.get(right)! - timestamps.get(left)!;
+    return (
+      (newestFirst ? byTime : -byTime) ||
+      left.id.localeCompare(right.id) ||
+      left.environmentId.localeCompare(right.environmentId)
+    );
+  });
 }
 
 type WorkingSortInput = Pick<

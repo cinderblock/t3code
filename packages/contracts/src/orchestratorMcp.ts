@@ -35,6 +35,7 @@ import {
   OrchestrationV2CreationSource,
   OrchestrationV2RunStatus,
   OrchestrationV2TurnItemStatus,
+  ThreadPriority,
 } from "./orchestrationV2.ts";
 import {
   ProviderOptionDescriptor,
@@ -336,6 +337,8 @@ export const OrchestratorMcpThreadListItem = Schema.Struct({
   settledAt: Schema.NullOr(IsoDateTime),
   snoozed: Schema.Boolean,
   snoozedUntil: Schema.NullOr(IsoDateTime),
+  /** Higher sorts first in the user's inbox; null is normal. Missing on older servers. */
+  priority: Schema.optional(Schema.NullOr(ThreadPriority)),
   parentThreadId: Schema.NullOr(ThreadId),
   relationshipToParent: Schema.NullOr(Schema.Literals(["fork", "subagent"])),
   itemCount: NonNegativeInt,
@@ -394,6 +397,8 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   settledAt: Schema.NullOr(IsoDateTime),
   snoozed: Schema.Boolean,
   snoozedUntil: Schema.NullOr(IsoDateTime),
+  /** Higher sorts first in the user's inbox; null is normal. Missing on older servers. */
+  priority: Schema.optional(Schema.NullOr(ThreadPriority)),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });

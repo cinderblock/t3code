@@ -58,6 +58,7 @@ import {
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
+  ArrowUpDownIcon,
   ChartNoAxesColumnIcon,
   CheckIcon,
   ChevronRightIcon,
@@ -122,6 +123,7 @@ import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
 import { threadEnvironment } from "../state/threads";
+import { inboxPriorityGroup } from "@t3tools/client-runtime/state/thread-inbox";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -734,6 +736,9 @@ function OpenCommandPaletteDialog(props: {
     reportFailure: false,
   });
   const stopThreadSession = useAtomCommand(threadEnvironment.stopSession, {
+    reportFailure: false,
+  });
+  const setThreadPriority = useAtomCommand(threadEnvironment.setPriority, {
     reportFailure: false,
   });
   const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
@@ -1772,6 +1777,33 @@ function OpenCommandPaletteDialog(props: {
         if (refreshed._tag === "Failure") throw squashAtomCommandFailure(refreshed);
       },
     });
+    if (
+      activeThreadServerConfig?.environment.capabilities.threadPriority === true &&
+      readEnvironmentScope(thread.environmentId, AuthOrchestrationOperateScope)
+    ) {
+      const currentGroup = inboxPriorityGroup(thread.priority);
+      for (const [group, label, priority] of [
+        ["high", "High", 1],
+        ["normal", "Normal", null],
+        ["low", "Low", -1],
+      ] as const) {
+        actionItems.push({
+          kind: "action",
+          value: `action:thread-priority-${group}`,
+          searchTerms: ["priority", "thread priority", group, "sort", "inbox"],
+          title: `Set thread priority: ${label}`,
+          icon: <ArrowUpDownIcon className={ITEM_ICON_CLASS} />,
+          ...(currentGroup === group ? { description: "Current" } : {}),
+          run: async () => {
+            const result = await setThreadPriority({
+              environmentId: thread.environmentId,
+              input: { threadId: thread.id, priority },
+            });
+            if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+          },
+        });
+      }
+    }
   }
 
   actionItems.push({

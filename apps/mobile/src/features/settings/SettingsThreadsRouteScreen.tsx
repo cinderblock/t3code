@@ -8,12 +8,13 @@ import { useRef, useState } from "react";
 import { Pressable, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import { DEFAULT_SERVER_SETTINGS, DEFAULT_SIDEBAR_INBOX_SORT_DIRECTIONS } from "@t3tools/contracts";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 import { AppText as Text } from "../../components/ui/AppText";
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { SettingsChoiceRow } from "./components/SettingsChoiceRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsProjectOverridesSection } from "./components/SettingsProjectOverridesSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
@@ -262,6 +263,9 @@ function BetaSettingsSection() {
   const preferences = useAtomValue(mobilePreferencesAtom);
   const workingShelfEnabled =
     AsyncResult.isSuccess(preferences) && preferences.value.workingShelfEnabled === true;
+  const inboxSortDirections =
+    (AsyncResult.isSuccess(preferences) ? preferences.value.inboxSortDirections : undefined) ??
+    DEFAULT_SIDEBAR_INBOX_SORT_DIRECTIONS;
 
   return (
     <View className="gap-3">
@@ -275,12 +279,46 @@ function BetaSettingsSection() {
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
         Fold working and monitoring threads into a Working section. They return to the top of the
-        list when they need you. While this is on, active threads are ordered by time and cannot be
-        moved.
+        list when they need you. While this is on, active threads are ordered by priority, then by
+        time, and cannot be moved.
       </Text>
+      {workingShelfEnabled
+        ? INBOX_ORDER_GROUPS.map(({ group, title }) => (
+            <SettingsSection key={group} title={title}>
+              {INBOX_SORT_DIRECTION_CHOICES.map(({ direction, label }, index) => (
+                <SettingsChoiceRow
+                  key={direction}
+                  label={label}
+                  selected={inboxSortDirections[group] === direction}
+                  separated={index > 0}
+                  onPress={() =>
+                    savePreferences({
+                      transform: (current) => ({
+                        inboxSortDirections: {
+                          ...(current.inboxSortDirections ?? DEFAULT_SIDEBAR_INBOX_SORT_DIRECTIONS),
+                          [group]: direction,
+                        },
+                      }),
+                    })
+                  }
+                />
+              ))}
+            </SettingsSection>
+          ))
+        : null}
     </View>
   );
 }
+
+const INBOX_ORDER_GROUPS = [
+  { group: "high", title: "High priority order" },
+  { group: "normal", title: "Normal priority order" },
+  { group: "low", title: "Low priority order" },
+] as const;
+const INBOX_SORT_DIRECTION_CHOICES = [
+  { direction: "oldest_first", label: "Oldest waiting first" },
+  { direction: "newest_first", label: "Newest first" },
+] as const;
 
 function LegacySettingsSection() {
   const savePreferences = useAtomSet(updateMobilePreferencesAtom);

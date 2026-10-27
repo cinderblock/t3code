@@ -799,6 +799,15 @@ describe("orchestrator MCP toolkit", () => {
             yield* invoke("t3_thread_organize", { action: "unpin" });
             expect((yield* orchestrator.getThreadShell(parentThreadId))?.pinnedAt).toBeNull();
 
+            const missingPriority = yield* invoke("t3_thread_organize", {
+              action: "set_priority",
+            });
+            expect(missingPriority.isError).toBe(true);
+            yield* invoke("t3_thread_organize", { action: "set_priority", priority: -1 });
+            expect((yield* orchestrator.getThreadShell(parentThreadId))?.priority).toBe(-1);
+            yield* invoke("t3_thread_organize", { action: "set_priority", priority: null });
+            expect((yield* orchestrator.getThreadShell(parentThreadId))?.priority).toBeNull();
+
             if (parentRun === undefined || parentRun.rootNodeId === null) {
               return yield* Effect.die(new Error("Parent run missing."));
             }

@@ -2286,6 +2286,7 @@ describe("Working section beta", () => {
       searchQuery: "",
       now: NOW,
       workingShelfEnabled: true,
+      inboxSortDirections: { high: "newest_first", normal: "newest_first", low: "newest_first" },
       ...input,
     });
   const ids = (layout: ReturnType<typeof buildThreadListV2Items>) =>
@@ -2321,6 +2322,37 @@ describe("Working section beta", () => {
         thread.id === "finished-early" ? Date.parse("2026-06-01T04:00:00.000Z") : undefined,
     });
     expect(ids(layout).slice(1)).toEqual(["finished-early", "finished-late", "asks-approval"]);
+  });
+
+  it("defaults to oldest waiting first and lists higher priority groups first", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        ...threads,
+        makeThread({
+          id: ThreadId.make("low"),
+          title: "low",
+          createdAt: "2026-05-01T00:00:00.000Z",
+          priority: -1,
+        }),
+        makeThread({
+          id: ThreadId.make("high"),
+          title: "high",
+          createdAt: "2026-06-01T05:00:00.000Z",
+          priority: 1,
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      workingShelfEnabled: true,
+    });
+    expect(ids(layout).slice(1)).toEqual([
+      "high",
+      "finished-early",
+      "asks-approval",
+      "finished-late",
+      "low",
+    ]);
   });
 
   it("places the shelf after queued tasks and before snoozed and settled threads", () => {

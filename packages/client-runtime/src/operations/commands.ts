@@ -467,6 +467,20 @@ export const setThreadAutoSettle = Effect.fn("EnvironmentCommands.setThreadAutoS
   });
 });
 
+export interface SetThreadPriorityInput extends ThreadCommandInput {
+  readonly priority: number | null;
+}
+export const setThreadPriority = Effect.fn("EnvironmentCommands.setThreadPriority")(function* (
+  input: SetThreadPriorityInput,
+) {
+  return yield* dispatch({
+    type: "thread.priority.set",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    priority: input.priority,
+  });
+});
+
 export const reorderPinnedThread = Effect.fn("EnvironmentCommands.reorderPinnedThread")(function* (
   input: ReorderPinnedThreadInput,
 ) {

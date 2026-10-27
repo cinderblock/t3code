@@ -51,3 +51,22 @@ same code.
 
 Neither file is touched by uncommitted work. CI would fail this test, and a skipped component loses
 all memoization. The last commits to touch them are the upstream merge `0f33eeeaee` and `8212f66f55`.
+
+## Four test suites fail on Windows regardless of the change under test
+
+Seen 2026-10-26 on `feature/thread-priority` (base `fa45619aa5`); none of these touch the code
+being changed there.
+
+- `apps/server/src/environment/ServerEnvironment.test.ts` › "publishes proven install ownership
+  only for manually updated servers": `expected undefined to deeply equal { kind: 'npm-global', … }`.
+  The test creates a `fs.symlink` and fakes `HostProcess.Platform` as `"linux"` on a Windows host.
+- `apps/server/src/mcp/OrchestratorMcpToolkit.integration.test.ts` › "reports running and queued
+  child follow-ups from a Codex replay transcript": `ENOENT … open 'C:\C:\Users\…\codex_transcript.ndjson'`
+  — the fixture path is built from a URL pathname, doubling the drive letter.
+- `apps/mobile/src/features/threads/checkout-new-task-branch.test.ts` (2 tests):
+  `expected 'feature\r\n' to be 'feature\n'` — git output compared without normalizing CRLF.
+- `apps/desktop/src/settings/DesktopClientSettings.test.ts` › "saves through a symlinked client
+  settings file without replacing the link": resolved temp paths differ (symlink/realpath on Windows).
+
+Why it matters: every Windows run shows red in suites unrelated to the change, which hides real
+regressions and costs each agent time re-proving they are pre-existing.

@@ -20,6 +20,7 @@ import type {
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 import { AuthOrchestrationOperateScope, type EnvironmentMachineKind } from "@t3tools/contracts";
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
+import { inboxPriorityGroup } from "@t3tools/client-runtime/state/thread-inbox";
 import type { MenuAction } from "@react-native-menu/menu";
 import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } from "react";
 import { Pressable, useWindowDimensions, View } from "react-native";
@@ -507,10 +508,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly onPinThread: (thread: EnvironmentThreadShell) => void;
   readonly onUnpinThread: (thread: EnvironmentThreadShell) => void;
   readonly onSetThreadAutoSettle: (thread: EnvironmentThreadShell, enabled: boolean) => void;
+  readonly onSetThreadPriority: (thread: EnvironmentThreadShell, priority: number | null) => void;
   readonly settlementSupported: boolean;
   readonly snoozeSupported: boolean;
   readonly pinningSupported: boolean;
   readonly autoSettleOptOutSupported: boolean;
+  readonly prioritySupported: boolean;
   readonly titleRegenerationSupported: boolean;
   readonly reorderSupported?: boolean;
   readonly onMoveThread?: (
@@ -544,6 +547,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     onPinThread,
     onUnpinThread,
     onSetThreadAutoSettle,
+    onSetThreadPriority,
     onMoveThread,
   } = props;
   const snoozedRow = props.snoozed === true;
@@ -620,6 +624,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const handleSetAutoSettle = useCallback(
     (enabled: boolean) => onSetThreadAutoSettle(thread, enabled),
     [onSetThreadAutoSettle, thread],
+  );
+  const handleSetPriority = useCallback(
+    (priority: number | null) => onSetThreadPriority(thread, priority),
+    [onSetThreadPriority, thread],
   );
   const handleMoveUp = useCallback(() => onMoveThread?.(thread, "up"), [onMoveThread, thread]);
   const handleMoveDown = useCallback(() => onMoveThread?.(thread, "down"), [onMoveThread, thread]);
@@ -701,9 +709,24 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       variant,
     ],
   );
+  const priorityGroup = inboxPriorityGroup(thread.priority);
   const autoSettleMenuItems = useMemo<MenuAction[]>(
-    () =>
-      props.autoSettleOptOutSupported
+    () => [
+      ...(props.prioritySupported
+        ? [
+            {
+              id: "priority",
+              title: "Priority",
+              image: "arrow.up.arrow.down",
+              subactions: (["high", "normal", "low"] as const).map((group) => ({
+                id: `priority:${group}`,
+                title: group === "high" ? "High" : group === "low" ? "Low" : "Normal",
+                state: priorityGroup === group ? ("on" as const) : ("off" as const),
+              })),
+            } satisfies MenuAction,
+          ]
+        : []),
+      ...(props.autoSettleOptOutSupported
         ? [
             {
               id: "auto-settle",
@@ -723,8 +746,14 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               ],
             } satisfies MenuAction,
           ]
-        : [],
-    [props.autoSettleOptOutSupported, thread.autoSettleDisabledAt],
+        : []),
+    ],
+    [
+      props.autoSettleOptOutSupported,
+      props.prioritySupported,
+      priorityGroup,
+      thread.autoSettleDisabledAt,
+    ],
   );
   const titleMenuItems = useMemo<MenuAction[]>(
     () => [
@@ -802,6 +831,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       if (nativeEvent.event === "unpin") handleUnpin();
       if (nativeEvent.event === "auto-settle:enabled") handleSetAutoSettle(true);
       if (nativeEvent.event === "auto-settle:disabled") handleSetAutoSettle(false);
+      if (nativeEvent.event === "priority:high") handleSetPriority(1);
+      if (nativeEvent.event === "priority:normal") handleSetPriority(null);
+      if (nativeEvent.event === "priority:low") handleSetPriority(-1);
       if (nativeEvent.event === "arrange") appAtomRegistry.set(threadArrangementOpenAtom, true);
       if (nativeEvent.event === "move-up") handleMoveUp();
       if (nativeEvent.event === "move-down") handleMoveDown();
@@ -843,6 +875,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       handleSettle,
       handleSnooze,
       handleSetAutoSettle,
+      handleSetPriority,
       handleUnpin,
       handleUnsettle,
       handleUnsnooze,
@@ -944,6 +977,15 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             type="monochrome"
           />
         ) : null}
+        {priorityGroup === "normal" ? null : (
+          <SymbolView
+            name={priorityGroup === "high" ? "arrow.up" : "arrow.down"}
+            size={11}
+            tintColorClassName={rowAppearance.mutedIconTintClassName}
+            type="monochrome"
+            accessibilityLabel={priorityGroup === "high" ? "High priority" : "Low priority"}
+          />
+        )}
         {statusLabel ? (
           <View className="flex-row items-center gap-1">
             <SymbolView
