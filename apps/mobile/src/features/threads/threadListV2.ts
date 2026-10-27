@@ -7,7 +7,7 @@ import {
   snoozeWakeLabel,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
-import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
+import type { SnoozePreset, SnoozeUsageResets } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { resolveThreadProviderStack } from "@t3tools/client-runtime/state/models";
 import {
@@ -85,21 +85,25 @@ export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooz
 export function resolveThreadListV2SnoozePresets(input: {
   readonly secondary: "snooze" | null;
   readonly now: string;
+  readonly resets?: SnoozeUsageResets;
 }): ReadonlyArray<SnoozePreset> {
-  return input.secondary === "snooze" ? resolveSnoozePresets(new Date(input.now)) : [];
+  return input.secondary === "snooze"
+    ? resolveSnoozePresets(new Date(input.now), input.resets)
+    : [];
 }
 
 export function resolveThreadListV2SnoozeMenuSelection(input: {
   readonly event: string;
   readonly displayedPresets: ReadonlyArray<SnoozePreset>;
   readonly now: Date;
+  readonly resets?: SnoozeUsageResets;
 }):
   | { readonly _tag: "selected"; readonly preset: SnoozePreset }
   | { readonly _tag: "expired" }
   | { readonly _tag: "not-snooze" } {
   if (!input.event.startsWith("snooze:")) return { _tag: "not-snooze" };
 
-  const currentPreset = resolveSnoozePresets(input.now).find(
+  const currentPreset = resolveSnoozePresets(input.now, input.resets).find(
     (candidate) => input.event === `snooze:${candidate.id}`,
   );
   if (currentPreset) return { _tag: "selected", preset: currentPreset };

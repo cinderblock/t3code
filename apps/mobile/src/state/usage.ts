@@ -6,6 +6,8 @@ import {
   type UsageSummary,
   type UsageSummaryInput,
 } from "@t3tools/contracts";
+import { usageResetsForInstance } from "@t3tools/client-runtime/state/quota";
+import type { SnoozeUsageResets } from "@t3tools/client-runtime/state/thread-settled";
 import { needsCursorKeychainAccess, refreshUsage } from "@t3tools/client-runtime/state/usage";
 import { resolveUsageAccess } from "@t3tools/client-runtime/state/usage-access";
 import { mergeUsage, type EnvironmentUsage, type MergedUsage } from "@t3tools/shared/usageMerge";
@@ -72,6 +74,33 @@ const usageByWindowAtom = Atom.family((windowKey: string) =>
     return statuses;
   }).pipe(Atom.withLabel(`mobile-usage:window:${windowKey}`)),
 );
+
+// Keyed and valued as strings so a row re-renders only when a reset time moves,
+// not on every provider probe.
+const snoozeUsageResetsAtom = Atom.family((key: string) =>
+  Atom.make((get): string => {
+    const [environmentId, instanceId] = JSON.parse(key) as [EnvironmentId, string];
+    const resets = usageResetsForInstance(
+      get(serverEnvironment.providersValueAtom(environmentId)) ?? [],
+      instanceId,
+    );
+    return JSON.stringify([resets.session ?? null, resets.weekly ?? null]);
+  }).pipe(Atom.withLabel(`mobile-snooze-usage-resets:${key}`)),
+);
+
+/** Next usage resets for the account a thread runs on, for its snooze presets. */
+export function useThreadSnoozeUsageResets(thread: {
+  readonly environmentId: EnvironmentId;
+  readonly providerInstanceId: string;
+}): SnoozeUsageResets {
+  const value = useAtomValue(
+    snoozeUsageResetsAtom(JSON.stringify([thread.environmentId, thread.providerInstanceId])),
+  );
+  return useMemo(() => {
+    const [session, weekly] = JSON.parse(value) as [string | null, string | null];
+    return { session: session ?? undefined, weekly: weekly ?? undefined };
+  }, [value]);
+}
 
 export interface UsageView {
   readonly merged: MergedUsage;

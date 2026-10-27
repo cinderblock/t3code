@@ -293,6 +293,26 @@ describe("resolveSnoozePresets", () => {
     const tomorrow = new Date(presets.find((preset) => preset.id === "tomorrow")!.snoozedUntil);
     expect(tomorrow.getDay()).toBe(1);
   });
+
+  it("adds usage-reset choices that wake exactly at each upcoming reset", () => {
+    const now = localDate(2026, 4, 8, 17, 30);
+    const session = localDate(2026, 4, 8, 20, 0).toISOString();
+    const weekly = localDate(2026, 4, 10, 9, 0).toISOString();
+    const presets = resolveSnoozePresets(now, { session, weekly });
+    expect(presets.slice(-2).map(({ id, snoozedUntil }) => ({ id, snoozedUntil }))).toEqual([
+      { id: "session-reset", snoozedUntil: session },
+      { id: "weekly-reset", snoozedUntil: weekly },
+    ]);
+  });
+
+  it("omits usage-reset choices whose reset is unknown or already past", () => {
+    const now = localDate(2026, 4, 8, 17, 30);
+    const presets = resolveSnoozePresets(now, {
+      session: localDate(2026, 4, 8, 17, 0).toISOString(),
+    });
+    expect(presets.some((preset) => preset.id === "session-reset")).toBe(false);
+    expect(presets.some((preset) => preset.id === "weekly-reset")).toBe(false);
+  });
 });
 
 it("dismisses a wake at its timestamp without hiding a later wake", () => {

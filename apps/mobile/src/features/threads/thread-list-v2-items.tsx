@@ -72,6 +72,7 @@ import {
   type ThreadListV2Status,
 } from "./threadListV2";
 import { QueuedMessageIcon } from "./queued-message-icon";
+import { useThreadSnoozeUsageResets } from "../../state/usage";
 import { shouldRecedeThreadRow } from "./thread-row-emphasis";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
@@ -765,9 +766,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     snoozable: canSnooze(thread, { now: snoozeGateNow }),
     snoozed: snoozedRow,
   });
+  const snoozeUsageResets = useThreadSnoozeUsageResets(thread);
   const snoozePresets = resolveThreadListV2SnoozePresets({
     secondary: swipeActions.secondary,
     now: props.snoozePresetMinute || snoozeGateNow,
+    resets: snoozeUsageResets,
   });
   const snoozePresetActions = useMemo<MenuAction[]>(
     () => [
@@ -962,6 +965,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         event: nativeEvent.event,
         displayedPresets: snoozePresets,
         now: new Date(),
+        resets: snoozeUsageResets,
       });
       if (snoozeSelection._tag === "selected") {
         handleSnooze(snoozeSelection.preset.snoozedUntil);
@@ -991,6 +995,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       handleUnsnooze,
       setCustomSnoozeOpen,
       snoozePresets,
+      snoozeUsageResets,
     ],
   );
   const primaryAction = useMemo(() => {

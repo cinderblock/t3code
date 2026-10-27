@@ -174,7 +174,24 @@ const HOUR_MS = 60 * 60 * 1_000;
 const EVENING_HOUR = 18;
 const MORNING_HOUR = 9;
 
-export type SnoozePresetId = "hour" | "three-hours" | "evening" | "tomorrow" | "next-week";
+export type SnoozePresetId =
+  | "hour"
+  | "three-hours"
+  | "evening"
+  | "tomorrow"
+  | "next-week"
+  | "session-reset"
+  | "weekly-reset";
+
+/** Next account-wide usage-window resets for a thread's provider, as ISO times. */
+export interface SnoozeUsageResets {
+  readonly session?: string | undefined;
+  readonly weekly?: string | undefined;
+}
+
+export function isUsageResetSnoozePreset(id: SnoozePresetId): boolean {
+  return id === "session-reset" || id === "weekly-reset";
+}
 
 export interface SnoozePreset {
   readonly id: SnoozePresetId;
@@ -202,7 +219,10 @@ function addSnoozeDays(base: Date, days: number): Date {
   return next;
 }
 
-export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
+export function resolveSnoozePresets(
+  now: Date,
+  resets: SnoozeUsageResets = {},
+): ReadonlyArray<SnoozePreset> {
   const inAnHour = DateTime.toDate(DateTime.makeUnsafe(now.getTime() + HOUR_MS));
   const inThreeHours = DateTime.toDate(DateTime.makeUnsafe(now.getTime() + 3 * HOUR_MS));
   const presets: SnoozePreset[] = [
@@ -246,6 +266,25 @@ export function resolveSnoozePresets(now: Date): ReadonlyArray<SnoozePreset> {
       label: "Next week",
       whenLabel: `${nextWeek.toLocaleDateString(undefined, { weekday: "short" })} ${snoozeTimeOfDayLabel(nextWeek)}`,
       snoozedUntil: nextWeek.toISOString(),
+    });
+  }
+
+  const usageResets = [
+    { id: "session-reset", label: "After 5-hour reset", resetsAt: resets.session },
+    { id: "weekly-reset", label: "After weekly reset", resetsAt: resets.weekly },
+  ] as const;
+  for (const { id, label, resetsAt } of usageResets) {
+    const wakeMs = resetsAt === undefined ? Number.NaN : Date.parse(resetsAt);
+    if (!(wakeMs > now.getTime())) continue;
+    const wake = DateTime.toDate(DateTime.makeUnsafe(wakeMs));
+    presets.push({
+      id,
+      label,
+      whenLabel:
+        wake.toDateString() === now.toDateString()
+          ? snoozeTimeOfDayLabel(wake)
+          : `${wake.toLocaleDateString(undefined, { weekday: "short" })} ${snoozeTimeOfDayLabel(wake)}`,
+      snoozedUntil: wake.toISOString(),
     });
   }
 

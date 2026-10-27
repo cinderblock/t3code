@@ -1,4 +1,8 @@
-import { createUsageEnvironmentAtoms } from "@t3tools/client-runtime/state/quota";
+import {
+  createUsageEnvironmentAtoms,
+  usageResetsForInstance,
+} from "@t3tools/client-runtime/state/quota";
+import type { SnoozeUsageResets } from "@t3tools/client-runtime/state/thread-settled";
 import type {
   EnvironmentId,
   ProviderInstanceId,
@@ -12,6 +16,7 @@ import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
+import { appAtomRegistry } from "../rpc/atomRegistry";
 import { serverEnvironment } from "./server";
 
 export const usageEnvironment = createUsageEnvironmentAtoms(connectionAtomRuntime);
@@ -165,3 +170,32 @@ export const queuedMessagesAtom = Atom.family((environmentId: EnvironmentId) =>
     return projection?.messages ?? EMPTY_QUEUED_MESSAGES;
   }).pipe(Atom.withLabel(`web-queued-messages:${environmentId}`)),
 );
+
+/**
+ * Next usage resets for the account a thread runs on, read once when a snooze
+ * menu opens rather than subscribed, so sidebar rows don't re-render on every
+ * provider probe.
+ */
+export function readThreadSnoozeUsageResets(thread: {
+  readonly environmentId: EnvironmentId;
+  readonly modelSelection: { readonly instanceId: string };
+  readonly runtime?: { readonly providerInstanceId?: string | null } | null;
+}): SnoozeUsageResets {
+  return usageResetsForInstance(
+    appAtomRegistry.get(serverEnvironment.providersValueAtom(thread.environmentId)) ??
+      EMPTY_PROVIDERS,
+    thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId,
+  );
+}
+
+/** The resets every thread shares, so a bulk snooze wakes them all at the same moment. */
+export function commonSnoozeUsageResets(
+  resets: ReadonlyArray<SnoozeUsageResets>,
+): SnoozeUsageResets {
+  const [first, ...rest] = resets;
+  if (first === undefined) return {};
+  return {
+    session: rest.every((entry) => entry.session === first.session) ? first.session : undefined,
+    weekly: rest.every((entry) => entry.weekly === first.weekly) ? first.weekly : undefined,
+  };
+}

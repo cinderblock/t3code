@@ -3,9 +3,12 @@ import type {
   ServerProviderUsageLimits,
   ServerProviderUsageWindow,
 } from "@t3tools/contracts";
+import { windowScopeName } from "@t3tools/client-runtime/state/quota";
 import { formatDuration, limitsNotice } from "@t3tools/shared/usageLimits";
 
 import type { UsageAccountView } from "../../state/quota";
+
+export { windowScopeName };
 
 /**
  * Presentation helpers for the usage meters. Kept free of React so the
@@ -16,23 +19,6 @@ import type { UsageAccountView } from "../../state/quota";
  * percentage. A model-scoped window is labelled `<Kind> · <Model>` (Claude's
  * `Weekly · Fable`); an account-wide window carries the kind's generic label.
  */
-
-const ACCOUNT_WIDE_LABELS = new Set(["session", "weekly", "monthly", "primary", "secondary"]);
-const ACCOUNT_WIDE_IDS = new Set(["five_hour", "seven_day", "primary", "secondary"]);
-
-/**
- * The model a window is scoped to, or null for an account-wide window. Claude
- * scoped weeklies extend the base id (`seven_day_<model>`) and put the model
- * after the kind in the label; everything labelled with its kind alone is
- * account-wide.
- */
-export function windowScopeName(window: ServerProviderUsageWindow): string | null {
-  if (ACCOUNT_WIDE_IDS.has(window.id) || ACCOUNT_WIDE_LABELS.has(window.label.toLowerCase())) {
-    return null;
-  }
-  const separator = window.label.lastIndexOf(" · ");
-  return separator === -1 ? window.label : window.label.slice(separator + 3);
-}
 
 export interface SeriesStyle {
   readonly color: string;
