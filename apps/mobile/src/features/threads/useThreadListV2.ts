@@ -6,6 +6,7 @@ import { useMemo, useSyncExternalStore } from "react";
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
+import { useScheduledThreadKeys } from "../../state/scheduled-messages";
 import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
@@ -58,15 +59,19 @@ export function useThreadListV2(input: {
   readonly selectedThreadKey: string | null;
 }) {
   const { threads, workingShelfEnabled } = input;
+  const scheduledThreadKeys = useScheduledThreadKeys(threads.map((thread) => thread.environmentId));
   // A thread can stop working when the threads change, or when its exit grace expires.
   const inboxVersion = useSyncExternalStore(
     threadListInboxReturns.subscribe,
     threadListInboxReturns.getSnapshot,
   );
   const inbox = useMemo(
-    () => threadListInboxReturns.observe(workingShelfEnabled ? threads : null),
+    () =>
+      threadListInboxReturns.observe(workingShelfEnabled ? threads : null, (thread) =>
+        scheduledThreadKeys.has(`${thread.environmentId}:${thread.id}`),
+      ),
     // oxlint-disable-next-line react/memo-dependencies -- the version signals an expired grace
-    [threads, workingShelfEnabled, inboxVersion],
+    [threads, workingShelfEnabled, scheduledThreadKeys, inboxVersion],
   );
   // Up/down menu availability for every card, computed once per section per
   // rebuild (see computeThreadMoveAvailability): per-thread planner calls made

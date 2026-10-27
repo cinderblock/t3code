@@ -149,6 +149,12 @@ there. A thread returns to the active list when it finishes, fails, or needs an 
 answer. The Working section lists the thread you last sent work to first. Pinned threads stay in
 the pinned section.
 
+A thread with a message waiting to send later also stays in Working, even after a failed or
+usage-limited run, until the message sends or the thread needs an approval or answer. Its row reads
+**Scheduled** unless it has a failure or new reply to show. Turn this off with **Send-later messages count as working**, shown under the Working section
+setting. A waiting message is not running work, so it never holds off a restart or update that
+waits for agents to go idle.
+
 This is on by default. Turn it off with **Settings → General → Working section** on web, desktop,
 iOS and Android. Each device keeps its own choice.
 

@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   createInboxReturnTracker,
   isThreadWorking,
+  isThreadWorkingOrScheduled,
   sortInboxThreadsByReturn,
   sortWorkingThreadsBySend,
   stepThreadPriority,
@@ -35,6 +36,28 @@ function thread(id: string, working: boolean) {
   };
 }
 
+describe("isThreadWorkingOrScheduled", () => {
+  it("keeps an idle or failed thread with a scheduled message in progress", () => {
+    expect(isThreadWorkingOrScheduled(thread("a", false), true)).toBe(true);
+    expect(isThreadWorkingOrScheduled(thread("a", false), false)).toBe(false);
+    const failed = {
+      ...thread("a", true),
+      runtime: { ...thread("a", true).runtime!, status: "failed" as const, lastError: "limit" },
+    };
+    expect(isThreadWorking(failed)).toBe(false);
+    expect(isThreadWorkingOrScheduled(failed, true)).toBe(true);
+  });
+
+  it.each([
+    { hasPendingApprovals: true },
+    { hasPendingUserInput: true },
+    { pendingSubagentRequest: "approval" as const },
+    { pendingGuestMessageCount: 1 },
+  ])("returns a scheduled thread that needs the user: %j", (change) => {
+    expect(isThreadWorkingOrScheduled({ ...thread("a", false), ...change }, true)).toBe(false);
+  });
+});
+
 describe("createInboxReturnTracker", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -59,6 +82,20 @@ describe("createInboxReturnTracker", () => {
     // An earlier observation keeps its answer, so lists built from it stay valid.
     expect(held.isWorking(thread("a", false))).toBe(true);
     expect(held.returnedAt(thread("a", false))).toBeUndefined();
+  });
+
+  it("places a scheduled thread in Working until its message is no longer scheduled", () => {
+    const tracker = createInboxReturnTracker();
+    let scheduled = true;
+    const isScheduled = () => scheduled;
+    expect(tracker.observe([thread("a", false)], isScheduled).isWorking(thread("a", false))).toBe(
+      true,
+    );
+    scheduled = false;
+    tracker.observe([thread("a", false)], isScheduled);
+    vi.advanceTimersByTime(2_000);
+    expect(tracker.isWorking(thread("a", false))).toBe(false);
+    expect(tracker.returnedAt(thread("a", false))).toBe(12_000);
   });
 
   it("holds only placement, then expires and notifies without another shell event", () => {

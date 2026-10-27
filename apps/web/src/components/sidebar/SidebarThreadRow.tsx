@@ -534,6 +534,8 @@ type SidebarThreadRowProps = {
   dragOverPinned: boolean;
   sweepAction: SidebarSweepAction | null;
   snoozeWakeLabelText: string | null;
+  /** Holds a send-later message and the user counts those as in progress. */
+  scheduled: boolean;
   wokeAt: string | null;
   isActive: boolean;
   // Set on the active row only; scrolls it into view when a reveal is owed.
@@ -738,31 +740,37 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                   icon: "request" as const,
                   className: "text-guest-foreground",
                 }
-              : status === "limited"
+              : props.scheduled && status !== "failed" && !isWoke && !isUnread
                 ? {
-                    label: "Limited",
-                    icon: "failed" as const,
-                    className: "text-warning-foreground",
+                    label: "Scheduled",
+                    icon: "scheduled" as const,
+                    className: "text-muted-foreground",
                   }
-                : status === "failed"
+                : status === "limited"
                   ? {
-                      label: "Failed",
+                      label: "Limited",
                       icon: "failed" as const,
-                      className: "text-error-foreground",
+                      className: "text-warning-foreground",
                     }
-                  : isWoke
+                  : status === "failed"
                     ? {
-                        label: "Woke",
-                        icon: "woke" as const,
-                        className: "text-warning-foreground",
+                        label: "Failed",
+                        icon: "failed" as const,
+                        className: "text-error-foreground",
                       }
-                    : isUnread
+                    : isWoke
                       ? {
-                          label: "Done",
-                          icon: "done" as const,
-                          className: "text-success-foreground",
+                          label: "Woke",
+                          icon: "woke" as const,
+                          className: "text-warning-foreground",
                         }
-                      : null;
+                      : isUnread
+                        ? {
+                            label: "Done",
+                            icon: "done" as const,
+                            className: "text-success-foreground",
+                          }
+                        : null;
   const isWokeStatus = topStatus?.icon === "woke";
 
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
@@ -1398,6 +1406,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                             <ShieldQuestionIcon aria-hidden className="size-4 shrink-0" />
                           ) : topStatus.icon === "failed" ? (
                             <CircleAlertIcon aria-hidden className="size-4 shrink-0" />
+                          ) : topStatus.icon === "scheduled" ? (
+                            <ClockIcon aria-hidden className="size-4 shrink-0" />
                           ) : topStatus.icon === "done" ? (
                             <CircleCheckIcon aria-hidden className="size-4 shrink-0" />
                           ) : null}

@@ -176,6 +176,8 @@ export function WorkingSectionSettings() {
   const preferences = useAtomValue(mobilePreferencesAtom);
   const workingShelfEnabled =
     AsyncResult.isSuccess(preferences) && preferences.value.workingShelfEnabled !== false;
+  const scheduledMessagesWorking =
+    AsyncResult.isSuccess(preferences) && preferences.value.scheduledMessagesWorking !== false;
   const inboxSortDirections =
     (AsyncResult.isSuccess(preferences) ? preferences.value.inboxSortDirections : undefined) ??
     DEFAULT_SIDEBAR_INBOX_SORT_DIRECTIONS;
@@ -189,6 +191,15 @@ export function WorkingSectionSettings() {
           value={workingShelfEnabled}
           onValueChange={(value) => savePreferences({ workingShelfEnabled: value })}
         />
+        {workingShelfEnabled ? (
+          <SettingsSwitchRow
+            icon="clock"
+            label="Send-later messages count as working"
+            subtitle="Threads with a message waiting to send later stay in Working. They never hold off a restart or update."
+            value={scheduledMessagesWorking}
+            onValueChange={(value) => savePreferences({ scheduledMessagesWorking: value })}
+          />
+        ) : null}
       </SettingsSection>
       <Text className="px-2 text-sm text-foreground-muted">
         Fold working and monitoring threads into a Working section. They return to the top of the

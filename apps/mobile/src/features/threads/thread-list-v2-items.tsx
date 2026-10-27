@@ -73,6 +73,7 @@ import {
 } from "./threadListV2";
 import { QueuedMessageIcon } from "./queued-message-icon";
 import { useThreadSnoozeUsageResets } from "../../state/usage";
+import { useThreadScheduled } from "../../state/scheduled-messages";
 import { shouldRecedeThreadRow } from "./thread-row-emphasis";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
@@ -128,6 +129,12 @@ const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> =
     className: "text-warning-foreground",
     iconTintClassName: "accent-warning-foreground",
   },
+};
+const SCHEDULED_STATUS_LABEL: StatusLabel = {
+  label: "Scheduled",
+  icon: "clock",
+  className: "text-foreground-muted",
+  iconTintClassName: "accent-foreground-muted",
 };
 const DONE_STATUS_LABEL: StatusLabel = {
   label: "Done",
@@ -689,10 +696,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const isUnread = status === "ready" && threadHasUnseenCompletion(thread);
   const workingLabel = STATUS_LABEL_BY_STATUS[status];
   const showsWoke = status === "ready" && props.wokeAt !== null;
+  const scheduled = useThreadScheduled(thread);
   const statusLabel =
-    (status === "working" && workingLabel !== undefined && thread.goal?.status === "active"
-      ? { ...workingLabel, label: "Goal" }
-      : workingLabel) ?? (isUnread ? DONE_STATUS_LABEL : undefined);
+    scheduled && (status === "ready" || status === "limited") && !isUnread && !showsWoke
+      ? SCHEDULED_STATUS_LABEL
+      : ((status === "working" && workingLabel !== undefined && thread.goal?.status === "active"
+          ? { ...workingLabel, label: "Goal" }
+          : workingLabel) ?? (isUnread ? DONE_STATUS_LABEL : undefined));
   const recede = shouldRecedeThreadRow({ status, selected });
   const timeLabel = props.timeLabel;
 

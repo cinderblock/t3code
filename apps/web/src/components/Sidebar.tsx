@@ -30,7 +30,7 @@ import {
 } from "@t3tools/client-runtime/state/thread-settled";
 import {
   createInboxReturnTracker,
-  isThreadWorking,
+  isThreadWorkingOrScheduled,
 } from "@t3tools/client-runtime/state/thread-inbox";
 import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
 import type { SidebarInboxSortDirections } from "@t3tools/contracts/settings";
@@ -141,7 +141,11 @@ import {
   useQuietThreadShells,
 } from "../state/entities";
 import { environmentPresentations } from "../state/presentation";
-import { commonSnoozeUsageResets, readThreadSnoozeUsageResets } from "../state/quota";
+import {
+  commonSnoozeUsageResets,
+  readThreadSnoozeUsageResets,
+  scheduledThreadKeysAtom,
+} from "../state/quota";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import { environmentProjects } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
@@ -332,6 +336,7 @@ interface SidebarThreadPartitionInput {
   readonly serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>;
   readonly optimisticDrop: SidebarOptimisticDrop | null;
   readonly workingShelfEnabled: boolean;
+  readonly scheduledThreadKeys: ReadonlySet<string>;
   readonly inboxSortDirections: SidebarInboxSortDirections;
   // Snooze wakes, the queued-turn grace and the Working shelf's exit grace depend
   // on the clock, so the minute tick, the precise snooze-wake tick and the inbox
@@ -406,6 +411,12 @@ function useSidebarThreads(input: {
     routeRowThreadKey,
   } = input;
   const workingShelfEnabled = useClientSettings((s) => s.sidebarWorkingShelfEnabled);
+  const scheduledMessagesWorking = useClientSettings((s) => s.sidebarScheduledMessagesWorking);
+  const scheduledThreadKeys = useAtomValue(
+    workingShelfEnabled && scheduledMessagesWorking
+      ? scheduledThreadKeysAtom([...serverConfigs.keys()].join(","))
+      : scheduledThreadKeysAtom(""),
+  );
   const inboxSortDirections = useClientSettings((s) => s.sidebarInboxSortDirections);
   const inboxReturnsVersion = useSyncExternalStore(
     inboxReturns.subscribe,
@@ -446,6 +457,7 @@ function useSidebarThreads(input: {
     serverConfigs,
     optimisticDrop,
     workingShelfEnabled,
+    scheduledThreadKeys,
     inboxSortDirections,
     clockKey: `${nowMinute}:${snoozeWakeClock}:${inboxReturnsVersion}`,
   });
@@ -505,6 +517,7 @@ function useSidebarThreads(input: {
     ...partition,
     threads,
     workingShelfEnabled,
+    scheduledThreadKeys,
     inboxSortDirections,
     searchableThreads: [
       ...pinnedThreads,
@@ -555,19 +568,24 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     serverConfigs,
     optimisticDrop,
     workingShelfEnabled,
+    scheduledThreadKeys,
     inboxSortDirections,
   } = input;
   const preciseNow = new Date().toISOString();
   const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys).filter(
     (thread) => !hiddenEnvironmentIds.has(thread.environmentId),
   );
-  const inboxObservation = inboxReturns.observe(workingShelfEnabled ? threads : null);
+  const isScheduled = (thread: Pick<EnvironmentThreadShell, "environmentId" | "id">) =>
+    scheduledThreadKeys.has(`${thread.environmentId}:${thread.id}`);
+  const inboxObservation = inboxReturns.observe(workingShelfEnabled ? threads : null, isScheduled);
   const pinned: EnvironmentThreadShell[] = [];
   const active: EnvironmentThreadShell[] = [];
   const working: EnvironmentThreadShell[] = [];
   const inbox = (thread: EnvironmentThreadShell, manuallyMoved = false) =>
     workingShelfEnabled &&
-    (manuallyMoved ? isThreadWorking(thread) : inboxObservation.isWorking(thread))
+    (manuallyMoved
+      ? isThreadWorkingOrScheduled(thread, isScheduled(thread))
+      : inboxObservation.isWorking(thread))
       ? working
       : active;
   const snoozed: EnvironmentThreadShell[] = [];
@@ -1195,6 +1213,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
 
   const {
     workingShelfEnabled,
+    scheduledThreadKeys,
     inboxSortDirections,
     pinnedThreads,
     draggableThreadKeys,
@@ -3255,6 +3274,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             sweepAction={
                               actionSweep?.keys.has(threadKey) ? actionSweep.action : null
                             }
+                            scheduled={scheduledThreadKeys.has(
+                              `${thread.environmentId}:${thread.id}`,
+                            )}
                             snoozeWakeLabelText={
                               section === "snoozed" && thread.snoozedUntil != null
                                 ? snoozeWakeLabel(thread.snoozedUntil, {

@@ -448,6 +448,10 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? ["Working section"]
       : []),
+    ...(settings.sidebarScheduledMessagesWorking !==
+    DEFAULT_UNIFIED_SETTINGS.sidebarScheduledMessagesWorking
+      ? ["Send-later messages count as working"]
+      : []),
     ...INBOX_ORDER_GROUPS.flatMap(({ group, label }) =>
       settings.sidebarInboxSortDirections[group] !==
       DEFAULT_UNIFIED_SETTINGS.sidebarInboxSortDirections[group]
@@ -624,6 +628,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+      sidebarScheduledMessagesWorking: DEFAULT_UNIFIED_SETTINGS.sidebarScheduledMessagesWorking,
       sidebarInboxSortDirections: DEFAULT_UNIFIED_SETTINGS.sidebarInboxSortDirections,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
@@ -893,6 +898,35 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+        {settings.sidebarWorkingShelfEnabled ? (
+          <SettingsRow
+            {...searchableSetting("scheduled-messages-working")}
+            description="Threads with a message waiting to send later stay in the Working section. They never hold off a restart or update."
+            resetAction={
+              settings.sidebarScheduledMessagesWorking !==
+              DEFAULT_UNIFIED_SETTINGS.sidebarScheduledMessagesWorking ? (
+                <SettingResetButton
+                  label="send-later messages count as working"
+                  onClick={() =>
+                    updateSettings({
+                      sidebarScheduledMessagesWorking:
+                        DEFAULT_UNIFIED_SETTINGS.sidebarScheduledMessagesWorking,
+                    })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Switch
+                checked={settings.sidebarScheduledMessagesWorking}
+                onCheckedChange={(checked) =>
+                  updateSettings({ sidebarScheduledMessagesWorking: Boolean(checked) })
+                }
+                aria-label="Send-later messages count as working"
+              />
+            }
+          />
+        ) : null}
 
         {INBOX_ORDER_GROUPS.map(({ group, searchId, label }) => {
           const direction = settings.sidebarInboxSortDirections[group];

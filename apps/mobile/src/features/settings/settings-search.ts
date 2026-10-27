@@ -38,6 +38,8 @@ const SETTINGS_SEARCH_TERMS = {
     "organization",
     "sidebar",
     "working section",
+    "send later",
+    "scheduled messages",
     "new threads",
     "last project",
   ],

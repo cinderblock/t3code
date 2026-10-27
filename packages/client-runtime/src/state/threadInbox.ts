@@ -31,6 +31,26 @@ export function isThreadWorking(thread: WorkingThreadInput): boolean {
   return !(thread.interactionMode === "plan" && thread.hasActionableProposedPlan && runSettled);
 }
 
+/**
+ * Working, or holding a message scheduled to send later. A scheduled message starts no run,
+ * so idle checks (restarts, updates) never see it; only list placement does. A failed run
+ * stays here (a message queued after a usage cap is the common case), but a request for the
+ * user does not.
+ */
+export function isThreadWorkingOrScheduled(
+  thread: WorkingThreadInput & Partial<Pick<EnvironmentThreadShell, "pendingGuestMessageCount">>,
+  scheduled: boolean,
+): boolean {
+  if (isThreadWorking(thread)) return true;
+  return (
+    scheduled &&
+    !thread.hasPendingApprovals &&
+    !thread.hasPendingUserInput &&
+    thread.pendingSubagentRequest == null &&
+    (thread.pendingGuestMessageCount ?? 0) === 0
+  );
+}
+
 type InboxThreadInput = Pick<
   EnvironmentThreadShell,
   "id" | "environmentId" | "createdAt" | "unsettledAt" | "latestRun"
@@ -200,7 +220,10 @@ export function createInboxReturnTracker() {
       };
     },
     getSnapshot: () => version,
-    observe(threads: readonly TrackedInboxThread[] | null): {
+    observe(
+      threads: readonly TrackedInboxThread[] | null,
+      isScheduled?: (thread: ThreadKeyInput) => boolean,
+    ): {
       readonly isWorking: (thread: WorkingThreadInput & ThreadKeyInput) => boolean;
       readonly returnedAt: (thread: ThreadKeyInput) => number | undefined;
     } {
@@ -244,7 +267,7 @@ export function createInboxReturnTracker() {
           thread.pinnedAt != null ||
           thread.settledOverride === "settled" ||
           effectiveSnoozed(thread, { now: observedAt });
-        const actual = isThreadWorking(thread);
+        const actual = isThreadWorkingOrScheduled(thread, isScheduled?.(thread) === true);
         // Only shelf placement is held: execution state and attention requests stay authoritative.
         const deadline =
           !actual && previous?.working && !actionable && !moved && !excluded

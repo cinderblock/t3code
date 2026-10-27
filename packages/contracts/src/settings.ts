@@ -470,6 +470,10 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_PREVIEW_EXTERNAL_LINK_BEHAVIOR)),
   ),
   sidebarWorkingShelfEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /** Fork: threads holding a send-later message sit in the Working section. */
+  sidebarScheduledMessagesWorking: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(true)),
+  ),
   sidebarInboxSortDirections: SidebarInboxSortDirections.pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -1702,6 +1706,7 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   sidebarWorkingShelfEnabled: Schema.optionalKey(Schema.Boolean),
+  sidebarScheduledMessagesWorking: Schema.optionalKey(Schema.Boolean),
   sidebarInboxSortDirections: Schema.optionalKey(SidebarInboxSortDirections),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(

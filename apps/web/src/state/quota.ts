@@ -1,5 +1,6 @@
 import {
   createUsageEnvironmentAtoms,
+  scheduledThreadKeys,
   usageResetsForInstance,
 } from "@t3tools/client-runtime/state/quota";
 import type { SnoozeUsageResets } from "@t3tools/client-runtime/state/thread-settled";
@@ -169,6 +170,24 @@ export const queuedMessagesAtom = Atom.family((environmentId: EnvironmentId) =>
     );
     return projection?.messages ?? EMPTY_QUEUED_MESSAGES;
   }).pipe(Atom.withLabel(`web-queued-messages:${environmentId}`)),
+);
+
+const NO_SCHEDULED_THREADS: ReadonlySet<string> = new Set();
+
+/**
+ * `${environmentId}:${threadId}` of threads holding a send-later message, across the
+ * comma-joined environment ids. Read by the sidebar's Working placement only.
+ */
+export const scheduledThreadKeysAtom = Atom.family((environmentIds: string) =>
+  Atom.make((get): ReadonlySet<string> => {
+    const keys = environmentIds
+      .split(",")
+      .filter((environmentId) => environmentId.length > 0)
+      .flatMap((environmentId) =>
+        scheduledThreadKeys(environmentId, get(queuedMessagesAtom(environmentId as EnvironmentId))),
+      );
+    return keys.length === 0 ? NO_SCHEDULED_THREADS : new Set(keys);
+  }).pipe(Atom.withLabel(`web-scheduled-thread-keys:${environmentIds}`)),
 );
 
 /**

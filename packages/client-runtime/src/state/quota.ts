@@ -73,6 +73,16 @@ export function usageResetsForInstance(
   return { session: resetOf("session"), weekly: resetOf("weekly") };
 }
 
+/** `${environmentId}:${threadId}` for each thread holding a message still waiting to send. */
+export function scheduledThreadKeys(
+  environmentId: string,
+  messages: ReadonlyArray<Pick<QueuedMessage, "threadId" | "status">>,
+): ReadonlyArray<string> {
+  return messages
+    .filter((message) => message.status === "pending")
+    .map((message) => `${environmentId}:${message.threadId}`);
+}
+
 export interface QueuedMessagesProjection {
   readonly messages: ReadonlyArray<QueuedMessage>;
 }
