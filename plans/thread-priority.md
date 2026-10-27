@@ -11,7 +11,7 @@ jumped to the top and old waiting threads sank.
 ## Environment / context
 
 - Worktree: `C:\Users\camer\.t3\worktrees\t3code\feature-thread-priority`, branch
-  `feature/thread-priority`, created from local `master` at `fa45619aa5`. Not pushed.
+  `feature/thread-priority`, created from local `master` at `fa45619aa5`. Merged into `master` 2026-10-27.
 - Use this worktree's own `node_modules/.bin/vp`; the `vp` on PATH is the main checkout's.
 - Inbox sort: `sortInboxThreadsByReturn` in
   `packages/client-runtime/src/state/threadInbox.ts` (shared by web and mobile). Its
@@ -61,7 +61,8 @@ jumped to the top and old waiting threads sank.
 - [x] User docs (`b5921ea683`)
 - [x] ISSUES.md entry for Windows test failures (`36296d9511`)
 - [ ] Integrated pass in a real client (needs the user's go-ahead)
-- [ ] Merge / push decision (user's call)
+- [x] Merged into `master` and pushed to `origin` (2026-10-27 ~3:15 PM PDT), on top of the
+      provider auto-update commit. Combined master: typecheck clean, priority + auto-update tests pass.
 
 ## Open questions for the user
 
@@ -69,7 +70,7 @@ jumped to the top and old waiting threads sank.
    no (see above).
 2. Run an integrated web check with `test-t3-app`? Needs permission to start a dev server
    and browser.
-3. Merge `feature/thread-priority` into `master` locally, or push it as a branch?
+3. ~~Merge or push?~~ Answered: merged into local `master`, pushed.
 
 ## Things not to do
 
