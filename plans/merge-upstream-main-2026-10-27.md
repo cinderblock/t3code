@@ -68,6 +68,20 @@ Three modify/delete: `web/RightPanelTabs.browser.test.tsx`, `web/RightPanelTabs.
 | web `RightPanelTabs(.keyboard).browser.test.tsx`                         | deleted (upstream #22557); fork only added props                                                                                                                                                                                |
 | web `lib/selectionActions.test.ts`                                       | deleted upstream; recreated with only the fork's `resolveSelectionFocus` test                                                                                                                                                   |
 
+## Second merge: `master` into the branch (thread priority, provider auto-update)
+
+| area                                                | resolution                                                                                                                                                                                                    |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| web `ChatView.tsx`                                  | upstream moved keybinding handlers to `chat/useThreadLifecycle.tsx`; priority raise/lower shortcuts re-added there                                                                                            |
+| web `Sidebar.tsx`                                   | upstream file; inbox sort directions through `useSidebarThreads` → partition → `sortInboxThreadsByReturn`; priority arrow moved to `sidebar/SidebarThreadRow.tsx`                                             |
+| web `SettingsPanels.tsx`, `settingsSearch.ts`       | upstream split panels; inbox-order rows after the Working section row (General); provider auto-update row moved to the Maintenance panel and its search entry to `/settings/maintenance`                      |
+| server `ProjectionStore.ts`                         | upstream `Effect.fnUntraced` rewrite + `thread.priority-set` in both event lists                                                                                                                              |
+| server `ProviderSessionManager.ts`                  | fork admission/runWhenIdle code + upstream's shortened comments; `enterOpen` → `Effect.fn`; `runWhenIdle` keeps `Effect.gen` with both lint and diagnostic suppressed (Effect.fn drops the generic signature) |
+| server `OrchestratorMcpToolkit.integration.test.ts` | upstream deleted the big integration test; **the fork's MCP `set_priority` checks went with it** (priority itself is still covered by `Orchestrator.control-reads.test.ts`)                                   |
+| client-runtime `threadInbox(.test).ts`              | both; upstream's new tracker test passes explicit newest-first directions (fork default is oldest first)                                                                                                      |
+| mobile thread list                                  | inbox directions through upstream's new `useThreadListV2` hook; priority arrow in the restructured row; mobile prefs keep both sides' fields                                                                  |
+| docs `thread-sidebar.md`, `updating.md`             | Working section on by default (upstream) + priority/inbox order (fork); auto-update setting now under **Settings → Maintenance**                                                                              |
+
 ## Decisions taken during this merge (flag to the user)
 
 - **Relay tracing (new upstream: T3 Connect connection traces to Axiom) is opt-in on this fork**,
@@ -114,9 +128,12 @@ Three modify/delete: `web/RightPanelTabs.browser.test.tsx`, `web/RightPanelTabs.
 - [x] `vp fmt` on the 97 files differing from both parents; lint clean except 35
       `no-low-value-comments` on fork comments → logged in ISSUES.md.
 - [x] Merge commit `c6f70643d8` on `merge/upstream-2026-10-27`.
-- [ ] Fast-forward `master` ← **blocked**: 13 files with another thread's uncommitted
-      provider-auto-update work in the main checkout are also changed by the merge, so
-      `git merge --ff-only` refuses. Needs that work committed (or the user's call).
+- [x] Fast-forward was blocked by another thread's uncommitted provider-auto-update work. The user
+      had it committed (2026-10-27); meanwhile `master` gained 11 commits (provider auto-update,
+      thread priority), so `master` was merged into this branch first: `91d133794c`, 23 conflicts
+      (see "Second merge"). Typecheck clean in all 8 packages; inbox/priority/auto-updater/
+      orchestration/web/mobile tests pass apart from the logged mobile CRLF suite.
+- [x] Fast-forward `master`.
 - [ ] Remove worktree + branch after the fast-forward.
 - [ ] Push / restart the running app (user's call).
 
