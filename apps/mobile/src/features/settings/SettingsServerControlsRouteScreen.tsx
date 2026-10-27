@@ -491,6 +491,23 @@ function ServerSettingsDetail(props: { readonly page: SettingsPage }) {
                     />
                     <View className="border-t border-border-subtle">
                       <SettingsSwitchRow
+                        icon="arrow.down.circle"
+                        label="Update providers automatically"
+                        subtitle={
+                          projectSelected
+                            ? "Environment-wide setting. Select All projects to change it."
+                            : "Install a newer provider version once that provider has had no agent activity for 5 minutes."
+                        }
+                        value={uniform("autoUpdateProviders")}
+                        disabled={
+                          disabledFor("autoUpdateProviders") ||
+                          uniform("enableProviderUpdateChecks") !== true
+                        }
+                        onValueChange={(value) => write({ autoUpdateProviders: value })}
+                      />
+                    </View>
+                    <View className="border-t border-border-subtle">
+                      <SettingsSwitchRow
                         icon="arrow.uturn.forward"
                         label="Continue after restart"
                         subtitle={

@@ -276,6 +276,7 @@ it.effect(
           closeInstance: () => Effect.void,
           release: () => Effect.void,
           detach: () => Effect.void,
+          runWhenIdle: () => Effect.die("unused runWhenIdle"),
         }),
       );
       const layerControl = ProviderTurnControlService.layer.pipe(

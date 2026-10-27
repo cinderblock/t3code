@@ -118,6 +118,16 @@ directory and pair with the running server.
 at once. Hover it to see which providers it will update. Providers that only
 offer a manual update command are not included.
 
+To have an environment update its providers on its own, turn on **Update
+providers automatically** in **Settings → General** (on mobile, **Settings →
+Maintenance**). A provider then updates once it has had no agent activity for
+5 minutes, so running work is never interrupted. Its idle sessions close first
+and pick up again on your next message; a message sent during the update waits
+for it to finish. The environment needs provider update checks on, and providers
+that only offer a manual update command still need you. If an automatic update
+fails, the provider shows the error and T3 Code waits a few hours before trying
+that version again.
+
 ## Mobile updates
 
 To update an environment from your phone, open **Settings → Environments** and

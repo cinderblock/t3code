@@ -99,7 +99,14 @@ See the [resolver](../../apps/server/src/provider/providerMaintenance.ts).
 Ownership is cached per instance and re-read immediately before an update runs. The
 [runner](../../apps/server/src/provider/providerMaintenanceRunner.ts) refuses when the lock key
 changed since the advisory, and reports success only when the refreshed provider is still installed
-with a readable, current version.
+with a readable, current version. It is one server-lifetime service, so every client and the
+[idle auto-updater](../../apps/server/src/provider/ProviderAutoUpdater.ts) share its per-install
+lock.
+
+Unattended updates go through `ProviderSessionManagerV2.runWhenIdle`, which releases the driver's
+idle sessions and holds new opens until the install finishes. A live provider process can hold its
+install (Windows refuses to replace a running executable), and a turn started mid-install would
+launch a half-written one.
 
 ## Protocol traps
 

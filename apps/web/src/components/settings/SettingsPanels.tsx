@@ -624,6 +624,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.enableProviderUpdateChecks !== DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks
       ? ["Provider update checks"]
       : []),
+    ...(settings.autoUpdateProviders !== DEFAULT_UNIFIED_SETTINGS.autoUpdateProviders
+      ? ["Update providers automatically"]
+      : []),
     ...(settings.continueThreadsAfterServerUpdate !==
     DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate
       ? ["Continue threads after restarts"]
@@ -745,6 +748,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       snoozeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
+      autoUpdateProviders: DEFAULT_UNIFIED_SETTINGS.autoUpdateProviders,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
@@ -2828,6 +2832,40 @@ export function GeneralSettingsPanel() {
                 updateSettings({ enableProviderUpdateChecks: Boolean(checked) })
               }
               aria-label="Check provider versions"
+            />
+          }
+        />
+
+        <SettingsRow
+          serverScoped
+          settingKeys={["autoUpdateProviders"]}
+          {...searchableSetting("provider-auto-update")}
+          description={
+            settings.enableProviderUpdateChecks
+              ? "Install a newer provider version once that provider has had no agent activity for 5 minutes. Its idle sessions restart on the next message."
+              : "Needs provider update checks."
+          }
+          resetAction={
+            settings.autoUpdateProviders !== DEFAULT_UNIFIED_SETTINGS.autoUpdateProviders ? (
+              <SettingResetButton
+                label="automatic provider updates"
+                onClick={() =>
+                  updateSettings({
+                    autoUpdateProviders: DEFAULT_UNIFIED_SETTINGS.autoUpdateProviders,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <ScopedSwitch
+              settingKeys={["autoUpdateProviders"]}
+              checked={settings.autoUpdateProviders}
+              disabled={!settings.enableProviderUpdateChecks}
+              onCheckedChange={(checked) =>
+                updateSettings({ autoUpdateProviders: Boolean(checked) })
+              }
+              aria-label="Update providers automatically when idle"
             />
           }
         />

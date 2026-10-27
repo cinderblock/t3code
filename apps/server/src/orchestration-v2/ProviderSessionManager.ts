@@ -17,6 +17,7 @@ import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -180,12 +181,38 @@ export interface ProviderSessionManagerV2Shape {
     readonly detail?: string;
     readonly revokeMcpCredential?: boolean;
   }) => Effect.Effect<void, ProviderSessionManagerV2Error>;
+  /**
+   * Runs `effect` only if every session of these instances has been idle for
+   * `idleForMs`. Those sessions are released first and new opens for the
+   * instances wait until `effect` finishes, so it can replace the provider's
+   * install without a live process holding it. `None` means not idle.
+   */
+  readonly runWhenIdle: <A, E, R>(
+    input: {
+      readonly instanceIds: ReadonlyArray<ProviderInstanceId>;
+      readonly idleForMs: number;
+      readonly detail: string;
+    },
+    effect: Effect.Effect<A, E, R>,
+  ) => Effect.Effect<Option.Option<A>, E, R>;
 }
 
 export class ProviderSessionManagerV2 extends Context.Service<
   ProviderSessionManagerV2,
   ProviderSessionManagerV2Shape
 >()("t3/orchestration-v2/ProviderSessionManager/ProviderSessionManagerV2") {}
+
+/**
+ * `gate` holds new opens while `runWhenIdle` owns the instance. `opening`
+ * counts opens in flight, which have no live entry yet to show as active.
+ */
+interface InstanceAdmission {
+  readonly gate: Deferred.Deferred<void> | null;
+  readonly opening: number;
+  readonly lastSessionEndedAtMs: number;
+}
+
+const OPEN_ADMISSION: InstanceAdmission = { gate: null, opening: 0, lastSessionEndedAtMs: 0 };
 
 interface LiveSessionEntry {
   readonly attachedThreadIds: ReadonlySet<ThreadId>;
@@ -388,6 +415,14 @@ export const layerWithOptions = (
           }),
       );
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
+      const admissions = yield* Ref.make(new Map<ProviderInstanceId, InstanceAdmission>());
+      const updateAdmission = (
+        instanceId: ProviderInstanceId,
+        update: (admission: InstanceAdmission) => InstanceAdmission,
+      ) =>
+        Ref.update(admissions, (current) =>
+          new Map(current).set(instanceId, update(current.get(instanceId) ?? OPEN_ADMISSION)),
+        );
       // One retry per released entry, so a later release with the same id
       // cannot drop cleanup for threads only the earlier session served.
       const releaseRecordRetries = yield* FiberSet.make();
@@ -938,6 +973,13 @@ export const layerWithOptions = (
           ).pipe(candidate.requestEventPermit.withPermits(1));
           const [outcome, releasedAt] = removed;
           if (outcome === "changed") return yield* removeLiveEntry(input);
+          if (outcome === "removed") {
+            const endedAtMs = yield* Clock.currentTimeMillis;
+            yield* updateAdmission(candidate.runtime.instanceId, (admission) => ({
+              ...admission,
+              lastSessionEndedAtMs: endedAtMs,
+            }));
+          }
           return [
             outcome === "removed" ? Option.some(candidate) : Option.none<LiveSessionEntry>(),
             releasedAt,
@@ -2034,6 +2076,112 @@ export const layerWithOptions = (
         );
       };
 
+      const enterOpen = (instanceId: ProviderInstanceId): Effect.Effect<void> =>
+        Effect.gen(function* () {
+          const gate = yield* Ref.modify(admissions, (current) => {
+            const admission = current.get(instanceId) ?? OPEN_ADMISSION;
+            if (admission.gate !== null) return [admission.gate, current] as const;
+            const updated = new Map(current).set(instanceId, {
+              ...admission,
+              opening: admission.opening + 1,
+            });
+            return [null, updated] as const;
+          });
+          if (gate === null) return;
+          yield* Deferred.await(gate);
+          return yield* enterOpen(instanceId);
+        });
+
+      // Safe under the per-session open lock: a release only takes that lock
+      // from its forked record retry, so runWhenIdle never waits on it.
+      const admitOpen = <A, E, R>(instanceId: ProviderInstanceId, effect: Effect.Effect<A, E, R>) =>
+        Effect.acquireUseRelease(
+          enterOpen(instanceId),
+          () => effect,
+          () =>
+            updateAdmission(instanceId, (admission) => ({
+              ...admission,
+              opening: admission.opening - 1,
+            })),
+        );
+
+      const runWhenIdle: ProviderSessionManagerV2Shape["runWhenIdle"] = (input, effect) =>
+        Effect.gen(function* () {
+          const instanceIds = new Set(input.instanceIds);
+          const gate = yield* Deferred.make<void>();
+          const now = yield* Clock.currentTimeMillis;
+          const quietSince = (atMs: number) => now - atMs >= input.idleForMs;
+          const claim = Ref.modify(admissions, (current) => {
+            for (const instanceId of instanceIds) {
+              const admission = current.get(instanceId) ?? OPEN_ADMISSION;
+              if (
+                admission.gate !== null ||
+                admission.opening > 0 ||
+                !quietSince(admission.lastSessionEndedAtMs)
+              ) {
+                return [false, current] as const;
+              }
+            }
+            const updated = new Map(current);
+            for (const instanceId of instanceIds) {
+              updated.set(instanceId, { ...(current.get(instanceId) ?? OPEN_ADMISSION), gate });
+            }
+            return [true, updated] as const;
+          });
+          const reopen = Effect.forEach(
+            instanceIds,
+            (instanceId) =>
+              updateAdmission(instanceId, (admission) => ({ ...admission, gate: null })),
+            { discard: true },
+          ).pipe(Effect.andThen(Deferred.succeed(gate, undefined)));
+          const instanceEntries = Ref.get(sessions).pipe(
+            Effect.map((current) =>
+              [...current.values()].filter((entry) => instanceIds.has(entry.runtime.instanceId)),
+            ),
+          );
+
+          const quiesceAndRun = Effect.gen(function* () {
+            const entries = yield* instanceEntries;
+            if (
+              entries.some(
+                (entry) => entry.busyTurns.size > 0 || !quietSince(entry.lastActivityAtMs),
+              )
+            ) {
+              return Option.none();
+            }
+            for (const entry of entries) {
+              const pendingWork =
+                entry.runtime.hasPendingBackgroundWork === undefined
+                  ? false
+                  : yield* entry.runtime.hasPendingBackgroundWork.pipe(
+                      Effect.catchCause(() => Effect.succeed(true)),
+                    );
+              if (pendingWork) return Option.none();
+            }
+            // The generation guard keeps a session someone picked up since the
+            // check above; the instance then still has a live entry and is skipped.
+            yield* Effect.forEach(
+              entries,
+              (entry) =>
+                releaseEntry({
+                  providerSessionId: entry.runtime.providerSessionId,
+                  reason: "idle_timeout",
+                  detail: input.detail,
+                  onlyIfIdleGeneration: entry.idleGeneration,
+                }).pipe(logReleaseFailure(entry.runtime.providerSessionId)),
+              { concurrency: "unbounded", discard: true },
+            );
+            if ((yield* instanceEntries).length > 0) return Option.none();
+            return Option.some(yield* effect);
+          });
+
+          return yield* Effect.acquireUseRelease(
+            claim,
+            (claimed) => (claimed ? quiesceAndRun : Effect.succeedNone),
+            (claimed) => (claimed ? reopen : Effect.void),
+          );
+        });
+
       // The service launcher kills the server 5 s after it asks it to stop, and
       // a busy server can hold 15 sessions.
       const sessionScopes = yield* Scope.make("parallel");
@@ -2242,7 +2390,7 @@ export const layerWithOptions = (
               yield* startEventPump(entry);
               yield* scheduleIdleRelease(input.providerSessionId);
               return exposedRuntime;
-            }),
+            }).pipe((open) => admitOpen(input.modelSelection.instanceId, open)),
           ),
         isLive: (providerSessionId) =>
           Ref.get(sessions).pipe(
@@ -2306,6 +2454,7 @@ export const layerWithOptions = (
             ),
           ),
         release: releaseEntry,
+        runWhenIdle,
         detach: (input) =>
           Effect.gen(function* () {
             const key = sessionKey(input.providerSessionId);

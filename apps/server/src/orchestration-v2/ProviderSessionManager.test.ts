@@ -4908,3 +4908,152 @@ it.effect(
       assert.isFalse(denied?.capabilities?.has("device"));
     }),
 );
+
+const openIdleTestSession = (fixtureName: string) =>
+  Effect.gen(function* () {
+    const eventSink = yield* EventSink.EventSinkV2;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+    const now = yield* DateTime.now;
+    const threadId = yield* idAllocator.allocate.thread({
+      fixtureName,
+      projectId: yield* idAllocator.allocate.project({ fixtureName }),
+    });
+    const providerSessionId = yield* idAllocator.allocate.providerSession({
+      providerInstanceId: modelSelection.instanceId,
+      threadId,
+    });
+    yield* eventSink.write({
+      events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+    });
+    const runtime = yield* manager.open({
+      threadId,
+      providerSessionId,
+      modelSelection,
+      runtimePolicy,
+    });
+    return { idAllocator, manager, now, threadId, providerSessionId, runtime };
+  });
+
+const idleWork = { instanceIds: [modelSelection.instanceId], idleForMs: 5000, detail: "test" };
+
+it.effect(
+  "ProviderSessionManagerV2 runs idle work only after the instance's sessions go quiet",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const { manager, providerSessionId } = yield* openIdleTestSession("idle-work");
+
+        yield* TestClock.adjust("4 seconds");
+        assert.isTrue(Option.isNone(yield* manager.runWhenIdle(idleWork, Effect.succeed("ran"))));
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+
+        yield* TestClock.adjust("5 seconds");
+        const ran = yield* manager.runWhenIdle(
+          idleWork,
+          Effect.gen(function* () {
+            // The install is replaced only once no session process holds it.
+            assert.isFalse(yield* manager.isLive(providerSessionId));
+            return (yield* Ref.get(state)).closeCount;
+          }),
+        );
+        assert.deepStrictEqual(ran, Option.some(1));
+
+        // Ending a session is activity too, so the window restarts.
+        assert.isTrue(Option.isNone(yield* manager.runWhenIdle(idleWork, Effect.void)));
+      }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
+    }),
+);
+
+it.effect("ProviderSessionManagerV2 holds new sessions until idle work finishes", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    yield* Effect.gen(function* () {
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const started = yield* Deferred.make<void>();
+      const finish = yield* Deferred.make<void>();
+      const work = yield* manager
+        .runWhenIdle(
+          { ...idleWork, idleForMs: 0 },
+          Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(finish))),
+        )
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(started);
+
+      const opening = yield* openIdleTestSession("idle-work-gate").pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 second");
+      assert.equal((yield* Ref.get(state)).openCount, 0);
+
+      yield* Deferred.succeed(finish, undefined);
+      assert.isTrue(Option.isSome(yield* Fiber.join(work)));
+      yield* Fiber.join(opening);
+      assert.equal((yield* Ref.get(state)).openCount, 1);
+    }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 skips idle work while a turn is running", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const startTurnReached = yield* Deferred.make<void>();
+    yield* Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const { idAllocator, manager, now, threadId, providerSessionId, runtime } =
+        yield* openIdleTestSession("idle-work-busy");
+      const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+      yield* runtime
+        .startTurn({
+          appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+          threadId,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+          rootNodeId: idAllocator.derive.rootNode({ runId }),
+          providerThread: makeProviderThread({ idAllocator, threadId, providerSessionId, now }),
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+            text: "a long turn",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(startTurnReached);
+
+      yield* TestClock.adjust("10 seconds");
+      assert.isTrue(Option.isNone(yield* manager.runWhenIdle(idleWork, Effect.void)));
+      assert.isTrue(yield* manager.isLive(providerSessionId));
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 60_000,
+          startTurn: Deferred.succeed(startTurnReached, undefined).pipe(
+            Effect.andThen(Effect.never),
+          ),
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 skips idle work while background work is pending", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    yield* Effect.gen(function* () {
+      const { manager, providerSessionId } = yield* openIdleTestSession("idle-work-background");
+      yield* TestClock.adjust("10 seconds");
+      assert.isTrue(Option.isNone(yield* manager.runWhenIdle(idleWork, Effect.void)));
+      assert.isTrue(yield* manager.isLive(providerSessionId));
+    }).pipe(
+      Effect.provide(
+        layerTest({ state, idleTimeoutMs: 60_000, hasPendingBackgroundWork: Effect.succeed(true) }),
+      ),
+    );
+  }),
+);

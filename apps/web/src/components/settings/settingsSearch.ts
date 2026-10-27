@@ -442,6 +442,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "environment-defaults",
   },
   {
+    id: "provider-auto-update",
+    title: "Update providers automatically",
+    to: "/settings/general",
+    searchTerms: ["auto upgrade install idle unattended background cli codex claude opencode"],
+    scope: "environment-defaults",
+  },
+  {
     id: "continue-threads-after-server-update",
     title: "Continue threads after restarts",
     to: "/settings/general",

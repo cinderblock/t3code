@@ -106,6 +106,8 @@ import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as UsageHistoryRecorder from "./quota/UsageHistoryRecorder.ts";
+import * as ProviderAutoUpdater from "./provider/ProviderAutoUpdater.ts";
+import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner.ts";
 import * as EventLoopLagMonitor from "./observability/EventLoopLagMonitor.ts";
 import * as CpuProfiler from "./observability/CpuProfiler.ts";
 import * as QueuedMessageService from "./queue/QueuedMessageService.ts";
@@ -593,8 +595,10 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // limits off the provider registry; the recorder samples the same limits.
   QueuedMessageService.layer,
   UsageHistoryRecorder.layer,
+  ProviderAutoUpdater.layer,
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),
 ).pipe(
+  Layer.provideMerge(ProviderMaintenanceRunner.layer),
   Layer.provideMerge(layerOrchestrationApplication),
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
   Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),
