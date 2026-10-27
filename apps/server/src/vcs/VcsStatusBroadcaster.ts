@@ -23,6 +23,8 @@ import type {
   VcsStatusStreamEvent,
   VcsStatusSubscriptionInput,
 } from "@t3tools/contracts";
+import { DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL } from "@t3tools/contracts";
+import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { mergeGitStatusParts } from "@t3tools/shared/git";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -32,7 +34,6 @@ import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
-const DEFAULT_VCS_STATUS_REFRESH_INTERVAL = Duration.seconds(30);
 // Defer each poller's first status refresh by this much. With many open repos, N pollers all doing
 // their initial status pass at process start can keep the backend busy long enough that it fails to
 // serve its readiness endpoint before the desktop bootstrap's timeout — and the app won't start.
@@ -98,7 +99,7 @@ function addUniqueDiagnosticValue(values: Array<string>, value: string | undefin
   }
 }
 
-export function remoteRefreshFailureDiagnostics(cause: Cause.Cause<unknown>) {
+function remoteRefreshFailureDiagnostics(cause: Cause.Cause<unknown>) {
   const failureTags: Array<string> = [];
   const failureOperations: Array<string> = [];
   const defectTags: Array<string> = [];
@@ -153,12 +154,30 @@ interface ActiveRemotePoller {
   readonly demandCwds: Ref.Ref<ReadonlyMap<string, number>>;
 }
 
-interface StreamStatusOptions {
-  readonly automaticRemoteRefreshInterval?: Effect.Effect<Duration.Duration, never>;
-  // Overrides STATUS_REFRESH_STARTUP_GRACE. Tests pass Duration.zero so the initial refresh is not
-  // parked behind a sleep that a TestClock would have to be advanced past.
-  readonly startupGrace?: Duration.Duration;
-}
+export class VcsAutomaticFetchInterval extends Context.Reference<Effect.Effect<Duration.Duration>>(
+  "t3/vcs/VcsAutomaticFetchInterval",
+  { defaultValue: () => Effect.succeed(DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL) },
+) {}
+
+export const layerAutomaticFetchInterval = Layer.effect(
+  VcsAutomaticFetchInterval,
+  Effect.gen(function* () {
+    const serverSettings = yield* ServerSettings.ServerSettingsService;
+    return serverSettings.getSettings.pipe(
+      Effect.map(
+        (settings) => resolveServerBackgroundActivitySettings(settings).automaticGitFetchInterval,
+      ),
+      Effect.orElseSucceed(() => DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL),
+    );
+  }),
+);
+
+// Tests provide Duration.zero so the initial refresh is not parked behind a sleep that a
+// TestClock would have to be advanced past.
+export class VcsStatusRefreshStartupGrace extends Context.Reference<Duration.Duration>(
+  "t3/vcs/VcsStatusRefreshStartupGrace",
+  { defaultValue: () => STATUS_REFRESH_STARTUP_GRACE },
+) {}
 
 export class VcsAutoPullPolicy extends Context.Reference<{
   readonly isEnabled: (cwd: string) => Effect.Effect<boolean, never>;
@@ -185,7 +204,7 @@ export const layerAutoPullPolicy = Layer.effect(
   }),
 );
 
-export function remoteRefreshFailureDelay(
+function remoteRefreshFailureDelay(
   consecutiveFailures: number,
   configuredInterval: Duration.Duration,
 ) {
@@ -210,14 +229,13 @@ export class VcsStatusBroadcaster extends Context.Service<
     ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
     readonly refreshStatus: (
       cwd: string,
-      options?: { readonly refreshUpstream?: boolean },
+      options?: { readonly localOnly?: boolean },
     ) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
     readonly refreshPullRequestStatus: (
       cwd: string,
     ) => Effect.Effect<VcsStatusRemoteResult | null, GitManagerServiceError>;
     readonly streamStatus: (
       input: VcsStatusSubscriptionInput,
-      options?: StreamStatusOptions,
     ) => Stream.Stream<VcsStatusStreamEvent, GitManagerServiceError>;
   }
 >()("t3/vcs/VcsStatusBroadcaster") {}
@@ -232,8 +250,10 @@ const normalizeCwd = (cwd: string) =>
     Effect.orElseSucceed(() => cwd),
   );
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
+  const automaticFetchInterval = yield* VcsAutomaticFetchInterval;
+  const startupGrace = yield* VcsStatusRefreshStartupGrace;
   const autoPullPolicy = yield* VcsAutoPullPolicy;
   const workflow = yield* GitWorkflowService.GitWorkflowService;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
@@ -247,7 +267,7 @@ export const make = Effect.gen(function* () {
   );
   const cacheRef = yield* Ref.make(new Map<string, CachedVcsStatus>());
   // One permit per cwd for remote reads that write the cache. Without it a
-  // periodic poll that started before `gh pr create` can finish after the
+  // periodic poll that started before an agent creates a PR can finish after the
   // turn-end refresh and overwrite the fresh PR with its stale `pr: null`.
   const remoteWriteLocks = yield* KeyedLock.make<string>();
   const withRemoteWriteLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
@@ -424,10 +444,13 @@ export const make = Effect.gen(function* () {
       cwd,
       Effect.gen(function* () {
         const latest = yield* getCachedStatus(cwd);
+        const refreshUpstream = !Duration.isZero(yield* automaticFetchInterval);
         const [local, remote] = yield* Effect.all(
           [
             latest?.local ? Effect.succeed(latest.local.value) : workflow.localStatus({ cwd }),
-            latest?.remote ? Effect.succeed(latest.remote.value) : workflow.remoteStatus({ cwd }),
+            latest?.remote
+              ? Effect.succeed(latest.remote.value)
+              : workflow.remoteStatus({ cwd }, { refreshUpstream }),
           ],
           { concurrency: "unbounded" },
         );
@@ -492,8 +515,7 @@ export const make = Effect.gen(function* () {
             errorTag: error._tag,
           });
           if (!pullAttempted) return null;
-          // A pull or its follow-up reads can fail after local state has changed.
-          // Let a failed reconciliation reach the caller instead of publishing old status.
+          // Pull can change local state before failing; propagate reconciliation failures instead of publishing stale status.
           yield* workflow.invalidateLocalStatus(cwd);
           const local = yield* workflow.localStatus({ cwd });
           yield* updateCachedStatus(cwd, local, remote, { publish: true });
@@ -518,7 +540,10 @@ export const make = Effect.gen(function* () {
         }
         const previousRemote = (yield* getCachedStatus(cwd))?.remote?.value;
         const remote = yield* workflow.remoteStatus({ cwd }, options);
-        const pulled = yield* maybeAutoPull(cwd, remote, options?.policyCwds ?? [cwd]);
+        const pulled =
+          options?.refreshUpstream === false
+            ? null
+            : yield* maybeAutoPull(cwd, remote, options?.policyCwds ?? [cwd]);
         if (pulled !== null) return pulled.remote;
         if (
           remote &&
@@ -538,21 +563,33 @@ export const make = Effect.gen(function* () {
     "VcsStatusBroadcaster.refreshStatus",
   )(function* (rawCwd, options) {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
-    const refreshUpstream = options?.refreshUpstream !== false;
-    // When refreshUpstream is false, recompute local status but leave the remote cache intact
-    // so remoteStatus reuses the last fetch instead of triggering a fresh `git fetch`. Otherwise
-    // use invalidateStatus (not the two partial invalidations) so an explicit refresh also
-    // bypasses GitManager's slow PR-lookup cache.
+    if (options?.localOnly) {
+      return yield* withRemoteWriteLock(
+        cwd,
+        Effect.gen(function* () {
+          yield* workflow.invalidateLocalStatus(cwd);
+          const local = yield* workflow.localStatus({ cwd });
+          const previous = yield* getCachedStatus(cwd);
+          if (previous?.local?.value.refName !== local.refName) {
+            yield* workflow.invalidateRemoteStatus(cwd);
+            return yield* updateCachedStatus(cwd, local, null, { publish: true });
+          }
+          yield* updateCachedLocalStatus(cwd, local, { publish: true });
+          return mergeGitStatusParts(local, previous?.remote?.value ?? null);
+        }),
+      );
+    }
+    // Full invalidation also bypasses GitManager's slow PR cache.
     return yield* withRemoteWriteLock(
       cwd,
       Effect.gen(function* () {
-        yield* refreshUpstream
-          ? workflow.invalidateStatus(cwd)
-          : workflow.invalidateLocalStatus(cwd);
+        const refreshUpstream = !Duration.isZero(yield* automaticFetchInterval);
+        yield* workflow.invalidateStatus(cwd);
         // Local after remote: the fetch can move the base that the Changes totals compare with.
         const remote = yield* workflow.remoteStatus({ cwd }, { refreshUpstream });
         const local = yield* workflow.localStatus({ cwd });
-        const pulled = yield* maybeAutoPull(cwd, remote, [rawCwd]);
+        // Without a fetch, the cached behind count cannot justify an automatic pull.
+        const pulled = refreshUpstream ? yield* maybeAutoPull(cwd, remote, [rawCwd]) : null;
         if (pulled !== null) return mergeGitStatusParts(pulled.local, pulled.remote);
         return yield* updateCachedStatus(cwd, local, remote, { publish: true });
       }),
@@ -577,8 +614,7 @@ export const make = Effect.gen(function* () {
             { concurrency: "unbounded" },
           )).some(Boolean);
           if (!shouldRefresh) return null;
-          // Resolve the checked-out branch again. A cached PR can belong to
-          // the previous branch after an agent checks out another branch.
+          // Re-resolve the branch; cached PRs may belong to a checkout's previous branch.
           const remote = yield* workflow.remoteStatus(
             { cwd },
             { refreshUpstream: false, refreshMissingPullRequest: true },
@@ -588,137 +624,132 @@ export const make = Effect.gen(function* () {
       );
     });
 
-  const makeRemoteRefreshLoop = (
+  // A subscription owns this loop; keep each poll's spans out of a never-ending parent span.
+  const makeRemoteRefreshLoop = Effect.fnUntraced(function* (
     cwd: string,
     demandCwdsRef: Ref.Ref<ReadonlyMap<string, number>>,
-    automaticRemoteRefreshInterval: Effect.Effect<Duration.Duration, never>,
     refreshImmediately: boolean,
-    startupGrace: Duration.Duration,
-  ) => {
-    return Effect.gen(function* () {
-      // Let the backend finish coming up (and serve readiness) before this poller's first refresh.
-      yield* Effect.sleep(startupGrace);
+  ) {
+    // Let the backend finish coming up (and serve readiness) before this poller's first refresh.
+    yield* Effect.sleep(startupGrace);
 
-      // Serve out the remaining backoff for a repo that was already failing
-      // before this poller was (re-)forked. Every reconnect re-forks all
-      // pollers, and without this each one immediately re-attempts a fetch that
-      // is known to be failing, so the spawn storm restarts itself on every
-      // reconnect.
-      //
-      // This DELAYS the first attempt; it must not cancel it. When periodic
-      // refreshes are disabled the initial refresh is the only refresh that
-      // ever happens, so clearing `needsInitialRefresh` here would strand the
-      // repo with no remote status at all.
-      const priorFailure = yield* Ref.get(remoteFailuresRef).pipe(
-        Effect.map((failures) => failures.get(cwd) ?? null),
+    // Serve out the remaining backoff for a repo that was already failing
+    // before this poller was (re-)forked. Every reconnect re-forks all
+    // pollers, and without this each one immediately re-attempts a fetch that
+    // is known to be failing, so the spawn storm restarts itself on every
+    // reconnect.
+    //
+    // This DELAYS the first attempt; it must not cancel it. When periodic
+    // refreshes are disabled the initial refresh is the only refresh that
+    // ever happens, so clearing `needsInitialRefresh` here would strand the
+    // repo with no remote status at all.
+    const priorFailure = yield* Ref.get(remoteFailuresRef).pipe(
+      Effect.map((failures) => failures.get(cwd) ?? null),
+    );
+    if (priorFailure !== null) {
+      const configuredInterval = yield* automaticFetchInterval;
+      const activeInterval = Duration.isZero(configuredInterval)
+        ? DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL
+        : configuredInterval;
+      const requiredMs = Duration.toMillis(
+        remoteRefreshFailureDelay(priorFailure.consecutiveFailures, activeInterval),
       );
-      if (priorFailure !== null) {
-        const configuredInterval = yield* automaticRemoteRefreshInterval;
-        const activeInterval = Duration.isZero(configuredInterval)
-          ? DEFAULT_VCS_STATUS_REFRESH_INTERVAL
-          : configuredInterval;
-        const requiredMs = Duration.toMillis(
-          remoteRefreshFailureDelay(priorFailure.consecutiveFailures, activeInterval),
-        );
-        const nowMs = yield* Clock.currentTimeMillis;
-        const remainingMs = requiredMs - (nowMs - priorFailure.lastFailureAtMs);
-        if (remainingMs > 0) {
-          yield* Effect.sleep(Duration.millis(remainingMs));
-        }
+      const nowMs = yield* Clock.currentTimeMillis;
+      const remainingMs = requiredMs - (nowMs - priorFailure.lastFailureAtMs);
+      if (remainingMs > 0) {
+        yield* Effect.sleep(Duration.millis(remainingMs));
+      }
+    }
+
+    const needsInitialRefreshRef = yield* Ref.make(refreshImmediately);
+    const refreshRemoteStatusIfEnabled = Effect.gen(function* () {
+      const configuredInterval = yield* automaticFetchInterval;
+      const activeInterval = Duration.isZero(configuredInterval)
+        ? DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL
+        : configuredInterval;
+      const needsInitialRefresh = yield* Ref.get(needsInitialRefreshRef);
+      if (Duration.isZero(configuredInterval) && !needsInitialRefresh) {
+        return activeInterval;
       }
 
-      const needsInitialRefreshRef = yield* Ref.make(refreshImmediately);
-      const refreshRemoteStatusIfEnabled = Effect.gen(function* () {
-        const configuredInterval = yield* automaticRemoteRefreshInterval;
-        const activeInterval = Duration.isZero(configuredInterval)
-          ? DEFAULT_VCS_STATUS_REFRESH_INTERVAL
-          : configuredInterval;
-        const needsInitialRefresh = yield* Ref.get(needsInitialRefreshRef);
-        if (Duration.isZero(configuredInterval) && !needsInitialRefresh) {
-          return activeInterval;
-        }
+      const demandCwds = yield* Ref.get(demandCwdsRef);
+      const shouldRun =
+        needsInitialRefresh ||
+        (yield* Effect.forEach(
+          [...demandCwds.keys()],
+          (demandCwd) =>
+            backgroundPolicy.shouldRunScopeWork({
+              type: "vcs-status",
+              cwd: demandCwd,
+            }),
+          { concurrency: "unbounded" },
+        )).some(Boolean);
+      if (!shouldRun) {
+        return activeInterval;
+      }
 
-        const demandCwds = yield* Ref.get(demandCwdsRef);
-        const shouldRun =
-          needsInitialRefresh ||
-          (yield* Effect.forEach(
-            [...demandCwds.keys()],
-            (demandCwd) =>
-              backgroundPolicy.shouldRunScopeWork({
-                type: "vcs-status",
-                cwd: demandCwd,
-              }),
-            { concurrency: "unbounded" },
-          )).some(Boolean);
-        if (!shouldRun) {
-          return activeInterval;
-        }
+      // The policy gate above decides WHETHER this repo refreshes; the
+      // semaphore caps HOW MANY repos refresh at once. Different concerns, so
+      // keep both -- dropping the semaphore would let all N pollers fire
+      // together again once the policy allows work.
+      // The permit is held for the whole refresh, and only the inner `git fetch`
+      // carries its own timeout: a hung PR lookup would otherwise keep one of
+      // the few permits for good and stall every other repo's refresh behind
+      // it. A timeout counts as a failure and takes the same backoff.
+      const exit = yield* statusRefreshSemaphore
+        .withPermits(1)(
+          refreshRemoteStatus(cwd, {
+            refreshUpstream: !Duration.isZero(configuredInterval),
+            policyCwds: [...demandCwds.keys()],
+          }).pipe(Effect.timeout(STATUS_REFRESH_PERMIT_TIMEOUT)),
+        )
+        .pipe(Effect.exit);
+      if (Exit.isSuccess(exit)) {
+        yield* Ref.set(needsInitialRefreshRef, false);
+        yield* clearRemoteFailures(cwd);
+        return activeInterval;
+      }
 
-        // Upstream's policy gate above decides WHETHER this repo refreshes; the
-        // fork's semaphore caps HOW MANY repos refresh at once. Different
-        // concerns, so keep both -- dropping the semaphore would let all N
-        // pollers fire together again once the policy allows work.
-        // The permit is held for the whole refresh, and only the inner `git fetch`
-        // carries its own timeout: a hung PR lookup would otherwise keep one of
-        // the few permits for good and stall every other repo's refresh behind
-        // it. A timeout counts as a failure and takes the same backoff.
-        const exit = yield* statusRefreshSemaphore
-          .withPermits(1)(
-            refreshRemoteStatus(cwd, {
-              refreshUpstream: !Duration.isZero(configuredInterval),
-              policyCwds: [...demandCwds.keys()],
-            }).pipe(Effect.timeout(STATUS_REFRESH_PERMIT_TIMEOUT)),
-          )
-          .pipe(Effect.exit);
-        if (Exit.isSuccess(exit)) {
-          yield* Ref.set(needsInitialRefreshRef, false);
-          yield* clearRemoteFailures(cwd);
-          return activeInterval;
-        }
+      const interruptionReasons = exit.cause.reasons.filter(Cause.isInterruptReason);
+      if (interruptionReasons.length > 0) {
+        return yield* Effect.failCause(Cause.fromReasons<never>(interruptionReasons));
+      }
 
-        const interruptionReasons = exit.cause.reasons.filter(Cause.isInterruptReason);
-        if (interruptionReasons.length > 0) {
-          return yield* Effect.failCause(Cause.fromReasons<never>(interruptionReasons));
-        }
-
-        const failedAtMs = yield* Clock.currentTimeMillis;
-        const consecutiveFailures = yield* recordRemoteFailure(cwd, failedAtMs);
-        const nextDelay = remoteRefreshFailureDelay(consecutiveFailures, activeInterval);
-        yield* Effect.logWarning("VCS remote status refresh failed", {
-          cwdLength: cwd.length,
-          ...remoteRefreshFailureDiagnostics(exit.cause),
-          consecutiveFailures,
-          nextDelayMs: Duration.toMillis(nextDelay),
-        });
-        return nextDelay;
+      const failedAtMs = yield* Clock.currentTimeMillis;
+      const consecutiveFailures = yield* recordRemoteFailure(cwd, failedAtMs);
+      const nextDelay = remoteRefreshFailureDelay(consecutiveFailures, activeInterval);
+      yield* Effect.logWarning("VCS remote status refresh failed", {
+        cwdLength: cwd.length,
+        ...remoteRefreshFailureDiagnostics(exit.cause),
+        consecutiveFailures,
+        nextDelayMs: Duration.toMillis(nextDelay),
       });
-
-      if (!refreshImmediately) {
-        const configuredInterval = yield* automaticRemoteRefreshInterval;
-        yield* Effect.sleep(
-          Duration.isZero(configuredInterval)
-            ? DEFAULT_VCS_STATUS_REFRESH_INTERVAL
-            : configuredInterval,
-        );
-      }
-
-      return yield* refreshRemoteStatusIfEnabled.pipe(
-        Effect.repeat(
-          Schedule.identity<Duration.Duration>().pipe(
-            Schedule.addDelay(({ output: delay }) => Effect.succeed(delay)),
-          ),
-        ),
-        Effect.asVoid,
-      );
+      return nextDelay;
     });
-  };
+
+    if (!refreshImmediately) {
+      const configuredInterval = yield* automaticFetchInterval;
+      yield* Effect.sleep(
+        Duration.isZero(configuredInterval)
+          ? DEFAULT_AUTOMATIC_GIT_FETCH_INTERVAL
+          : configuredInterval,
+      );
+    }
+
+    return yield* refreshRemoteStatusIfEnabled.pipe(
+      Effect.repeat(
+        Schedule.identity<Duration.Duration>().pipe(
+          Schedule.addDelay(({ output: delay }) => Effect.succeed(delay)),
+        ),
+      ),
+      Effect.asVoid,
+    );
+  });
 
   const retainRemotePoller = Effect.fn("VcsStatusBroadcaster.retainRemotePoller")(function* (
     cwd: string,
     demandCwd: string,
-    automaticRemoteRefreshInterval: Effect.Effect<Duration.Duration, never>,
     refreshImmediately: boolean,
-    startupGrace: Duration.Duration,
   ) {
     yield* SynchronizedRef.modifyEffect(pollersRef, (activePollers) => {
       const existing = activePollers.get(cwd);
@@ -741,13 +772,7 @@ export const make = Effect.gen(function* () {
 
       return Ref.make<ReadonlyMap<string, number>>(new Map([[demandCwd, 1]])).pipe(
         Effect.flatMap((demandCwds) =>
-          makeRemoteRefreshLoop(
-            cwd,
-            demandCwds,
-            automaticRemoteRefreshInterval,
-            refreshImmediately,
-            startupGrace,
-          ).pipe(
+          makeRemoteRefreshLoop(cwd, demandCwds, refreshImmediately).pipe(
             Effect.forkIn(broadcasterScope),
             Effect.map((fiber) => {
               const nextPollers = new Map(activePollers);
@@ -806,7 +831,7 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  const streamStatus: VcsStatusBroadcaster["Service"]["streamStatus"] = (input, options) =>
+  const streamStatus: VcsStatusBroadcaster["Service"]["streamStatus"] = (input) =>
     Stream.unwrap(
       Effect.gen(function* () {
         const cwd = yield* withFileSystem(normalizeCwd(input.cwd));
@@ -818,10 +843,7 @@ export const make = Effect.gen(function* () {
           yield* retainRemotePoller(
             cwd,
             input.cwd,
-            options?.automaticRemoteRefreshInterval ??
-              Effect.succeed(DEFAULT_VCS_STATUS_REFRESH_INTERVAL),
             cachedStatus?.remote === null || cachedStatus?.remote === undefined,
-            options?.startupGrace ?? STATUS_REFRESH_STARTUP_GRACE,
           );
         }
         const release =

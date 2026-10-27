@@ -31,10 +31,7 @@ export interface ProcessRunInput {
   readonly maxOutputBytes?: number | undefined;
   readonly outputMode?: "error" | "truncate" | undefined;
   readonly truncatedMarker?: string | undefined;
-  /**
-   * On timeout, return a synthetic timedOut result.
-   * Partial stdout/stderr are not preserved.
-   */
+  /** Timed-out results discard partial stdout/stderr. */
   readonly timeoutBehavior?: "error" | "timedOutResult" | undefined;
 }
 
@@ -148,6 +145,8 @@ export class ProcessRunner extends Context.Service<
 >()("t3/processRunner") {}
 
 const DEFAULT_TIMEOUT = "60 seconds";
+// Keep SIGTERM-ignoring helpers from blocking timeouts or graceful shutdown.
+const FORCE_KILL_AFTER = "1 second";
 const DEFAULT_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 
 export { isWindowsCommandNotFound } from "@t3tools/provider-core/server/snapshotProbe";
@@ -266,7 +265,7 @@ function finalizeRunProcess<R>(
   );
 }
 
-export const commandName = (command: string) => command.replace(/^.*[\\/]/, "");
+const commandName = (command: string) => command.replace(/^.*[\\/]/, "");
 
 const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
   spawner: ChildProcessSpawner.ChildProcessSpawner["Service"],
@@ -306,13 +305,12 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
             }
           : {}),
         shell: spawnCommand.shell,
+        forceKillAfter: FORCE_KILL_AFTER,
       }),
     )
     .pipe(
       Effect.mapError(toSpawnError),
-      // Node's spawn can also throw synchronously, e.g. ENOTDIR when a PATH
-      // entry is a file. That arrives as a defect, which `mapError` never sees,
-      // so callers that recover from spawn failures would be bypassed.
+      // Synchronous spawn throws arrive as defects; recover them too so callers see typed spawn failures.
       Effect.catchDefect((cause) => Effect.fail(toSpawnError(cause))),
     );
 
@@ -399,49 +397,49 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
  * operation the caller waited on, including the timeout wrapper — a run that times out is
  * exactly the case worth seeing in a storm report.
  */
-const observeRun = (
+// Untraced, like `finish` below: a hot path that runs for every subprocess.
+const observeRun = Effect.fnUntraced(function* (
   observer: ProcessSpawnObserver.ProcessSpawnObserver["Service"],
   input: ProcessRunInput,
   effect: Effect.Effect<ProcessRunOutput, ProcessRunError>,
-): Effect.Effect<ProcessRunOutput, ProcessRunError> =>
-  Effect.gen(function* () {
-    const startedAtMs = yield* Clock.currentTimeMillis;
+) {
+  const startedAtMs = yield* Clock.currentTimeMillis;
 
-    const finish = (outcome: ProcessSpawnObserver.ProcessSpawnOutcome, exitCode: number | null) =>
-      Effect.gen(function* () {
-        const finishedAtMs = yield* Clock.currentTimeMillis;
-        yield* observer.record({
-          command: input.command,
-          subcommand: ProcessSpawnObserver.pickSubcommand(input.args),
-          cwd: input.spawnCwd ?? input.cwd ?? null,
-          durationMs: finishedAtMs - startedAtMs,
-          exitCode,
-          outcome,
-          finishedAtMs,
-        });
-      });
-
-    return yield* effect.pipe(
-      Effect.tap((output) =>
-        finish(
-          output.timedOut ? "timeout" : output.code === 0 ? "ok" : "non-zero-exit",
-          output.code,
-        ),
-      ),
-      Effect.tapError((error) =>
-        finish(
-          error._tag === "ProcessTimeoutError"
-            ? "timeout"
-            : error._tag === "ProcessSpawnError"
-              ? "spawn-error"
-              : "error",
-          null,
-        ),
-      ),
-    );
+  // Untraced: this runs for every subprocess, so a span here would double the trace volume.
+  const finish = Effect.fnUntraced(function* (
+    outcome: ProcessSpawnObserver.ProcessSpawnOutcome,
+    exitCode: number | null,
+  ) {
+    const finishedAtMs = yield* Clock.currentTimeMillis;
+    yield* observer.record({
+      command: input.command,
+      subcommand: ProcessSpawnObserver.pickSubcommand(input.args),
+      cwd: input.spawnCwd ?? input.cwd ?? null,
+      durationMs: finishedAtMs - startedAtMs,
+      exitCode,
+      outcome,
+      finishedAtMs,
+    });
   });
 
-/** @public Service construction is part of the canonical Effect module API. */
+  return yield* effect.pipe(
+    Effect.tap((output) =>
+      finish(output.timedOut ? "timeout" : output.code === 0 ? "ok" : "non-zero-exit", output.code),
+    ),
+    Effect.tapError((error) =>
+      finish(
+        error._tag === "ProcessTimeoutError"
+          ? "timeout"
+          : error._tag === "ProcessSpawnError"
+            ? "spawn-error"
+            : "error",
+        null,
+      ),
+    ),
+  );
+});
+
+/** @public */
 export const make = Effect.fn("ProcessRunner.make")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   // Looked up optionally so tests can substitute a no-op, but defaulting to the live observer

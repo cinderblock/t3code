@@ -274,9 +274,12 @@ export const layer = Layer.effect(ProcessSpawnObserver, make());
 
 /** No-op instance for tests and call sites that don't care about instrumentation. */
 export const noop = ProcessSpawnObserver.of({
-  record: () => Effect.void,
-  summarize: (windowMs: number = WINDOW_MS) =>
-    Effect.succeed(summarizeRecords([], windowMs, false)),
+  record: Effect.fnUntraced(function* () {
+    yield* Effect.void;
+  }),
+  summarize: Effect.fnUntraced(function* (windowMs: number = WINDOW_MS) {
+    return yield* Effect.succeed(summarizeRecords([], windowMs, false));
+  }),
 });
 
 export const layerNoop = Layer.succeed(ProcessSpawnObserver, noop);

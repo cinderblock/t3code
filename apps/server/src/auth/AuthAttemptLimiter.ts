@@ -118,23 +118,20 @@ export const make = Effect.sync(() => {
       : Effect.fail(new AuthAttemptsExceededError({ retryAfterSeconds: blockedFor }));
 
   return AuthAttemptLimiter.of({
-    checkSignIn: (address) =>
-      Clock.currentTimeMillis.pipe(
-        Effect.flatMap((nowMs) => failIfBlocked(failures.blockedFor(addressKey(address), nowMs))),
-      ),
-    recordFailedSignIn: (address) =>
-      Clock.currentTimeMillis.pipe(
-        Effect.map((nowMs) => failures.record(addressKey(address), nowMs)),
-      ),
-    takeChallenge: (address) =>
-      Clock.currentTimeMillis.pipe(
-        Effect.flatMap((nowMs) => {
-          const key = addressKey(address);
-          const blockedFor = challenges.blockedFor(key, nowMs);
-          if (blockedFor === null) challenges.record(key, nowMs);
-          return failIfBlocked(blockedFor);
-        }),
-      ),
+    checkSignIn: Effect.fn("AuthAttemptLimiter.checkSignIn")(function* (address) {
+      const nowMs = yield* Clock.currentTimeMillis;
+      return yield* failIfBlocked(failures.blockedFor(addressKey(address), nowMs));
+    }),
+    recordFailedSignIn: Effect.fn("AuthAttemptLimiter.recordFailedSignIn")(function* (address) {
+      failures.record(addressKey(address), yield* Clock.currentTimeMillis);
+    }),
+    takeChallenge: Effect.fn("AuthAttemptLimiter.takeChallenge")(function* (address) {
+      const nowMs = yield* Clock.currentTimeMillis;
+      const key = addressKey(address);
+      const blockedFor = challenges.blockedFor(key, nowMs);
+      if (blockedFor === null) challenges.record(key, nowMs);
+      return yield* failIfBlocked(blockedFor);
+    }),
   });
 });
 

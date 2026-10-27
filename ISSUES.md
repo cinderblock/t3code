@@ -51,3 +51,15 @@ same code.
 
 Neither file is touched by uncommitted work. CI would fail this test, and a skipped component loses
 all memoization. The last commits to touch them are the upstream merge `0f33eeeaee` and `8212f66f55`.
+
+## Fork comments break upstream's new 4-line comment cap (lint)
+
+Upstream added `t3code(no-low-value-comments)`, which fails lint on comment blocks over four
+lines (and on `@public` followed by prose). Fork code arriving through the 2026-10-27 upstream
+merge has ~35 violations across ~25 files, among them `server/vcs/VcsStatusBroadcaster.ts`,
+`server/vcs/GitVcsDriverCore.ts`, `server/processSpawnObserver.ts`, `server/processRunner.ts`,
+`server/auth/{PublicAccess,AuthAttemptLimiter}.ts`, `client-runtime/connection/supervisor.ts`,
+`contracts/{queuedMessage,rpc,git,settings,auth}.ts`, `desktop/preview/Manager(.test).ts`.
+Reproduce: `vp lint` on any of them. Matters because CI lint is red on fork code until the
+comments are cut to their constraint (keep the why, drop the history; move long history to
+`plans/`).

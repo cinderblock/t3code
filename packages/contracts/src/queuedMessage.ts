@@ -142,18 +142,9 @@ export const QueuedMessageListResult = Schema.Struct({
 export type QueuedMessageListResult = typeof QueuedMessageListResult.Type;
 
 export const QueuedMessageStreamEvent = Schema.Union([
-  Schema.Struct({
-    _tag: Schema.Literal("snapshot"),
-    messages: Schema.Array(QueuedMessage),
-  }),
-  Schema.Struct({
-    _tag: Schema.Literal("upserted"),
-    message: QueuedMessage,
-  }),
-  Schema.Struct({
-    _tag: Schema.Literal("removed"),
-    id: QueuedMessageId,
-  }),
+  Schema.TaggedStruct("snapshot", { messages: Schema.Array(QueuedMessage) }),
+  Schema.TaggedStruct("upserted", { message: QueuedMessage }),
+  Schema.TaggedStruct("removed", { id: QueuedMessageId }),
 ]);
 export type QueuedMessageStreamEvent = typeof QueuedMessageStreamEvent.Type;
 

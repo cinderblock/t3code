@@ -414,20 +414,21 @@ export const make = Effect.gen(function* () {
 
   const publishChange = PubSub.publish(changes, undefined);
 
-  const resolveOrigin = (origin: string | undefined) =>
-    Effect.gen(function* () {
-      const normalized = origin === undefined ? null : normalizePublicOrigin(origin);
-      const config = yield* Ref.get(configRef);
-      if (!normalized || !config.origins.includes(normalized)) {
-        return yield* new PasskeyOriginNotConfiguredError(origin === undefined ? {} : { origin });
-      }
-      return { origin: normalized, rpId: new URL(normalized).hostname };
-    });
+  const resolveOrigin = Effect.fn("PublicAccess.resolveOrigin")(function* (
+    origin: string | undefined,
+  ) {
+    const normalized = origin === undefined ? null : normalizePublicOrigin(origin);
+    const config = yield* Ref.get(configRef);
+    if (!normalized || !config.origins.includes(normalized)) {
+      return yield* new PasskeyOriginNotConfiguredError(origin === undefined ? {} : { origin });
+    }
+    return { origin: normalized, rpId: new URL(normalized).hostname };
+  });
 
-  const selectPasskeys = (
-    where: "all-active" | { readonly credentialId: string } | { readonly rpId: string },
-  ) =>
-    Effect.gen(function* () {
+  const selectPasskeys = Effect.fn("PublicAccess.selectPasskeys")(
+    function* (
+      where: "all-active" | { readonly credentialId: string } | { readonly rpId: string },
+    ) {
       const filter =
         where === "all-active"
           ? sql``
@@ -455,54 +456,57 @@ export const make = Effect.gen(function* () {
         ORDER BY created_at DESC, id DESC
       `;
       return yield* decodePasskeyRows(rows);
-    }).pipe(Effect.mapError(storeError("selectPasskeys")));
+    },
+    Effect.mapError(storeError("selectPasskeys")),
+  );
 
   /** Removes and returns the pending ceremony a response answered. */
-  const takeCeremony = (clientDataJson: string) =>
-    Effect.gen(function* () {
-      const challenge = readCeremonyChallenge(clientDataJson);
-      const entry = challenge === null ? undefined : pending.get(challenge);
-      if (challenge === null || entry === undefined) {
-        return yield* new PasskeyCeremonyError({
-          code: "challenge_unknown",
-          reason: "This passkey request expired or was already used. Try again.",
-        });
-      }
-      pending.delete(challenge);
-      if (entry.expiresAtMs <= (yield* Clock.currentTimeMillis)) {
-        return yield* new PasskeyCeremonyError({
-          code: "challenge_expired",
-          reason: "This passkey request expired. Try again.",
-        });
-      }
-      return { challenge, entry };
-    });
+  const takeCeremony = Effect.fn("PublicAccess.takeCeremony")(function* (clientDataJson: string) {
+    const challenge = readCeremonyChallenge(clientDataJson);
+    const entry = challenge === null ? undefined : pending.get(challenge);
+    if (challenge === null || entry === undefined) {
+      return yield* new PasskeyCeremonyError({
+        code: "challenge_unknown",
+        reason: "This passkey request expired or was already used. Try again.",
+      });
+    }
+    pending.delete(challenge);
+    if (entry.expiresAtMs <= (yield* Clock.currentTimeMillis)) {
+      return yield* new PasskeyCeremonyError({
+        code: "challenge_expired",
+        reason: "This passkey request expired. Try again.",
+      });
+    }
+    return { challenge, entry };
+  });
 
-  const rememberCeremony = (challenge: string, entry: PendingCeremony) =>
-    Effect.gen(function* () {
-      const now = yield* Clock.currentTimeMillis;
-      for (const [key, value] of pending) {
-        if (value.expiresAtMs <= now) pending.delete(key);
+  const rememberCeremony = Effect.fn("PublicAccess.rememberCeremony")(function* (
+    challenge: string,
+    entry: PendingCeremony,
+  ) {
+    const now = yield* Clock.currentTimeMillis;
+    for (const [key, value] of pending) {
+      if (value.expiresAtMs <= now) pending.delete(key);
+    }
+    // Map iteration is insertion ordered, so these drop the oldest requests.
+    if (entry.kind === "login") {
+      const sameAddress = [...pending].filter(
+        ([, value]) => value.kind === "login" && value.address === entry.address,
+      );
+      for (const [key] of sameAddress.slice(
+        0,
+        Math.max(0, sameAddress.length - MAX_PENDING_LOGINS_PER_ADDRESS + 1),
+      )) {
+        pending.delete(key);
       }
-      // Map iteration is insertion ordered, so these drop the oldest requests.
-      if (entry.kind === "login") {
-        const sameAddress = [...pending].filter(
-          ([, value]) => value.kind === "login" && value.address === entry.address,
-        );
-        for (const [key] of sameAddress.slice(
-          0,
-          Math.max(0, sameAddress.length - MAX_PENDING_LOGINS_PER_ADDRESS + 1),
-        )) {
-          pending.delete(key);
-        }
-      }
-      while (pending.size >= MAX_PENDING_CEREMONIES) {
-        const oldest = pending.keys().next().value;
-        if (oldest === undefined) break;
-        pending.delete(oldest);
-      }
-      pending.set(challenge, entry);
-    });
+    }
+    while (pending.size >= MAX_PENDING_CEREMONIES) {
+      const oldest = pending.keys().next().value;
+      if (oldest === undefined) break;
+      pending.delete(oldest);
+    }
+    pending.set(challenge, entry);
+  });
 
   // A passkey outlives the session that enrolls it, so only access managers may create one.
   const requireBrowserSession = (session: PasskeyEnrollingSession) =>
