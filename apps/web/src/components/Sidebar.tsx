@@ -37,7 +37,10 @@ import {
   QUEUED_TURN_START_GRACE_MS,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
-import { createInboxReturnTracker } from "@t3tools/client-runtime/state/thread-inbox";
+import {
+  createInboxReturnTracker,
+  inboxPriorityGroup,
+} from "@t3tools/client-runtime/state/thread-inbox";
 import { formatDiffCount } from "@t3tools/client-runtime/diff-count";
 import {
   resolveSettledThreadTimestamp,
@@ -69,7 +72,9 @@ import type { SidebarInboxSortDirections, TimestampFormat } from "@t3tools/contr
 import {
   AlarmClockIcon,
   AlarmClockOffIcon,
+  ArrowDownIcon,
   ArrowRightLeftIcon,
+  ArrowUpIcon,
   CheckIcon,
   CircleAlertIcon,
   CircleCheckIcon,
@@ -2141,6 +2146,21 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       />
     )
   ) : null;
+  const priorityGroup = inboxPriorityGroup(thread.priority);
+  const priorityIndicator =
+    priorityGroup === "normal" ? null : priorityGroup === "high" ? (
+      <ArrowUpIcon
+        role="img"
+        aria-label="High priority"
+        className="size-3 shrink-0 text-muted-foreground/65"
+      />
+    ) : (
+      <ArrowDownIcon
+        role="img"
+        aria-label="Low priority"
+        className="size-3 shrink-0 text-muted-foreground/65"
+      />
+    );
 
   if (variant === "slim") {
     return (
@@ -2185,6 +2205,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             {draftIndicator}
             {title}
             {pinIndicator}
+            {priorityIndicator}
             {terminalStatusIcon}
             {isRegeneratingTitle ? (
               <span role="status" className="sr-only">
@@ -2351,6 +2372,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 <span className="flex-1" />
               )}
               {pinIndicator}
+              {priorityIndicator}
               {sortable?.isDragging ? (
                 dragDestination
               ) : (

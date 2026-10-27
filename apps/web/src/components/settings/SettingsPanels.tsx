@@ -47,6 +47,7 @@ import {
   type ResponseStreamingMode,
   MIN_TERMINAL_FONT_SIZE,
   type QuitConfirmationMode,
+  SidebarInboxSortDirection,
   SidebarProjectSortOrder,
 } from "@t3tools/contracts/settings";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
@@ -195,6 +196,17 @@ const SIDEBAR_PROJECT_SORT_ORDER_LABELS: Record<SidebarProjectSortOrder, string>
   manual: "Manual",
 };
 const isSidebarProjectSortOrder = Schema.is(SidebarProjectSortOrder);
+
+const SIDEBAR_INBOX_SORT_DIRECTION_LABELS: Record<SidebarInboxSortDirection, string> = {
+  oldest_first: "Oldest waiting first",
+  newest_first: "Newest first",
+};
+const isSidebarInboxSortDirection = Schema.is(SidebarInboxSortDirection);
+const INBOX_ORDER_GROUPS = [
+  { group: "high", searchId: "inbox-order-high", label: "high priority" },
+  { group: "normal", searchId: "inbox-order-normal", label: "normal priority" },
+  { group: "low", searchId: "inbox-order-low", label: "low priority" },
+] as const;
 
 const TIMESTAMP_FORMAT_LABELS = {
   locale: "System default",
@@ -570,6 +582,12 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? ["Working section"]
       : []),
+    ...INBOX_ORDER_GROUPS.flatMap(({ group, label }) =>
+      settings.sidebarInboxSortDirections[group] !==
+      DEFAULT_UNIFIED_SETTINGS.sidebarInboxSortDirections[group]
+        ? [`Inbox order (${label})`]
+        : [],
+    ),
     ...(settings.sidebarAutoSettleAfterDays !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
       ? ["Auto-settle inactive threads"]
       : []),
@@ -738,6 +756,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+      sidebarInboxSortDirections: DEFAULT_UNIFIED_SETTINGS.sidebarInboxSortDirections,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -2272,6 +2291,53 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+
+        {INBOX_ORDER_GROUPS.map(({ group, searchId, label }) => {
+          const direction = settings.sidebarInboxSortDirections[group];
+          const defaultDirection = DEFAULT_UNIFIED_SETTINGS.sidebarInboxSortDirections[group];
+          const setDirection = (next: SidebarInboxSortDirection) =>
+            updateSettings({
+              sidebarInboxSortDirections: { ...settings.sidebarInboxSortDirections, [group]: next },
+            });
+          return (
+            <SettingsRow
+              key={group}
+              {...searchableSetting(searchId)}
+              description={`How ${label} threads are ordered in the inbox while the Working section is on.`}
+              resetAction={
+                direction !== defaultDirection ? (
+                  <SettingResetButton
+                    label={`${label} inbox order`}
+                    onClick={() => setDirection(defaultDirection)}
+                  />
+                ) : null
+              }
+              control={
+                <Select
+                  value={direction}
+                  onValueChange={(value) => {
+                    if (isSidebarInboxSortDirection(value)) setDirection(value);
+                  }}
+                >
+                  <SelectTrigger
+                    size="sm"
+                    className="w-full sm:w-44"
+                    aria-label={`Inbox order for ${label} threads`}
+                  >
+                    <SelectValue>{SIDEBAR_INBOX_SORT_DIRECTION_LABELS[direction]}</SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup align="end" alignItemWithTrigger={false}>
+                    {SidebarInboxSortDirection.literals.map((option) => (
+                      <SelectItem hideIndicator key={option} value={option}>
+                        {SIDEBAR_INBOX_SORT_DIRECTION_LABELS[option]}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              }
+            />
+          );
+        })}
 
         {supportsAutoSettlement ? (
           <>
