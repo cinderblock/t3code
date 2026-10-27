@@ -133,13 +133,29 @@ open.
 
 Turn on **Settings → General → Working section (beta)** on web and desktop, or **Settings →
 Thread behavior → Working section** on iOS and Android, to move threads that are working or
-monitoring into a collapsed **Working** section below the active list. A thread returns to the top
-of the active list when it finishes, fails, or needs an approval or answer. The Working section
-lists the thread you last sent work to first. Pinned threads stay in the pinned section. Each
-device keeps its own choice.
+monitoring into a collapsed **Working** section below the active list. A thread returns to the
+active list when it finishes, fails, or needs an approval or answer. The Working section lists the
+thread you last sent work to first. Pinned threads stay in the pinned section. Each device keeps
+its own choice.
 
-While this is on, the active list is ordered by when each thread last came back to you, so you
-cannot drag or move threads within it. Your saved order returns when you turn it off.
+While this is on, the active list is ordered by priority, then by when each thread last came back
+to you, so you cannot drag or move threads within it. By default the thread that has waited
+longest is at the top of each priority group. To put the most recent first instead, change
+**Inbox order** for that group in **Settings → General** on web and desktop, or in **Settings →
+Thread behavior** on iOS and Android. Your saved order returns when you turn the Working section
+off.
+
+### Set thread priority
+
+Open a thread's menu and choose **Priority**, then **High**, **Normal**, or **Low**. On web and
+desktop you can also use **Set thread priority** in the command palette, or bind keys to the
+**Thread: Priority: Raise** and **Thread: Priority: Lower** commands in
+[Keybindings](./keybindings.md). Choose **Normal** to clear it.
+
+High and low priority threads show an up or down arrow in the list. With the Working section on,
+high priority threads sort above normal ones, and low priority threads sort below. Priority is
+saved on the server, so every device shows the same order. Agents connected through T3 Code can
+set it too.
 
 ## Settle finished work
 
