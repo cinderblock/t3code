@@ -65,7 +65,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 
-import type { TimestampFormat } from "@t3tools/contracts/settings";
+import type { SidebarInboxSortDirections, TimestampFormat } from "@t3tools/contracts/settings";
 import {
   AlarmClockIcon,
   AlarmClockOffIcon,
@@ -187,6 +187,7 @@ import { ProjectEnvironmentBadge } from "./ProjectEnvironmentBadge";
 import {
   buildDraftActionMenuItems,
   buildThreadActionMenuItems,
+  THREAD_PRIORITY_BY_MENU_ACTION,
   threadActionRequiresOperate,
 } from "./threadActionMenu.logic";
 import {
@@ -395,6 +396,7 @@ interface SidebarThreadPartitionInput {
   readonly serverConfigs: ReadonlyMap<EnvironmentId, EnvironmentServerConfig>;
   readonly optimisticDrop: SidebarOptimisticDrop | null;
   readonly workingShelfEnabled: boolean;
+  readonly inboxSortDirections: SidebarInboxSortDirections;
   // Snooze wakes and the queued-turn grace depend on the clock, so the minute
   // tick and the precise snooze-wake tick are inputs: a new key repartitions.
   readonly clockKey: string;
@@ -418,6 +420,7 @@ function resolveDraggedOrders(input: {
   readonly settledThreads: readonly EnvironmentThreadShell[];
   readonly activeThreads: readonly EnvironmentThreadShell[];
   readonly workingShelfEnabled: boolean;
+  readonly inboxSortDirections: SidebarInboxSortDirections;
 }): typeof NO_DRAGGED_ORDERS {
   const { drag, threadByKey, settledThreads, activeThreads, workingShelfEnabled } = input;
   const thread = threadByKey.get(drag.activeKey);
@@ -432,6 +435,7 @@ function resolveDraggedOrders(input: {
     activeOrder: workingShelfEnabled
       ? sortInboxThreadsByReturn(
           [...others(activeThreads), applySidebarThreadDrop(thread, "active", drag.occurredAt)],
+          input.inboxSortDirections,
           inboxReturns.returnedAt,
         ).map(threadShellKey)
       : undefined,
@@ -469,6 +473,7 @@ function useSidebarThreads(input: {
   } = input;
   const threads = useThreadShells();
   const workingShelfEnabled = useClientSettings((s) => s.sidebarWorkingShelfEnabled);
+  const inboxSortDirections = useClientSettings((s) => s.sidebarInboxSortDirections);
   const nowMinute = useNowMinute();
   // Snooze wake times are second-precise, so classifying with the quantized
   // minute would hold a woken thread on the shelf for up to a minute.
@@ -511,6 +516,7 @@ function useSidebarThreads(input: {
     serverConfigs,
     optimisticDrop,
     workingShelfEnabled,
+    inboxSortDirections,
     clockKey: `${nowMinute}:${snoozeWakeTick}`,
   });
   const partitionNextWakeAt = partition.snoozedThreads[0]?.snoozedUntil ?? null;
@@ -559,6 +565,7 @@ function useSidebarThreads(input: {
     ...partition,
     threads,
     workingShelfEnabled,
+    inboxSortDirections,
     searchableThreads: [
       ...pinnedThreads,
       ...activeThreads,
@@ -606,6 +613,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     serverConfigs,
     optimisticDrop,
     workingShelfEnabled,
+    inboxSortDirections,
   } = input;
   const preciseNow = new Date().toISOString();
   const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys).filter(
@@ -668,7 +676,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
   // web and mobile from the same data.
   const sortedPinned = sortPinnedThreadsForSidebar(pinned);
   const sortedActive = workingShelfEnabled
-    ? sortInboxThreadsByReturn(active, inboxReturns.returnedAt)
+    ? sortInboxThreadsByReturn(active, inboxSortDirections, inboxReturns.returnedAt)
     : sortThreadsForSidebar(active);
   return {
     pinnedThreads:
@@ -2764,6 +2772,7 @@ export default function Sidebar() {
     unpinThread,
     confirmAndUnpinThread,
     setThreadAutoSettle,
+    setThreadPriority,
     reorderPinnedThread,
     reorderActiveThread,
     markThreadUnread,
@@ -3054,6 +3063,7 @@ export default function Sidebar() {
   const {
     threads,
     workingShelfEnabled,
+    inboxSortDirections,
     pinnedThreads,
     draggableThreadKeys,
     activeReorderableThreadKeys,
@@ -3766,6 +3776,7 @@ export default function Sidebar() {
           settledThreads,
           activeThreads,
           workingShelfEnabled,
+          inboxSortDirections,
         });
   const sidebarSortingStrategy = createSidebarSortingStrategy({
     items: sidebarListItems,
@@ -4339,6 +4350,8 @@ export default function Sidebar() {
         const supportsAutoSettleOptOut =
           serverConfigs.get(thread.environmentId)?.environment.capabilities
             .threadAutoSettleOptOut === true;
+        const supportsPriority =
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadPriority === true;
         const supportsTitleRegeneration =
           serverConfigs.get(thread.environmentId)?.environment.capabilities
             .threadTitleRegeneration === true;
@@ -4370,6 +4383,7 @@ export default function Sidebar() {
                   }
                 : null,
               isPinned,
+              priority: thread.priority,
               isSettled,
               autoSettleEnabled: thread.autoSettleDisabledAt == null,
               isSnoozed,
@@ -4381,6 +4395,7 @@ export default function Sidebar() {
                 autoSettleOptOut: supportsAutoSettleOptOut,
                 snooze: supportsSnooze,
                 pinning: supportsPinning,
+                priority: supportsPriority,
                 titleRegeneration: supportsTitleRegeneration,
               },
               snoozePresets,
@@ -4451,6 +4466,25 @@ export default function Sidebar() {
           case "unpin":
             attemptUnpin(threadRef);
             return;
+          case "priority:high":
+          case "priority:normal":
+          case "priority:low": {
+            const result = await setThreadPriority(
+              threadRef,
+              THREAD_PRIORITY_BY_MENU_ACTION[clicked.value],
+            );
+            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+              const error = squashAtomCommandFailure(result);
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Failed to set thread priority",
+                  description: error instanceof Error ? error.message : "An error occurred.",
+                }),
+              );
+            }
+            return;
+          }
           case "auto-settle:enabled":
           case "auto-settle:disabled": {
             const result = await setThreadAutoSettle(

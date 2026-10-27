@@ -90,6 +90,7 @@ import {
 import { readPastedComposerContext } from "./composerInlineTokenPaste";
 import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
+import { stepThreadPriority } from "@t3tools/client-runtime/state/thread-inbox";
 import { childThreadInputsTitle } from "@t3tools/client-runtime/state/threads";
 import { useAcknowledgeThreadWoke, useThreadActions } from "../hooks/useThreadActions";
 import {
@@ -1058,7 +1059,7 @@ export default function ChatView(props: ChatViewProps) {
   const canReadTerminal = useEnvironmentScope(environmentId, AuthTerminalReadScope);
   const draftId = routeKind === "draft" ? props.draftId : null;
   const handleNewThread = useNewThreadHandler();
-  const { settleThread, pinThread, confirmAndUnpinThread } = useThreadActions();
+  const { settleThread, pinThread, confirmAndUnpinThread, setThreadPriority } = useThreadActions();
   const routeThreadRef = scopeThreadRef(environmentId, threadId);
   const routeThreadKey = scopedThreadKey(routeThreadRef);
   const currentRouteThreadKeyRef = useRef<string | null>(routeThreadKey);
@@ -4811,6 +4812,8 @@ export default function ChatView(props: ChatViewProps) {
   const supportsSnooze = serverConfig?.environment.capabilities.threadSnooze === true;
   const supportsPinning = serverConfig?.environment.capabilities.threadPinning === true;
   const activeThreadPinned = supportsPinning && activeThreadShell?.pinnedAt != null;
+  const supportsPriority = serverConfig?.environment.capabilities.threadPriority === true;
+  const activeThreadPriority = activeThreadShell?.priority ?? null;
   // The compiler caches render results on their inputs, so a clock read in render
   // stays frozen until the shell changes. The clock is state: reset with the shell,
   // and moved by the wake timer.
@@ -5571,6 +5574,20 @@ export default function ChatView(props: ChatViewProps) {
           activeThreadPinned ? confirmAndUnpinThread(activeThreadRef) : pinThread(activeThreadRef)
         ).then(
           toastPinFailure(activeThreadPinned ? "Failed to unpin thread" : "Failed to pin thread"),
+        );
+      },
+      "thread.priority.raise": () => {
+        if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
+        if (!isServerThread || !activeThreadRef || !supportsPriority) return;
+        void setThreadPriority(activeThreadRef, stepThreadPriority(activeThreadPriority, 1)).then(
+          toastPinFailure("Failed to raise thread priority"),
+        );
+      },
+      "thread.priority.lower": () => {
+        if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
+        if (!isServerThread || !activeThreadRef || !supportsPriority) return;
+        void setThreadPriority(activeThreadRef, stepThreadPriority(activeThreadPriority, -1)).then(
+          toastPinFailure("Failed to lower thread priority"),
         );
       },
       "terminal.toggle": () => {

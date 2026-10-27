@@ -1038,3 +1038,45 @@ it.effect("replays a thread.create receipt without changing the thread", () =>
     assert.equal(yield* orchestrator.getThreadEventSequence(threadId), original.sequence);
   }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect("stores thread priority, treating 0 as cleared", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threadId = ThreadId.make("thread:priority");
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make("create-priority"),
+      threadId,
+      projectId: ProjectId.make("project:priority"),
+      title: "Priority",
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    for (const [index, [priority, stored]] of (
+      [
+        [1, 1],
+        [0, null],
+        [-3, -3],
+        [null, null],
+      ] as const
+    ).entries()) {
+      yield* orchestrator.dispatch({
+        type: "thread.priority.set",
+        commandId: CommandId.make(`priority-${index}`),
+        threadId,
+        priority,
+      });
+      const projection = yield* projections.getThreadProjection(threadId);
+      assert.equal(projection.thread.priority ?? null, stored);
+      const shell = yield* projections.getThreadShell(threadId);
+      assert.ok(shell);
+      assert.equal(shell.priority ?? null, stored);
+    }
+  }).pipe(Effect.provide(layerTest)),
+);

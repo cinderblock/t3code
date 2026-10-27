@@ -353,6 +353,11 @@ export const OrchestrationV2LimitRecoveryUpdate = Schema.Struct({
 );
 export type OrchestrationV2LimitRecoveryUpdate = typeof OrchestrationV2LimitRecoveryUpdate.Type;
 
+/** Higher sorts first. Clients offer -1, 0 and 1 today; the integer range
+    leaves room for finer levels without a migration. 0 is stored as null. */
+export const ThreadPriority = Schema.Int.check(Schema.isBetween({ minimum: -100, maximum: 100 }));
+export type ThreadPriority = typeof ThreadPriority.Type;
+
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -399,6 +404,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  priority: Schema.optional(Schema.NullOr(ThreadPriority)),
   lastVisitedAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -1612,6 +1618,7 @@ export const OrchestrationV2DomainEvent = Schema.Union([
       "thread.unpinned",
       "thread.pin-reordered",
       "thread.active-reordered",
+      "thread.priority-set",
       "thread.visited",
       "thread.marked-unread",
       "thread.metadata-updated",
@@ -1857,6 +1864,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  priority: Schema.optional(Schema.NullOr(ThreadPriority)),
   lastVisitedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   titleRegeneration: Schema.optional(
     Schema.NullOr(
@@ -2419,6 +2427,7 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.unpinned",
       "thread.pin-reordered",
       "thread.active-reordered",
+      "thread.priority-set",
       "thread.visited",
       "thread.marked-unread",
       "thread.pull-request-synced",
@@ -2653,6 +2662,13 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     orderKey: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.priority.set"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    /** null clears back to normal. */
+    priority: Schema.NullOr(ThreadPriority),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.visit"),

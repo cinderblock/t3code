@@ -1,5 +1,6 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
+import { inboxPriorityGroup } from "@t3tools/client-runtime/state/thread-inbox";
 
 export type ThreadActionMenuId =
   | "new-thread-on-branch"
@@ -7,6 +8,10 @@ export type ThreadActionMenuId =
   | "project-settings"
   | "pin"
   | "unpin"
+  | "priority"
+  | "priority:high"
+  | "priority:normal"
+  | "priority:low"
   | "settle"
   | "unsettle"
   | "auto-settle"
@@ -24,6 +29,12 @@ export type ThreadActionMenuId =
   | "copy-thread-id"
   | "archive"
   | "delete";
+
+export const THREAD_PRIORITY_BY_MENU_ACTION = {
+  "priority:high": 1,
+  "priority:normal": null,
+  "priority:low": -1,
+} as const satisfies Record<Extract<ThreadActionMenuId, `priority:${string}`>, number | null>;
 
 export type DraftActionMenuId =
   | "copy"
@@ -71,6 +82,7 @@ export interface ThreadActionMenuState {
     readonly isActive: boolean;
   } | null;
   readonly isPinned: boolean;
+  readonly priority: number | null;
   readonly isSettled: boolean;
   readonly autoSettleEnabled: boolean;
   readonly isSnoozed: boolean;
@@ -83,6 +95,7 @@ export interface ThreadActionMenuState {
     readonly autoSettleOptOut: boolean;
     readonly snooze: boolean;
     readonly pinning: boolean;
+    readonly priority: boolean;
     readonly titleRegeneration: boolean;
   };
   readonly snoozePresets: ReadonlyArray<SnoozePreset>;
@@ -119,6 +132,20 @@ export function buildThreadActionMenuItems(
           state.isPinned
             ? { id: "unpin" as const, label: "Unpin thread", icon: "pin-off" }
             : { id: "pin" as const, label: "Pin thread", icon: "pin" },
+        ]
+      : []),
+    ...(state.supports.priority
+      ? [
+          {
+            id: "priority" as const,
+            label: "Priority",
+            icon: "arrow-up-down",
+            children: (["high", "normal", "low"] as const).map((group) => ({
+              id: `priority:${group}` as const,
+              label: group === "high" ? "High" : group === "low" ? "Low" : "Normal",
+              checked: inboxPriorityGroup(state.priority) === group,
+            })),
+          },
         ]
       : []),
     ...(state.supports.settlement

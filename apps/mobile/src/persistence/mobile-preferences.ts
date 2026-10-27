@@ -12,6 +12,7 @@ import {
   PullRequestListState,
   type ProviderInstanceId,
   type PullRequestMergeMethod,
+  SidebarInboxSortDirections,
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
@@ -75,6 +76,7 @@ export interface Preferences {
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
   readonly planModeEnabled?: boolean;
   readonly workingShelfEnabled?: boolean;
+  readonly inboxSortDirections?: SidebarInboxSortDirections;
   readonly modelFavorites?: ReadonlyArray<{
     readonly provider: ProviderInstanceId;
     readonly model: string;
@@ -85,6 +87,8 @@ export interface Preferences {
   readonly threadListFilters?: ThreadListFilters;
   readonly pullRequestListFilters?: PullRequestListPreferences;
 }
+
+const decodeInboxSortDirections = Schema.decodeUnknownOption(SidebarInboxSortDirections);
 
 export class MobilePreferencesLoadError extends Schema.TaggedError<MobilePreferencesLoadError>()(
   "MobilePreferencesLoadError",
@@ -147,6 +151,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     projectGroupingMode?: SidebarProjectGroupingMode;
     planModeEnabled?: boolean;
     workingShelfEnabled?: boolean;
+    inboxSortDirections?: SidebarInboxSortDirections;
     modelFavorites?: Preferences["modelFavorites"];
     threadListSettledShelfExpanded?: boolean;
     threadListSnoozedShelfExpanded?: boolean;
@@ -251,6 +256,10 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (typeof parsed.workingShelfEnabled === "boolean") {
     preferences.workingShelfEnabled = parsed.workingShelfEnabled;
+  }
+  const inboxSortDirections = decodeInboxSortDirections(parsed.inboxSortDirections);
+  if (Option.isSome(inboxSortDirections)) {
+    preferences.inboxSortDirections = inboxSortDirections.value;
   }
   if (Array.isArray(parsed.modelFavorites)) {
     preferences.modelFavorites = parsed.modelFavorites.filter(

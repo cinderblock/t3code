@@ -2395,14 +2395,25 @@ describe("Working shelf (beta)", () => {
   });
 
   describe("sortInboxThreadsByReturn", () => {
+    const newestFirst = {
+      high: "newest_first",
+      normal: "newest_first",
+      low: "newest_first",
+    } as const;
     const thread = (
       id: string,
-      input: { createdAt: string; completedAt?: string | null; unsettledAt?: string },
+      input: {
+        createdAt: string;
+        completedAt?: string | null;
+        unsettledAt?: string;
+        priority?: number | null;
+      },
     ) => ({
       id: ThreadId.make(id),
       environmentId: localEnvironmentId,
       createdAt: input.createdAt,
       unsettledAt: input.unsettledAt ?? null,
+      priority: input.priority ?? null,
       latestRun:
         input.completedAt === undefined
           ? null
@@ -2410,17 +2421,20 @@ describe("Working shelf (beta)", () => {
     });
 
     it("puts the thread that finished last on top, whatever its age", () => {
-      const sorted = sortInboxThreadsByReturn([
-        thread("new", { createdAt: "2026-03-09T11:00:00.000Z" }),
-        thread("old-finished-now", {
-          createdAt: "2026-03-01T09:00:00.000Z",
-          completedAt: "2026-03-09T12:00:00.000Z",
-        }),
-        thread("reopened", {
-          createdAt: "2026-03-02T09:00:00.000Z",
-          unsettledAt: "2026-03-09T11:30:00.000Z",
-        }),
-      ]);
+      const sorted = sortInboxThreadsByReturn(
+        [
+          thread("new", { createdAt: "2026-03-09T11:00:00.000Z" }),
+          thread("old-finished-now", {
+            createdAt: "2026-03-01T09:00:00.000Z",
+            completedAt: "2026-03-09T12:00:00.000Z",
+          }),
+          thread("reopened", {
+            createdAt: "2026-03-02T09:00:00.000Z",
+            unsettledAt: "2026-03-09T11:30:00.000Z",
+          }),
+        ],
+        newestFirst,
+      );
       expect(sorted.map((entry) => entry.id)).toEqual(["old-finished-now", "reopened", "new"]);
     });
 
@@ -2433,15 +2447,53 @@ describe("Working shelf (beta)", () => {
         createdAt: "2026-03-09T09:30:00.000Z",
         completedAt: "2026-03-09T11:00:00.000Z",
       });
-      expect(sortInboxThreadsByReturn([finished, waiting]).map((entry) => entry.id)).toEqual([
-        "finished",
-        "asks-approval",
-      ]);
       expect(
-        sortInboxThreadsByReturn([finished, waiting], (entry) =>
+        sortInboxThreadsByReturn([finished, waiting], newestFirst).map((entry) => entry.id),
+      ).toEqual(["finished", "asks-approval"]);
+      expect(
+        sortInboxThreadsByReturn([finished, waiting], newestFirst, (entry) =>
           entry === waiting ? Date.parse("2026-03-09T11:05:00.000Z") : undefined,
         ).map((entry) => entry.id),
       ).toEqual(["asks-approval", "finished"]);
+    });
+
+    it("groups by priority and sorts each group in its own direction", () => {
+      const at = (hour: number) => `2026-03-09T${String(hour).padStart(2, "0")}:00:00.000Z`;
+      const sorted = sortInboxThreadsByReturn(
+        [
+          thread("normal-late", { createdAt: at(11) }),
+          thread("low-early", { createdAt: at(8), priority: -1 }),
+          thread("high-late", { createdAt: at(12), priority: 1 }),
+          thread("normal-early", { createdAt: at(9) }),
+          thread("low-late", { createdAt: at(10), priority: -1 }),
+          thread("high-early", { createdAt: at(7), priority: 1 }),
+          thread("zero-is-normal", { createdAt: at(10), priority: 0 }),
+        ],
+        { high: "oldest_first", normal: "oldest_first", low: "newest_first" },
+      );
+      expect(sorted.map((entry) => entry.id)).toEqual([
+        "high-early",
+        "high-late",
+        "normal-early",
+        "zero-is-normal",
+        "normal-late",
+        "low-late",
+        "low-early",
+      ]);
+    });
+
+    it("orders finer priority levels above and below the named groups", () => {
+      const createdAt = "2026-03-09T09:00:00.000Z";
+      const sorted = sortInboxThreadsByReturn(
+        [
+          thread("high", { createdAt, priority: 1 }),
+          thread("lowest", { createdAt, priority: -5 }),
+          thread("highest", { createdAt, priority: 3 }),
+          thread("low", { createdAt, priority: -1 }),
+        ],
+        newestFirst,
+      );
+      expect(sorted.map((entry) => entry.id)).toEqual(["highest", "high", "low", "lowest"]);
     });
   });
 

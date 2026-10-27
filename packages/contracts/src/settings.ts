@@ -62,6 +62,23 @@ export const SidebarThreadSortOrder = Schema.Literals(["updated_at", "created_at
 export type SidebarThreadSortOrder = typeof SidebarThreadSortOrder.Type;
 const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
 
+export const SidebarInboxSortDirection = Schema.Literals(["oldest_first", "newest_first"]);
+export type SidebarInboxSortDirection = typeof SidebarInboxSortDirection.Type;
+const inboxSortDirectionField = SidebarInboxSortDirection.pipe(
+  Schema.withDecodingDefault(Effect.succeed<SidebarInboxSortDirection>("oldest_first")),
+);
+/** Per priority group, so a high-priority queue can stay oldest-first while
+    low-priority threads surface whatever just finished. */
+export const SidebarInboxSortDirections = Schema.Struct({
+  high: inboxSortDirectionField,
+  normal: inboxSortDirectionField,
+  low: inboxSortDirectionField,
+});
+export type SidebarInboxSortDirections = typeof SidebarInboxSortDirections.Type;
+export const DEFAULT_SIDEBAR_INBOX_SORT_DIRECTIONS: SidebarInboxSortDirections = Schema.decodeSync(
+  SidebarInboxSortDirections,
+)({});
+
 export const SidebarProjectGroupingMode = Schema.Literals([
   "repository",
   "repository_path",
@@ -461,6 +478,9 @@ export const ClientSettingsSchema = Schema.Struct({
   ),
   sidebarWorkingShelfEnabled: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
+  sidebarInboxSortDirections: SidebarInboxSortDirections.pipe(
+    Schema.withDecodingDefault(Effect.succeed({})),
   ),
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
@@ -1623,6 +1643,7 @@ export const ClientSettingsPatch = Schema.Struct({
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   sidebarWorkingShelfEnabled: Schema.optionalKey(Schema.Boolean),
+  sidebarInboxSortDirections: Schema.optionalKey(SidebarInboxSortDirections),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, SidebarProjectGroupingMode),

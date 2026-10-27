@@ -1,7 +1,11 @@
 import { EnvironmentId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { createInboxReturnTracker, sortWorkingThreadsBySend } from "./threadInbox.ts";
+import {
+  createInboxReturnTracker,
+  sortWorkingThreadsBySend,
+  stepThreadPriority,
+} from "./threadInbox.ts";
 
 const environmentId = EnvironmentId.make("environment-1");
 
@@ -79,5 +83,22 @@ describe("sortWorkingThreadsBySend", () => {
     expect(
       sortWorkingThreadsBySend([launched, sentFirst, sentLast]).map((thread) => thread.id),
     ).toEqual(["sent-last", "sent-first", "launched"]);
+  });
+});
+
+describe("stepThreadPriority", () => {
+  it.each([
+    [null, 1, 1],
+    [1, 1, 1],
+    [-1, 1, null],
+    [null, -1, -1],
+    [-1, -1, -1],
+    [1, -1, null],
+    [4, 1, 4],
+    [4, -1, 1],
+    [-4, 1, -1],
+    [-4, -1, -4],
+  ] as const)("steps %s by %s to %s", (priority, delta, expected) => {
+    expect(stepThreadPriority(priority, delta)).toBe(expected);
   });
 });
