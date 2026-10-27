@@ -18,6 +18,7 @@ import {
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   type ResponseStreamingMode,
   type QuitConfirmationMode,
+  SidebarInboxSortDirection,
   SidebarProjectSortOrder,
 } from "@t3tools/contracts/settings";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -115,6 +116,17 @@ const SIDEBAR_PROJECT_SORT_ORDER_LABELS: Record<SidebarProjectSortOrder, string>
   manual: "Manual",
 };
 const isSidebarProjectSortOrder = Schema.is(SidebarProjectSortOrder);
+
+const SIDEBAR_INBOX_SORT_DIRECTION_LABELS: Record<SidebarInboxSortDirection, string> = {
+  oldest_first: "Oldest waiting first",
+  newest_first: "Newest first",
+};
+const isSidebarInboxSortDirection = Schema.is(SidebarInboxSortDirection);
+const INBOX_ORDER_GROUPS = [
+  { group: "high", searchId: "inbox-order-high", label: "high priority" },
+  { group: "normal", searchId: "inbox-order-normal", label: "normal priority" },
+  { group: "low", searchId: "inbox-order-low", label: "low priority" },
+] as const;
 
 const TIMESTAMP_FORMAT_LABELS = {
   locale: "System default",
@@ -436,6 +448,12 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? ["Working section"]
       : []),
+    ...INBOX_ORDER_GROUPS.flatMap(({ group, label }) =>
+      settings.sidebarInboxSortDirections[group] !==
+      DEFAULT_UNIFIED_SETTINGS.sidebarInboxSortDirections[group]
+        ? [`Inbox order (${label})`]
+        : [],
+    ),
     ...(settings.sidebarAutoSettleAfterDays !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
       ? ["Auto-settle inactive threads"]
       : []),
@@ -489,6 +507,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       : []),
     ...(settings.enableProviderUpdateChecks !== DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks
       ? ["Provider update checks"]
+      : []),
+    ...(settings.autoUpdateProviders !== DEFAULT_UNIFIED_SETTINGS.autoUpdateProviders
+      ? ["Update providers automatically"]
       : []),
     ...(settings.continueThreadsAfterServerUpdate !==
     DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate
@@ -603,6 +624,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+      sidebarInboxSortDirections: DEFAULT_UNIFIED_SETTINGS.sidebarInboxSortDirections,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -610,6 +632,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       snoozeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
+      autoUpdateProviders: DEFAULT_UNIFIED_SETTINGS.autoUpdateProviders,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
       backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
       backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
@@ -870,6 +893,53 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+
+        {INBOX_ORDER_GROUPS.map(({ group, searchId, label }) => {
+          const direction = settings.sidebarInboxSortDirections[group];
+          const defaultDirection = DEFAULT_UNIFIED_SETTINGS.sidebarInboxSortDirections[group];
+          const setDirection = (next: SidebarInboxSortDirection) =>
+            updateSettings({
+              sidebarInboxSortDirections: { ...settings.sidebarInboxSortDirections, [group]: next },
+            });
+          return (
+            <SettingsRow
+              key={group}
+              {...searchableSetting(searchId)}
+              description={`How ${label} threads are ordered in the inbox while the Working section is on.`}
+              resetAction={
+                direction !== defaultDirection ? (
+                  <SettingResetButton
+                    label={`${label} inbox order`}
+                    onClick={() => setDirection(defaultDirection)}
+                  />
+                ) : null
+              }
+              control={
+                <Select
+                  value={direction}
+                  onValueChange={(value) => {
+                    if (isSidebarInboxSortDirection(value)) setDirection(value);
+                  }}
+                >
+                  <SelectTrigger
+                    size="sm"
+                    className="w-full sm:w-44"
+                    aria-label={`Inbox order for ${label} threads`}
+                  >
+                    <SelectValue>{SIDEBAR_INBOX_SORT_DIRECTION_LABELS[direction]}</SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup align="end" alignItemWithTrigger={false}>
+                    {SidebarInboxSortDirection.literals.map((option) => (
+                      <SelectItem hideIndicator key={option} value={option}>
+                        {SIDEBAR_INBOX_SORT_DIRECTION_LABELS[option]}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              }
+            />
+          );
+        })}
       </SettingsSection>
 
       <SettingsSection id="confirmations" title="Confirmations">
@@ -1955,6 +2025,39 @@ export function MaintenanceSettingsPanel() {
                 updateSettings({ enableProviderUpdateChecks: Boolean(checked) })
               }
               aria-label="Check provider versions"
+            />
+          }
+        />
+        <SettingsRow
+          serverScoped
+          settingKeys={["autoUpdateProviders"]}
+          {...searchableSetting("provider-auto-update")}
+          description={
+            settings.enableProviderUpdateChecks
+              ? "Install a newer provider version once that provider has had no agent activity for 5 minutes. Its idle sessions restart on the next message."
+              : "Needs provider update checks."
+          }
+          resetAction={
+            settings.autoUpdateProviders !== DEFAULT_UNIFIED_SETTINGS.autoUpdateProviders ? (
+              <SettingResetButton
+                label="automatic provider updates"
+                onClick={() =>
+                  updateSettings({
+                    autoUpdateProviders: DEFAULT_UNIFIED_SETTINGS.autoUpdateProviders,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <ScopedSwitch
+              settingKeys={["autoUpdateProviders"]}
+              checked={settings.autoUpdateProviders}
+              disabled={!settings.enableProviderUpdateChecks}
+              onCheckedChange={(checked) =>
+                updateSettings({ autoUpdateProviders: Boolean(checked) })
+              }
+              aria-label="Update providers automatically when idle"
             />
           }
         />

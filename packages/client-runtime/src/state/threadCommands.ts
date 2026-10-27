@@ -41,6 +41,7 @@ import {
   type ReorderPinnedThreadInput,
   type ReorderActiveThreadInput,
   type SetThreadAutoSettleInput,
+  type SetThreadPriorityInput,
   type SettleThreadInput,
   type SnoozeThreadInput,
   type StartThreadTurnInput,
@@ -80,6 +81,7 @@ import {
   reorderPinnedThread,
   reorderActiveThread,
   setThreadAutoSettle,
+  setThreadPriority,
   settleThread,
   snoozeThread,
   startThreadTurn,
@@ -125,6 +127,7 @@ export type {
   ReorderPinnedThreadInput,
   ReorderActiveThreadInput,
   SetThreadAutoSettleInput,
+  SetThreadPriorityInput,
   SettleThreadInput,
   SnoozeThreadInput,
   StartThreadTurnInput,
@@ -271,6 +274,12 @@ export function createThreadEnvironmentAtoms<R, E>(
     setAutoSettle: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:set-auto-settle",
       execute: (input: SetThreadAutoSettleInput) => setThreadAutoSettle(input),
+      scheduler,
+      concurrency,
+    }),
+    setPriority: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:set-priority",
+      execute: (input: SetThreadPriorityInput) => setThreadPriority(input),
       scheduler,
       concurrency,
     }),
@@ -507,6 +516,10 @@ export function createThreadEnvironmentAtoms<R, E>(
     reorderPin: optimistic.wrap(commands.reorderPin, (thread, input) => ({
       ...thread,
       pinOrderKey: input.orderKey,
+    })),
+    setPriority: optimistic.wrap(commands.setPriority, (thread, input) => ({
+      ...thread,
+      priority: input.priority === 0 ? null : input.priority,
     })),
     reorderActive: optimistic.wrap(commands.reorderActive, (thread, input) => ({
       ...thread,

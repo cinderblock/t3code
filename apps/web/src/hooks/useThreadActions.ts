@@ -37,6 +37,7 @@ import { releaseComposerDraftUploads } from "../lib/composerDraftUploads";
 import { readLocalApi } from "../localApi";
 import {
   readEnvironmentSupportsAutoSettleOptOut,
+  readEnvironmentSupportsPriority,
   readEnvironmentSupportsPinning,
   readEnvironmentSupportsPinReorder,
   readEnvironmentSupportsActiveReorder,
@@ -116,6 +117,18 @@ function topOfPinnedRunOrderKey(): string | undefined {
     if (firstKey === null || shell.pinOrderKey < firstKey) firstKey = shell.pinOrderKey;
   }
   return pinOrderKeyBetween(null, firstKey) ?? undefined;
+}
+
+export class ThreadPriorityUnsupportedError extends Schema.TaggedError<ThreadPriorityUnsupportedError>()(
+  "ThreadPriorityUnsupportedError",
+  {
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+  },
+) {
+  override get message(): string {
+    return "This environment's server does not support thread priority yet. Update the server to use it.";
+  }
 }
 
 export class ThreadAutoSettleOptOutUnsupportedError extends Schema.TaggedError<ThreadAutoSettleOptOutUnsupportedError>()(
@@ -269,6 +282,9 @@ export function useThreadActions() {
     reportFailure: false,
   });
   const setThreadAutoSettleMutation = useOrchestrationCommand(threadEnvironment.setAutoSettle, {
+    reportFailure: false,
+  });
+  const setThreadPriorityMutation = useOrchestrationCommand(threadEnvironment.setPriority, {
     reportFailure: false,
   });
   const reorderPinnedThreadMutation = useOrchestrationCommand(threadEnvironment.reorderPin, {
@@ -652,6 +668,23 @@ export function useThreadActions() {
     });
   };
 
+  const setThreadPriority = async (target: ScopedThreadRef, priority: number | null) => {
+    if (!readEnvironmentSupportsPriority(target.environmentId)) {
+      return AsyncResult.failure(
+        Cause.fail(
+          new ThreadPriorityUnsupportedError({
+            environmentId: target.environmentId,
+            threadId: target.threadId,
+          }),
+        ),
+      );
+    }
+    return setThreadPriorityMutation({
+      environmentId: target.environmentId,
+      input: { threadId: target.threadId, priority },
+    });
+  };
+
   const pinThread = async (target: ScopedThreadRef, opts: { orderKey?: string } = {}) => {
     if (!readEnvironmentSupportsPinning(target.environmentId)) {
       return AsyncResult.failure(
@@ -933,5 +966,6 @@ export function useThreadActions() {
     reorderActiveThread,
     markThreadUnread,
     setThreadAutoSettle,
+    setThreadPriority,
   };
 }

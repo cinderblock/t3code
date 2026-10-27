@@ -7,6 +7,7 @@ const baseState: ThreadActionMenuState = {
   branch: null,
   projectFilter: null,
   isPinned: false,
+  priority: null,
   isSettled: false,
   autoSettleEnabled: true,
   isSnoozed: false,
@@ -18,6 +19,7 @@ const baseState: ThreadActionMenuState = {
     autoSettleOptOut: true,
     snooze: true,
     pinning: true,
+    priority: true,
     titleRegeneration: true,
   },
   snoozePresets: [
@@ -26,6 +28,21 @@ const baseState: ThreadActionMenuState = {
 };
 
 describe("buildThreadActionMenuItems", () => {
+  it.each([
+    [1, "priority:high"],
+    [null, "priority:normal"],
+    [0, "priority:normal"],
+    [-1, "priority:low"],
+    [4, "priority:high"],
+  ] as const)("checks the priority group for priority %s", (priority, expected) => {
+    const menu = buildThreadActionMenuItems({ ...baseState, priority });
+    const checked = menu
+      .find((item) => item.id === "priority")
+      ?.children?.filter((child) => child.checked)
+      .map((child) => child.id);
+    expect(checked).toEqual([expected]);
+  });
+
   it.each([false, true])(
     "disables both lifecycle directions without permission (reversed: %s)",
     (reversed) => {
@@ -39,6 +56,7 @@ describe("buildThreadActionMenuItems", () => {
       const expected = reversed
         ? [
             "unpin",
+            "priority",
             "unsettle",
             "unsnooze",
             "rename",
@@ -49,6 +67,7 @@ describe("buildThreadActionMenuItems", () => {
           ]
         : [
             "pin",
+            "priority",
             "settle",
             "snooze",
             "rename",

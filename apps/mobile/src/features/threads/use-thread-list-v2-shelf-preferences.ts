@@ -1,4 +1,5 @@
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { DEFAULT_SIDEBAR_INBOX_SORT_DIRECTIONS } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 
 import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
@@ -14,6 +15,9 @@ export function useThreadListV2ShelfPreferences() {
   const workingShelfEnabled = loaded && preferencesResult.value.workingShelfEnabled !== false;
   const workingShelfExpanded =
     loaded && preferencesResult.value.threadListWorkingShelfExpanded === true;
+  const inboxSortDirections =
+    (loaded ? preferencesResult.value.inboxSortDirections : undefined) ??
+    DEFAULT_SIDEBAR_INBOX_SORT_DIRECTIONS;
 
   // Transforms read optimistic state so same-frame presses toggle twice.
   const toggleSnoozedShelf = () => {
@@ -47,6 +51,7 @@ export function useThreadListV2ShelfPreferences() {
     snoozedShelfExpanded,
     workingShelfEnabled,
     workingShelfExpanded,
+    inboxSortDirections,
     toggleSettledShelf,
     toggleSnoozedShelf,
     toggleWorkingShelf,

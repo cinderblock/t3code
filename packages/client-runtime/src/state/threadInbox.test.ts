@@ -6,6 +6,7 @@ import {
   isThreadWorking,
   sortInboxThreadsByReturn,
   sortWorkingThreadsBySend,
+  stepThreadPriority,
 } from "./threadInbox.ts";
 
 const environmentId = EnvironmentId.make("environment-1");
@@ -194,10 +195,14 @@ describe("createInboxReturnTracker", () => {
     expect(tracker.returnedAt(a)).toBe(12_000);
     expect(tracker.returnedAt(b)).toBeUndefined();
     vi.advanceTimersByTime(500);
-    expect(sortInboxThreadsByReturn([a, b], tracker.returnedAt).map((entry) => entry.id)).toEqual([
-      "b",
-      "a",
-    ]);
+    const newestFirst = {
+      high: "newest_first",
+      normal: "newest_first",
+      low: "newest_first",
+    } as const;
+    expect(
+      sortInboxThreadsByReturn([a, b], newestFirst, tracker.returnedAt).map((entry) => entry.id),
+    ).toEqual(["b", "a"]);
   });
 
   it("cancels pending timers for removed threads and disabled shelves", () => {
@@ -239,5 +244,22 @@ describe("sortWorkingThreadsBySend", () => {
     expect(
       sortWorkingThreadsBySend([launched, sentFirst, sentLast]).map((thread) => thread.id),
     ).toEqual(["sent-last", "sent-first", "launched"]);
+  });
+});
+
+describe("stepThreadPriority", () => {
+  it.each([
+    [null, 1, 1],
+    [1, 1, 1],
+    [-1, 1, null],
+    [null, -1, -1],
+    [-1, -1, -1],
+    [1, -1, null],
+    [4, 1, 4],
+    [4, -1, 1],
+    [-4, 1, -1],
+    [-4, -1, -4],
+  ] as const)("steps %s by %s to %s", (priority, delta, expected) => {
+    expect(stepThreadPriority(priority, delta)).toBe(expected);
   });
 });

@@ -134,6 +134,14 @@ must be enabled to download the latest T3 Code model catalog.
 Provider updates do not restart running chats. An existing session can keep
 using the previous CLI until it ends. If discovery fails, check the provider
 status and refresh it again.
+To have an environment update its providers on its own, turn on **Update
+providers automatically** in **Settings → Maintenance**. A provider then updates once it has had no agent activity for
+5 minutes, so running work is never interrupted. Its idle sessions close first
+and pick up again on your next message; a message sent during the update waits
+for it to finish. The environment needs provider update checks on, and providers
+that only offer a manual update command still need you. If an automatic update
+fails, the provider shows the error and T3 Code waits a few hours before trying
+that version again.
 
 ## Mobile updates
 

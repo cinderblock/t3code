@@ -28,6 +28,7 @@ import {
   snoozeWakeLabel,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
+import { stepThreadPriority } from "@t3tools/client-runtime/state/thread-inbox";
 import { useAcknowledgeThreadWoke, useThreadActions } from "../../hooks/useThreadActions";
 import { settleAndAdvance } from "../../settleAndAdvance";
 import type { ChatShortcutCommands } from "./useChatShortcuts";
@@ -151,7 +152,7 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   } = input;
   const navigate = useNavigate();
   const router = useRouter();
-  const { settleThread, pinThread, confirmAndUnpinThread } = useThreadActions();
+  const { settleThread, pinThread, confirmAndUnpinThread, setThreadPriority } = useThreadActions();
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const switchGitRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
@@ -168,6 +169,8 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
   const supportsSnooze = serverConfig?.environment.capabilities.threadSnooze === true;
   const supportsPinning = serverConfig?.environment.capabilities.threadPinning === true;
   const activeThreadPinned = supportsPinning && activeThreadShell?.pinnedAt != null;
+  const supportsPriority = serverConfig?.environment.capabilities.threadPriority === true;
+  const activeThreadPriority = activeThreadShell?.priority ?? null;
   // A clock read in render would stay frozen in the compiler's cache, so the
   // snooze checks read a snapshot that moves when the wake time changes or passes.
   const snoozeClock = new Date(
@@ -584,6 +587,20 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
         toastThreadActionFailure(
           activeThreadPinned ? "Failed to unpin thread" : "Failed to pin thread",
         ),
+      );
+    },
+    "thread.priority.raise": () => {
+      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
+      if (!activeThreadShell || !activeThreadRef || !supportsPriority) return;
+      void setThreadPriority(activeThreadRef, stepThreadPriority(activeThreadPriority, 1)).then(
+        toastThreadActionFailure("Failed to raise thread priority"),
+      );
+    },
+    "thread.priority.lower": () => {
+      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
+      if (!activeThreadShell || !activeThreadRef || !supportsPriority) return;
+      void setThreadPriority(activeThreadRef, stepThreadPriority(activeThreadPriority, -1)).then(
+        toastThreadActionFailure("Failed to lower thread priority"),
       );
     },
   } satisfies ChatShortcutCommands;

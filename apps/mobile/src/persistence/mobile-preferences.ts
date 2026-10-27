@@ -12,6 +12,7 @@ import {
   PullRequestListState,
   type ProviderInstanceId,
   type PullRequestMergeMethod,
+  SidebarInboxSortDirections,
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import type { AndroidNavigationStyle } from "../lib/androidNavigationStyle";
@@ -118,6 +119,7 @@ export interface Preferences {
   readonly workingShelfEnabled?: boolean;
   readonly useLastProjectForNewThreads?: boolean;
   readonly lastThreadProject?: typeof ThreadProject.Type;
+  readonly inboxSortDirections?: SidebarInboxSortDirections;
   readonly modelFavorites?: ReadonlyArray<{
     readonly provider: ProviderInstanceId;
     readonly model: string;
@@ -129,6 +131,8 @@ export interface Preferences {
   readonly pullRequestListFilters?: PullRequestListPreferences;
   readonly workspaceSelections?: WorkspaceSelections;
 }
+
+const decodeInboxSortDirections = Schema.decodeUnknownOption(SidebarInboxSortDirections);
 
 export class MobilePreferencesLoadError extends Schema.TaggedError<MobilePreferencesLoadError>()(
   "MobilePreferencesLoadError",
@@ -198,6 +202,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     workingShelfEnabled?: boolean;
     useLastProjectForNewThreads?: boolean;
     lastThreadProject?: typeof ThreadProject.Type;
+    inboxSortDirections?: SidebarInboxSortDirections;
     modelFavorites?: Preferences["modelFavorites"];
     threadListSettledShelfExpanded?: boolean;
     threadListSnoozedShelfExpanded?: boolean;
@@ -329,6 +334,10 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   }
   if (isThreadProject(parsed.lastThreadProject)) {
     preferences.lastThreadProject = parsed.lastThreadProject;
+  }
+  const inboxSortDirections = decodeInboxSortDirections(parsed.inboxSortDirections);
+  if (Option.isSome(inboxSortDirections)) {
+    preferences.inboxSortDirections = inboxSortDirections.value;
   }
   if (Array.isArray(parsed.modelFavorites)) {
     preferences.modelFavorites = parsed.modelFavorites.filter(

@@ -164,6 +164,7 @@ function ThreadNavigationSidebarPane(
     pinThread,
     unpinThread,
     setThreadAutoSettle,
+    setThreadPriority,
     moveThread,
     renameThread,
     regenerateThreadTitle,
@@ -270,6 +271,7 @@ function ThreadNavigationSidebarPane(
     snoozedShelfExpanded,
     workingShelfEnabled,
     workingShelfExpanded,
+    inboxSortDirections,
     toggleSettledShelf,
     toggleSnoozedShelf,
     toggleWorkingShelf,
@@ -283,6 +285,7 @@ function ThreadNavigationSidebarPane(
     snoozeEnvironmentIds,
     pinningEnvironmentIds,
     autoSettleOptOutEnvironmentIds,
+    priorityEnvironmentIds,
     pinReorderEnvironmentIds,
     activeReorderEnvironmentIds,
     titleRegenerationEnvironmentIds,
@@ -311,6 +314,7 @@ function ThreadNavigationSidebarPane(
     pendingOrder,
     shelfPreferencesLoaded,
     workingShelfEnabled,
+    inboxSortDirections,
     workingShelfExpanded,
     snoozedShelfExpanded,
     settledShelfExpanded,
@@ -590,6 +594,7 @@ function ThreadNavigationSidebarPane(
             snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
             pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
             autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}
+            prioritySupported={priorityEnvironmentIds.has(thread.environmentId)}
             reorderSupported={
               item.item.pinned
                 ? pinReorderEnvironmentIds.has(thread.environmentId)
@@ -603,6 +608,7 @@ function ThreadNavigationSidebarPane(
             onPinThread={pinThread}
             onUnpinThread={unpinThread}
             onSetThreadAutoSettle={setThreadAutoSettle}
+            onSetThreadPriority={setThreadPriority}
             onMoveThread={moveThread}
             onSwipeableClose={handleSwipeableClose}
             onSwipeableWillOpen={handleSwipeableWillOpen}

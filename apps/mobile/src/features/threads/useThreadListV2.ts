@@ -1,5 +1,6 @@
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId } from "@t3tools/contracts";
+import type { SidebarInboxSortDirections } from "@t3tools/contracts/settings";
 import { useMemo, useSyncExternalStore } from "react";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
@@ -50,6 +51,7 @@ export function useThreadListV2(input: {
   readonly pendingOrder: LayoutInput["pendingOrder"];
   readonly shelfPreferencesLoaded: boolean;
   readonly workingShelfEnabled: boolean;
+  readonly inboxSortDirections: SidebarInboxSortDirections;
   readonly workingShelfExpanded: boolean;
   readonly snoozedShelfExpanded: boolean;
   readonly settledShelfExpanded: boolean;
@@ -113,6 +115,7 @@ export function useThreadListV2(input: {
     workingShelfEnabled,
     workingShelfExpanded: input.workingShelfExpanded,
     inboxReturnAt: inbox.returnedAt,
+    inboxSortDirections: input.inboxSortDirections,
     isWorking: inbox.isWorking,
     snoozedShelfExpanded: input.snoozedShelfExpanded,
     settledShelfExpanded: input.settledShelfExpanded,

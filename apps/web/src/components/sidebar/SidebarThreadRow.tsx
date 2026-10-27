@@ -36,6 +36,8 @@ import {
   CircleCheckIcon,
   CircleDashedIcon,
   CircleDotDashedIcon,
+  ArrowDownIcon,
+  ArrowUpIcon,
   ClockIcon,
   GitBranchIcon,
   MessageCircleQuestionIcon,
@@ -48,6 +50,7 @@ import {
   UserRoundIcon,
   XIcon,
 } from "lucide-react";
+import { inboxPriorityGroup } from "@t3tools/client-runtime/state/thread-inbox";
 import {
   memo,
   useRef,
@@ -1056,6 +1059,21 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   ) : null;
   const showPin =
     props.isPinned && (!sortable?.isDragging || (props.dragOverPinned && props.dropVerb === null));
+  const priorityGroup = inboxPriorityGroup(thread.priority);
+  const priorityIndicator =
+    priorityGroup === "normal" ? null : priorityGroup === "high" ? (
+      <ArrowUpIcon
+        role="img"
+        aria-label="High priority"
+        className="size-3 shrink-0 text-muted-foreground/65"
+      />
+    ) : (
+      <ArrowDownIcon
+        role="img"
+        aria-label="Low priority"
+        className="size-3 shrink-0 text-muted-foreground/65"
+      />
+    );
   const pinIndicator = showPin ? (
     props.pinningSupported && canOperateThread && !sortable?.isDragging ? (
       <Tooltip>
@@ -1132,6 +1150,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             {draftIndicator}
             {title}
             {pinIndicator}
+            {priorityIndicator}
             {terminalStatusIcon}
             {isRegeneratingTitle ? (
               <span role="status" className="sr-only">
@@ -1303,6 +1322,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               {/* Left of the status slot, the pin would slide when hover swaps the
                 label for the wider row controls. */}
               {pinIndicator}
+              {priorityIndicator}
               {props.projectDisplayName ? (
                 <span
                   className={cn("min-w-0 flex-1 truncate font-normal text-secondary-label text-xs")}

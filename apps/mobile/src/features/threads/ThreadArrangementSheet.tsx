@@ -168,7 +168,7 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
   const pendingOrder = useAtomValue(pendingThreadOrderAtom);
   const dropBusy = useAtomValue(threadDropBusyAtom);
   const { moveThread } = useThreadListActions();
-  const { workingShelfEnabled } = useThreadListV2ShelfPreferences();
+  const { workingShelfEnabled, inboxSortDirections } = useThreadListV2ShelfPreferences();
   const now = useThreadListNow(threads);
   const [expanded, setExpanded] = useState({ snoozed: false, settled: false });
   const [settledVisibleCount, setSettledVisibleCount] = useState(
@@ -206,12 +206,20 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
     return {
       pinned,
       active: workingShelfEnabled
-        ? sortInboxThreadsByReturn(active, threadListInboxReturns.returnedAt)
+        ? sortInboxThreadsByReturn(active, inboxSortDirections, threadListInboxReturns.returnedAt)
         : active,
       snoozed: parked.filter((thread) => effectiveSnoozed(thread, { now })),
       settled: sortSettledThreads(parked.filter((thread) => !effectiveSnoozed(thread, { now }))),
     };
-  }, [threads, configs, now, queuedThreadKeys, pendingOrder, workingShelfEnabled]);
+  }, [
+    threads,
+    configs,
+    now,
+    queuedThreadKeys,
+    pendingOrder,
+    workingShelfEnabled,
+    inboxSortDirections,
+  ]);
   const listedSettled = sections.settled.filter(olderSettledShelf.isListed);
   useOlderSettledShelfGrowth(olderSettledShelf, listedSettled);
   const visibleSettled = listedSettled.slice(0, settledVisibleCount);

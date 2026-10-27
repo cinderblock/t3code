@@ -410,6 +410,24 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
   },
   {
+    id: "inbox-order-high",
+    title: "Inbox order (high priority)",
+    to: "/settings/general",
+    searchTerms: ["priority sort oldest newest waiting sidebar threads important"],
+  },
+  {
+    id: "inbox-order-normal",
+    title: "Inbox order (normal priority)",
+    to: "/settings/general",
+    searchTerms: ["priority sort oldest newest waiting sidebar threads"],
+  },
+  {
+    id: "inbox-order-low",
+    title: "Inbox order (low priority)",
+    to: "/settings/general",
+    searchTerms: ["priority sort oldest newest waiting sidebar threads"],
+  },
+  {
     id: "guest-links",
     title: "Guest links",
     to: "/settings/labs",
@@ -549,6 +567,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Provider update checks",
     to: "/settings/maintenance",
     searchTerms: ["installed cli versions newer available codex claude cursor grok fx opencode"],
+    scope: "environment-defaults",
+  },
+  {
+    id: "provider-auto-update",
+    title: "Update providers automatically",
+    to: "/settings/maintenance",
+    searchTerms: ["auto upgrade install idle unattended background cli codex claude opencode"],
     scope: "environment-defaults",
   },
   {

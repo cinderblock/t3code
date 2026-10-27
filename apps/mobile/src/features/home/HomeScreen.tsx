@@ -122,6 +122,10 @@ interface HomeScreenProps {
     thread: EnvironmentThreadShell,
     enabled: boolean,
   ) => Promise<boolean>;
+  readonly onSetThreadPriority: (
+    thread: EnvironmentThreadShell,
+    priority: number | null,
+  ) => Promise<boolean>;
   readonly onMoveThread: (
     thread: EnvironmentThreadShell,
     direction: ThreadMoveDestination,
@@ -398,6 +402,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const handleMoveThread = props.onMoveThread;
   const handleUnpinThread = props.onUnpinThread;
   const handleSetThreadAutoSettle = props.onSetThreadAutoSettle;
+  const handleSetThreadPriority = props.onSetThreadPriority;
   const handleRegenerateThreadTitle = props.onRegenerateThreadTitle;
   const handleRenameThread = props.onRenameThread;
   const handleDeleteThread = props.onDeleteThread;
@@ -419,6 +424,7 @@ export function HomeScreen(props: HomeScreenProps) {
     snoozedShelfExpanded,
     workingShelfEnabled,
     workingShelfExpanded,
+    inboxSortDirections,
     toggleSettledShelf,
     toggleSnoozedShelf,
     toggleWorkingShelf,
@@ -432,6 +438,7 @@ export function HomeScreen(props: HomeScreenProps) {
     snoozeEnvironmentIds,
     pinningEnvironmentIds,
     autoSettleOptOutEnvironmentIds,
+    priorityEnvironmentIds,
     pinReorderEnvironmentIds,
     activeReorderEnvironmentIds,
     titleRegenerationEnvironmentIds,
@@ -460,6 +467,7 @@ export function HomeScreen(props: HomeScreenProps) {
     pendingOrder,
     shelfPreferencesLoaded,
     workingShelfEnabled,
+    inboxSortDirections,
     workingShelfExpanded,
     snoozedShelfExpanded,
     settledShelfExpanded,
@@ -601,6 +609,7 @@ export function HomeScreen(props: HomeScreenProps) {
         snoozeSupported={snoozeEnvironmentIds.has(thread.environmentId)}
         pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
         autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}
+        prioritySupported={priorityEnvironmentIds.has(thread.environmentId)}
         reorderSupported={
           item.item.pinned
             ? pinReorderEnvironmentIds.has(thread.environmentId)
@@ -614,6 +623,7 @@ export function HomeScreen(props: HomeScreenProps) {
         onPinThread={handlePinThread}
         onUnpinThread={handleUnpinThread}
         onSetThreadAutoSettle={handleSetThreadAutoSettle}
+        onSetThreadPriority={handleSetThreadPriority}
         onMoveThread={handleMoveThread}
         onSwipeableClose={handleSwipeableClose}
         onSwipeableWillOpen={handleSwipeableWillOpen}
