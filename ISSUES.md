@@ -116,6 +116,8 @@ effort than the composer showed. Applies to every queued message, first or not.
 
 ## `migrate-dev-db` keeps pending send-later messages
 
+In progress: queued-message follow-ups entry A, `master`.
+
 `CLEARED_TABLES` in `apps/server/scripts/migrate-dev-db.ts` omits `fork_queued_messages`, so a seeded dev
 server sends any pending message of a kept thread once its trigger is due, as a real provider turn in the
 real project folder. The tool promises to drop pending work. Seen 2026-10-30: 2 pending rows survived a
