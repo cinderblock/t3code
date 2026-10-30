@@ -31,6 +31,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import {
   OrchestratorCommandPreviouslyRejectedError,
   OrchestratorDispatchError,
+  OrchestratorThreadNotActiveError,
 } from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { dispatchCommand } from "./ThreadMessageIntake.ts";
@@ -221,6 +222,52 @@ it.effect("releases claimed copies when the command was already rejected", () =>
     expect(
       NodeFS.readdirSync(config.attachmentsDir).filter((entry) =>
         entry.startsWith("thread-rejected-"),
+      ),
+    ).toEqual([]);
+    expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toBe(true);
+  }).pipe(Effect.provide(layerIntakeTest)),
+);
+
+it.effect("releases claimed copies when the thread is no longer active", () =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const threadId = ThreadId.make("thread-archived");
+    const pendingId = ChatAttachmentId.make(createPendingAttachmentId()!);
+    NodeFS.writeFileSync(
+      NodePath.join(config.attachmentsDir, `${pendingId}.png`),
+      new Uint8Array([1, 2, 3]),
+    );
+    const result = yield* dispatchCommand({
+      type: "message.dispatch",
+      commandId: CommandId.make("message-archived"),
+      threadId,
+      messageId: MessageId.make("message-archived"),
+      text: "Anyone there?",
+      attachments: [
+        { type: "image", id: pendingId, name: "screen.png", mimeType: "image/png", sizeBytes: 3 },
+      ],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          dispatch: (command) =>
+            Effect.fail(
+              new OrchestratorThreadNotActiveError({
+                commandId: command.commandId,
+                threadId,
+                state: "archived",
+              }),
+            ),
+        }),
+      ),
+      Effect.result,
+    );
+    expect(result._tag).toBe("Failure");
+    expect(
+      NodeFS.readdirSync(config.attachmentsDir).filter((entry) =>
+        entry.startsWith("thread-archived-"),
       ),
     ).toEqual([]);
     expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toBe(true);

@@ -298,8 +298,17 @@ export const layerExecutor: Layer.Layer<
                           : { senderThreadId: message.senderThreadId }),
                       })
                       .pipe(
-                        // A disabled instance cannot retry this completed turn; its result stands.
+                        // A disabled instance or a thread now gone cannot retry this completed turn; its result stands.
                         Effect.catchTags({
+                          OrchestratorThreadNotActiveError: (notActive) =>
+                            Effect.logInfo(
+                              "orchestration-v2.effect-worker.steer-follow-up-not-active",
+                              {
+                                threadId: effect.threadId,
+                                messageId: message.id,
+                                state: notActive.state,
+                              },
+                            ),
                           ThreadManagementProviderInstanceDisabledError: (disabledError) =>
                             Effect.logInfo(
                               "orchestration-v2.effect-worker.steer-follow-up-disabled",

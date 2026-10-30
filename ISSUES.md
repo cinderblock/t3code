@@ -83,16 +83,17 @@ being changed there.
 Why it matters: every Windows run shows red in suites unrelated to the change, which hides real
 regressions and costs each agent time re-proving they are pre-existing.
 
-## `message.dispatch` starts a run on a deleted or archived thread
+## 26 server tests in 8 files fail on Windows regardless of the change under test
 
-in progress — `master`, entry K of `plans/queued-message-followups.md`
-
-`Orchestrator.dispatchMessage` has no `deletedAt` or `archivedAt` check for a plain message, so
-`orchestrator.dispatch` of `message.dispatch` on a thread that was just deleted or archived succeeds,
-commits the message and leaves a run in `starting` (measured in `runtimeLayer.test.ts`, 2026-10-30).
-Only `sendToThread` refuses, and only for archived. Matters because any caller that goes straight to
-`dispatch` can spend a turn on a thread nobody can see. The queue now checks first, other callers
-don't.
+Seen 2026-10-30 running `vp test run src/orchestration-v2 src/queue src/mcp src/scheduledTasks
+src/guest src/ws.test.ts` in `apps/server`: 26 failed, 2240 passed. The same 26 fail with entry K's
+refusal disabled. Files: `ClaudeAdapterV2.test.ts` (13, mostly "preserves ... with native PDFs,
+images, and paths"), `ProviderTurnStartService.test.ts` (4), `OpenCode2AdapterV2.test.ts` (2),
+`ClaudeReplayFixtures.integration.test.ts` (2, "must stream its output"),
+`OrchestratorMcpToolkit.integration.test.ts` (2), `AntigravityAdapterV2.test.ts` (1),
+`AcpRegistryReplayFixtures.integration.test.ts` (1), `ThreadMessageIntake.test.ts` (1, "claims
+question uploads"). Not confirmed on a clean `master`, and not diagnosed. Matters for the same
+reason as the entry above: a red run hides real regressions.
 
 ## `userInputAttachments.test.ts` fails three path tests on Windows
 

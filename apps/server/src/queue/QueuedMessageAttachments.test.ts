@@ -31,6 +31,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { createPendingAttachmentId, sweepStalePendingAttachments } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
+import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import type { ProjectionRecordFilter } from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
@@ -53,7 +54,9 @@ const shellOf = (state: ThreadState) =>
     : ({ id: threadId, archivedAt: state === "archived" ? "archived" : null } as never);
 
 const layerFor = (
-  onDispatch: (command: OrchestrationV2ServerCommand) => Effect.Effect<void>,
+  onDispatch: (
+    command: OrchestrationV2ServerCommand,
+  ) => Effect.Effect<void, Orchestrator.OrchestratorV2Error>,
   options: {
     readonly threadState?: Ref.Ref<ThreadState>;
     /** The send went out before it failed, so the thread holds the message. */
@@ -642,6 +645,35 @@ it.effect("a message due on an archived thread fails with the reason and keeps i
       assert.isTrue(yield* fileSystem.exists(yield* storedPath(queued.attachments![0]!)));
     }).pipe(Effect.provide(layerFor(countSends(sends), { threadState })));
   }),
+);
+
+it.effect("a message whose thread is archived mid-send fails with the same reason", () =>
+  Effect.gen(function* () {
+    const service = yield* QueuedMessageService.QueuedMessageService;
+    const queued = yield* service.enqueue(enqueueInput({}));
+    const statuses = yield* watchStatuses(service);
+
+    yield* fireTrigger;
+
+    assert.strictEqual(yield* statuses.next, "failed");
+    yield* statuses.stop;
+    assert.strictEqual(
+      (yield* findMessage(service, queued.id))?.failureDetail,
+      "The thread was archived when this message came due",
+    );
+  }).pipe(
+    Effect.provide(
+      layerFor((command) =>
+        Effect.fail(
+          new Orchestrator.OrchestratorThreadNotActiveError({
+            commandId: command.commandId,
+            threadId,
+            state: "archived",
+          }),
+        ),
+      ),
+    ),
+  ),
 );
 
 it.effect("a message waits out an archive that ends before it comes due", () =>

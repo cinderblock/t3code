@@ -244,6 +244,17 @@ export class OrchestratorSubagentThreadReadOnlyError extends Schema.TaggedError<
   }
 }
 
+export class OrchestratorThreadNotActiveError extends Schema.TaggedError<OrchestratorThreadNotActiveError>()(
+  "OrchestratorThreadNotActiveError",
+  { commandId: CommandId, threadId: ThreadId, state: Schema.Literals(["archived", "deleted"]) },
+) {
+  override get message(): string {
+    return this.state === "archived"
+      ? "This thread is archived. Unarchive it to send a message."
+      : "This thread was deleted.";
+  }
+}
+
 export class OrchestratorThreadAboveModeLimitError extends Schema.TaggedError<OrchestratorThreadAboveModeLimitError>()(
   "OrchestratorThreadAboveModeLimitError",
   {
@@ -306,6 +317,7 @@ export const OrchestratorV2Error = Schema.Union([
   OrchestratorCommandPreviouslyRejectedError,
   OrchestratorCommandIdConflictError,
   OrchestratorSubagentThreadReadOnlyError,
+  OrchestratorThreadNotActiveError,
   OrchestratorThreadAboveModeLimitError,
 ]);
 export type OrchestratorV2Error = typeof OrchestratorV2Error.Type;
@@ -5096,6 +5108,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
         return;
       }
+    }
+
+    // After the continuation checks: a stale automatic delivery stays a quiet accept.
+    if (projection.thread.archivedAt !== null || projection.thread.deletedAt !== null) {
+      return yield* new OrchestratorThreadNotActiveError({
+        commandId: command.commandId,
+        threadId: command.threadId,
+        state: projection.thread.deletedAt !== null ? "deleted" : "archived",
+      });
     }
 
     if (projection.thread.lastVisitedAt === null && !isNativeMaintenanceCommand(command)) {

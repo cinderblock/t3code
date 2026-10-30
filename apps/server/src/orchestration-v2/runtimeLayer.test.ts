@@ -1197,6 +1197,30 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
       assert.equal(unanswered.runtimeRequests[0]?.status, "pending");
       assert.deepEqual(unanswered.messages, []);
 
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("runtime-async-question-archive"),
+        threadId,
+      });
+      const refused = yield* orchestrator
+        .dispatch({
+          type: "runtime-request.respond",
+          commandId: CommandId.make("runtime-async-question-archived"),
+          threadId,
+          requestId,
+          answers: { color: "Red" },
+        })
+        .pipe(Effect.flip);
+      assert.equal(refused._tag, "OrchestratorThreadNotActiveError");
+      const stillOpen = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(stillOpen.runtimeRequests[0]?.status, "pending");
+      assert.deepEqual(stillOpen.messages, []);
+      yield* orchestrator.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make("runtime-async-question-unarchive"),
+        threadId,
+      });
+
       const command = {
         type: "runtime-request.respond" as const,
         commandId: CommandId.make("runtime-async-question-answer"),
@@ -3509,6 +3533,109 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
 
       assert.equal(first._tag, "OrchestratorProjectionError");
       assert.equal(retry._tag, "OrchestratorCommandPreviouslyRejectedError");
+    }),
+  );
+
+  it.effect.each(["archive", "delete"] as const)(
+    "refuses a message after thread.%s, with the same answer on a retry",
+    (lifecycle) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threadId = ThreadId.make(`runtime-layer-refused-${lifecycle}`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`runtime-layer-refused-${lifecycle}-create`),
+          threadId,
+          projectId: ProjectId.make(`runtime-layer-refused-${lifecycle}-project`),
+          title: "Refused message",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: process.cwd(),
+        });
+        yield* orchestrator.dispatch({
+          type: `thread.${lifecycle}`,
+          commandId: CommandId.make(`runtime-layer-refused-${lifecycle}-lifecycle`),
+          threadId,
+        });
+        const message = {
+          type: "message.dispatch" as const,
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+          commandId: CommandId.make(`runtime-layer-refused-${lifecycle}-message`),
+          threadId,
+          messageId: MessageId.make(`runtime-layer-refused-${lifecycle}-message`),
+          text: "Anyone there?",
+          attachments: [],
+          dispatchMode: { type: "start_immediately" as const },
+        };
+
+        const refused = yield* orchestrator.dispatch(message).pipe(Effect.flip);
+        const retry = yield* orchestrator.dispatch(message).pipe(Effect.flip);
+
+        assert.equal(refused._tag, "OrchestratorThreadNotActiveError");
+        assert.equal(retry._tag, "OrchestratorCommandPreviouslyRejectedError");
+        assert.include(retry.message, refused.message);
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(projection.messages, []);
+        assert.deepEqual(projection.runs, []);
+      }),
+  );
+
+  it.effect("an unarchived thread takes a new message but not the refused command", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-layer-unarchived");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("runtime-layer-unarchived-create"),
+        threadId,
+        projectId: ProjectId.make("runtime-layer-unarchived-project"),
+        title: "Unarchived",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        commandId: CommandId.make("runtime-layer-unarchived-archive"),
+        threadId,
+      });
+      const message = {
+        type: "message.dispatch" as const,
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+        commandId: CommandId.make("runtime-layer-unarchived-message"),
+        threadId,
+        messageId: MessageId.make("runtime-layer-unarchived-message"),
+        text: "Back again",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" as const },
+      };
+      yield* orchestrator.dispatch(message).pipe(Effect.flip);
+      yield* orchestrator.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make("runtime-layer-unarchived-unarchive"),
+        threadId,
+      });
+
+      const retry = yield* orchestrator.dispatch(message).pipe(Effect.flip);
+      assert.equal(retry._tag, "OrchestratorCommandPreviouslyRejectedError");
+
+      yield* orchestrator.dispatch({
+        ...message,
+        commandId: CommandId.make("runtime-layer-unarchived-message-2"),
+      });
+      const projection = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(projection.messages.length, 1);
+      assert.equal(projection.runs.length, 1);
     }),
   );
 

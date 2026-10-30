@@ -3,6 +3,7 @@ import {
   CheckpointId,
   CheckpointScopeId,
   CommandId,
+  MessageId,
   NodeId,
   ProviderSessionId,
   ProviderThreadId,
@@ -27,6 +28,7 @@ import * as CheckpointService from "./CheckpointService.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EffectWorker from "./EffectWorker.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
+import * as Orchestrator from "./Orchestrator.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
 import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
@@ -83,6 +85,7 @@ function layerExecutorFor(input: {
   readonly threads?: Partial<ThreadManagementService.ThreadManagementService["Service"]>;
   readonly continueAfterRestart?: boolean;
   readonly interrupt?: ProviderTurnControlService.ProviderTurnControlServiceV2Shape["interrupt"];
+  readonly steer?: ProviderTurnControlService.ProviderTurnControlServiceV2Shape["steer"];
   readonly rollback?: CheckpointRollbackService.CheckpointRollbackServiceV2Shape["execute"];
   readonly respond?: RuntimeRequestService.RuntimeRequestServiceV2["Service"]["respond"];
 }) {
@@ -92,7 +95,7 @@ function layerExecutorFor(input: {
       ProviderTurnControlService.ProviderTurnControlServiceV2,
       ProviderTurnControlService.ProviderTurnControlServiceV2.of({
         interrupt: input.interrupt ?? (() => Effect.void),
-        steer: () => Effect.void,
+        steer: input.steer ?? (() => Effect.void),
         interruptAndAwaitTerminal: (request) =>
           record(
             request.replacementProviderSessionId === undefined
@@ -513,6 +516,66 @@ it.effect("terminalizes a process-bound claim when success settlement fails", ()
     assert.isDefined(terminalError);
     assert.include(terminalError, "after execution started");
     assert.include(terminalError, "simulated success settlement failure");
+  }),
+);
+
+it.effect("a steer that missed its turn stands when the thread is gone", () =>
+  Effect.gen(function* () {
+    const timestamp = DateTime.formatIso(yield* DateTime.now);
+    const events = yield* Ref.make<ReadonlyArray<string>>([]);
+    const messageId = MessageId.make("message:effect-worker-steer");
+    const layer = layerExecutorFor({
+      events,
+      steer: () =>
+        Effect.fail(
+          new ProviderTurnControlService.ProviderTurnControlError({
+            threadId,
+            operation: "steer",
+            providerTurnId,
+            turnCompleted: true,
+          }),
+        ),
+      threads: {
+        getThreadRecords: () =>
+          Effect.succeed({
+            messages: [{ id: messageId, runId, text: "Also this", attachments: [] }],
+            runs: [{ id: runId }],
+          } as never),
+        dispatch: (command) =>
+          Effect.fail(
+            new Orchestrator.OrchestratorThreadNotActiveError({
+              commandId: command.commandId,
+              threadId,
+              state: "archived",
+            }),
+          ),
+      },
+    });
+    const effect: EffectOutbox.OrchestrationEffectV2 = {
+      id: "effect:steer-thread-gone",
+      commandId: CommandId.make("command:steer-thread-gone"),
+      threadId,
+      request: {
+        type: "provider-turn.steer",
+        providerSessionId: oldSessionId,
+        providerThreadId,
+        providerTurnId,
+        messageId,
+      },
+      status: "running",
+      attemptCount: 1,
+      availableAt: timestamp,
+      leaseOwner: "test-worker",
+      leaseExpiresAt: timestamp,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      completedAt: null,
+      lastError: null,
+    };
+    yield* Effect.gen(function* () {
+      const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+      assert.isTrue(Exit.isSuccess(yield* Effect.exit(executor.execute(effect))));
+    }).pipe(Effect.provide(layer));
   }),
 );
 

@@ -12,6 +12,7 @@
  * and settled to `sent`/`failed` afterwards, so a dispatch whose settle write
  * fails can never be replayed as a second turn on the next tick.
  */
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -20,6 +21,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -954,11 +956,18 @@ export const make = Effect.gen(function* () {
     if (Exit.isSuccess(dispatched)) {
       yield* markSent(message.id);
     } else {
-      yield* markFailed(message.id, String(dispatched.cause));
+      const error = Option.getOrUndefined(Cause.findErrorOption(dispatched.cause));
+      yield* markFailed(
+        message.id,
+        error?._tag === "OrchestratorThreadNotActiveError" && error.state === "archived"
+          ? ARCHIVED_WHEN_DUE
+          : String(dispatched.cause),
+      );
     }
   });
 
-  // Dispatch refuses neither state: it would start a turn on a thread nobody can see.
+  // The orchestrator refuses both states too. Reading first leaves a row unclaimed, and cancels
+  // rather than fails one whose thread is gone.
   const sendIfThreadIsLive = Effect.fn("QueuedMessageService.sendIfThreadIsLive")(function* (
     message: QueuedMessage,
   ) {
