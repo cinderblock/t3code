@@ -121,6 +121,39 @@ Confirmed at 5:02 AM PDT (12:02Z) by the first wake-up firing, running on the ne
   watcher's failure paths are still tested against a stub only; the success path now ran for real.
 - Wake-up task deleted. One firing was needed; it never held up the watcher.
 
+### Second relaunch: preflight (2026-10-30 2:05 PM PDT, 21:05Z)
+
+User approved a second idle relaunch ("start it"). Passed at **`7985c148b7`**, in a sibling worktree
+removed afterwards. That is the only commit the preflight proves: other threads may commit to `master`
+while the watcher waits, and the launcher builds whatever `master` is at launch. The running app was
+not touched.
+
+- **Build:** `vp i` then `vp run build:desktop`, 5 of 5 tasks.
+- **Seed:** `--projects 40 --threads-per-project 50` gave 3.8 GB, 758 threads, 661,023 events, 0 queue
+  rows, 0 scheduled tasks, 0 outbox rows, 0 active runs. The tool itself reported
+  `fork:9_QueuedMessageRestore`, so entry A's fix holds.
+- **Copy prepared by hand for a real test.** A plain seed would give migration 9 an empty table and
+  leave the boot nothing to run. So, in the copy only: removed the fork 9 record, dropped the two columns,
+  and inserted the live database's 16 rows, read-only from live: 15 sent, 1 cancelled. Live had no
+  `pending` or `sending` rows, and the insert excludes them, so nothing could send.
+- **Migration 9, first full boot on real data: pass.** The server logged `fork:9_QueuedMessageRestore`.
+  `t3fork_migrations` went from 8 to 9, `restorable_until` and `cancelled_by` exist, and all 16 rows kept
+  their statuses with NULL in both new columns.
+- **Boot and `QueuedMessageService.layer` in `runtimeLayer.ts`: pass.** Answered 200 in 6s, stayed up 56s,
+  more than three 15s ticks. Recovery changed nothing (all zero), no run started (2,662 before and after,
+  0 active), nothing sent, no outbox rows left, stderr empty.
+- **Not exercised:** the startup scan's cancel path, because no failed or restorable row sits on a missing
+  thread here, and `queued-messages.cleanup` itself, because no thread was deleted.
+- **Explained:** threads went from 758 to 759. The server auto-bootstraps a project from its working
+  directory in this mode, here the worktree's `apps\server`, with an empty "New thread" and no run. The
+  desktop app does not start that way. Auto-settle also settled old subagent threads in the copy.
+- **Warnings only:** PR lookup and settlement skipped for one deleted worktree
+  (`queued-message-verify`), the git spawn-rate notice, one 259ms stall during startup.
+
+Left in place, not deleted: `C:\temp\t3-preflight-7985\` (3.8 GB copy of real data), `C:\temp\t3-preflight2-*`,
+and from the first relaunch `C:\temp\t3-preflight-boot.*`, `-build.log`, `-seed.log`, `C:\temp\t3-live-check.mjs`,
+`C:\temp\t3-watcher-test-031001\`.
+
 ## Progress
 
 - [x] Item 1: `3c5f230f83`, plus four lines of its drag test that landed in `d94f7ab701`
