@@ -89,7 +89,7 @@ Relaunch thread: `t3-thread://v1/mcp:2cf06899-8261-49a9-bb43-530157899ff1`
 - [x] Item 1: `3c5f230f83`, plus four lines of its drag test that landed in `d94f7ab701`
 - [x] Item 2: `t3_send_later` built; evals not run (no API key)
 - [x] Item 3: `1fe8d05411` (server), `6617e3db3b` (web and user docs)
-- [ ] Item 4
+- [x] Item 4: verified, one fix in `eea3dab9a1`
 - [ ] Item 5
 - [ ] Relaunch, confirmed on the new commit
 
@@ -338,6 +338,63 @@ normal path), mobile UI (`apps/mobile` still compiles), keybindings (none exist 
   able to cancel any message in its thread; the attachments are new. Worth a look if it ever bites.
 - Failed rows keep their claimed files after a dismiss, since nothing can tell whether the thread
   uses them. A small leak until the thread is deleted, at most.
+
+## Item 4 result (2026-10-30 4:05 AM PDT, 11:05Z)
+
+**Closed.** `master` satisfies the sentence. Checked by reading the code plus a throwaway test feeding
+real shell shapes through `presentThreadShell` and `resolveThreadShelf`. One real defect, fixed.
+
+| #   | Check                              | Result              | Proof                                                                                                                                                                                             |
+| --- | ---------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Idle thread lands in Scheduled     | Pass, one exception | `threadInbox.ts:42`. Probe: `completed`, `interrupted`, `failed`, `cancelled`, `rolled_back`, and never-ran all give `scheduled`. Exception: an imported thread that never ran (below).           |
+| 2   | Working stays Working              | Pass                | `threadInbox.ts:18`. Probe: all five active statuses and parked on awaited background work give `working`. An unawaited dev server gives `scheduled`, which is right.                             |
+| 3   | Transitions                        | Fail, then fixed    | `threadInbox.ts`, `eea3dab9a1`. See below.                                                                                                                                                        |
+| 4   | Requests and other sections        | Pass                | `threadInbox.ts:47`, `Sidebar.tsx:645` (snoozed, settled and pinned resolve before `inbox`).                                                                                                      |
+| 5   | Item 3, `sending`, `t3_send_later` | Pass                | `quota.ts:82` counts only `pending`. Edit and Cancel both go through `cancel`, which publishes (`QueuedMessageService.ts:514`). `t3_send_later` goes through `enqueue`, same upsert, same stream. |
+| 6   | Reachability                       | Pass, with a wart   | `Sidebar.tsx:519` jump order, `:544` search, `SettingsPanels.tsx:901` and `settingsSearch.ts:414`.                                                                                                |
+
+**The defect.** Leaving a shelf skipped the 2-second grace for any "actionable" thread, and that test
+counts a failed run or a ready plan. Both were already true while the thread sat in Scheduled. So a
+message firing on a failed or usage-limited thread, the main case, could put it in the active list
+with a return stamp until its run started. Item 1's "a sent message holds its place" was false for
+exactly those threads. It needs the queue's `sent` to reach the client before the shell's `queued`
+run: they are separate streams with no ordering between them, and the server sends `sent` after the
+dispatch commits. So the window is short, and how often the client saw it is unmeasured. Now only a
+new request for the user skips the grace. Cost: cancelling on a failed thread returns it after the
+grace instead of at once, the same as any other thread.
+
+**`sending` is invisible in normal use.** `claim` publishes nothing, so a client sees `pending` then
+`sent` or `failed`. It only sees `sending` in a snapshot taken mid-dispatch, where it correctly counts
+as not scheduled. A crash leaves `sending`, which boot retires to `failed`, so the thread leaves.
+
+**Working section off: not a contradiction, left as is.** The sentence describes splitting Working:
+idle queued threads get a section, "working threads are in working". With Working off there is no such
+split, and the user has opted out of folding threads, so a new collapsed section would hide an idle
+thread they asked to keep in view. This user has Working on (`client-settings.json`). The result off
+is sensible: the thread stays in the list, the message sends on time, and the panel above the composer
+shows it. The row doesn't say Scheduled, because the keys aren't subscribed then. Also, the Legacy
+sidebar has no sections at all, so it has neither Working nor Scheduled.
+
+**Wart.** With Working off, a settings search for "Scheduled section" opens a page where that row is
+hidden. Left alone: it is one click of no consequence.
+
+**Left open, not defects.**
+
+- A ready plan with a queued message sits in Scheduled, though `resolveThreadShelf`'s comment says a
+  request for the user does not stay. The brief names only approvals and questions, and the queued
+  message is often the answer to that plan. Moving it is one line if the user wants it surfaced.
+- A usage-limited thread with a queued message reads Scheduled, not Limited (`SidebarThreadRow.tsx:743`).
+  Failed still shows. Item 1's note that a Limited row "must stay visible" and the docs' "unless it has
+  a failure" read wider than the code, but this is the case the row status exists for.
+- An imported thread that never ran stays in Working, reading Waiting, with or without a message. It
+  predates this work and is not queue-specific. No such thread exists in the live database (0 of 1501).
+  Logged in `ISSUES.md`.
+
+**Checks.** `vp fmt` and `vp lint` clean on both touched files. `tsc --noEmit` clean in client-runtime,
+web, mobile. `vp test run`: 70 in `threadInbox`, `entities`, `threadShell`; 120 in `Sidebar.logic` and
+`Sidebar.drag`; 64 in mobile `threadListV2`. The two new held-message cases failed before the fix.
+Read-only query of `~/.t3/userdata/statev2.sqlite` for the count above. Not seen in a running client:
+the stream ordering is from reading the server code.
 
 ## Findings / gotchas
 

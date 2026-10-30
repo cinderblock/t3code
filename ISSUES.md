@@ -98,3 +98,11 @@ stays pending, then fails at dispatch when its trigger fires. Since queued messa
 claimed attachments, those files stay on disk too, because thread cleanup only knows the ids on
 the thread's own messages. Matters because the thread's Scheduled state and the failure point at a
 thread that no longer exists, and the files leak.
+
+## An imported thread that never ran reads Waiting in Working
+
+A thread created with `importedNativeThread` has an active provider thread and no run, so the shell
+status is `idle` (`latestRun?.status ?? "idle"` in `ProjectionStore.ts`) and `shellRuntime` passes it
+through. `isThreadWorking` takes any `idle` runtime to mean parked on background work, so the thread
+sits in Working until its first message, and a queued message leaves it there instead of in Scheduled.
+Confirmed against `presentThreadShell`; no such thread exists in this install's database today.
