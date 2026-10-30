@@ -29,7 +29,10 @@ import {
   useComposerDraftStore,
   DraftId,
 } from "../../composerDraftStore";
-import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
+import {
+  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+  threadContextsOutsideEnvironment,
+} from "@t3tools/shared/composerContextReferences";
 import { createModelSelection } from "@t3tools/shared/model";
 import type { ProviderInstanceEntry } from "../../providerInstances";
 import { getComposerPromptInjectionState, getComposerProviderState } from "./composerProviderState";
@@ -43,6 +46,8 @@ import {
   prepareRevertedMessageAttachments,
   waitForRevertedMessage,
 } from "../ChatView.logic";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { environmentPresentations } from "../../state/presentation";
 import { readPreparedConnection } from "../../state/session";
 import { recallableComposerPrompt } from "./composerPromptHistory";
 
@@ -327,6 +332,21 @@ export function resolveMultipleModelTargets(input: {
       }).interactionMode,
     };
   });
+}
+
+/** The warning for an attached thread this machine's agent can't read, if the draft has one. */
+export function strandedThreadContextWarning(
+  input: Parameters<typeof threadContextsOutsideEnvironment>[0],
+) {
+  const stranded = threadContextsOutsideEnvironment(input)[0];
+  if (!stranded) return null;
+  const owner =
+    appAtomRegistry.get(environmentPresentations.presentationsAtom).get(stranded.environmentId)
+      ?.entry.target.label ?? "its machine";
+  return {
+    title: "Attached thread is on another machine",
+    description: `This machine's agent can't read "${stranded.title}". Remove it, or switch back to ${owner} to send.`,
+  };
 }
 
 /**

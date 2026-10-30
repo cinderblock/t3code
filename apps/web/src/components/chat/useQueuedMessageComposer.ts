@@ -54,11 +54,13 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import {
+  buildExpiredTerminalContextToastCopy,
   deriveComposerSendState,
   sendTitleFallbackLabels,
   snapshotComposerSend,
 } from "../ChatView.logic";
 import { toastManager, stackedThreadToast } from "../ui/toast";
+import { strandedThreadContextWarning } from "./chatViewSend";
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
 import { pendingDraftWork } from "./pendingDraftWork";
 import {
@@ -170,17 +172,39 @@ export function useQueuedMessageComposer(input: {
       reviewComments: sendContext.reviewComments,
       threadContexts: sendContext.threadContexts,
     };
-    const { sendableTerminalContexts, hasSendableContent } = deriveComposerSendState({
-      prompt: contents.prompt,
-      imageCount: contents.images.length + contents.files.length,
-      terminalContexts: contents.terminalContexts,
-      elementContextCount:
-        contents.previewAnnotations.length +
-        contents.reviewComments.length +
-        contents.threadContexts.length,
+    const { sendableTerminalContexts, expiredTerminalContextCount, hasSendableContent } =
+      deriveComposerSendState({
+        prompt: contents.prompt,
+        imageCount: contents.images.length + contents.files.length,
+        terminalContexts: contents.terminalContexts,
+        elementContextCount:
+          contents.previewAnnotations.length +
+          contents.reviewComments.length +
+          contents.threadContexts.length,
+      });
+    const warnExpiredContexts = (variant: "omitted" | "empty") => {
+      if (expiredTerminalContextCount === 0) return;
+      const { title, description } = buildExpiredTerminalContextToastCopy(
+        expiredTerminalContextCount,
+        variant,
+      );
+      warn(title, description);
+    };
+    if (!hasSendableContent) {
+      warnExpiredContexts("empty");
+      return;
+    }
+    const stranded = strandedThreadContextWarning({
+      text: contents.prompt,
+      records: contents.threadContexts,
+      environmentId,
     });
-    if (!hasSendableContent) return;
+    if (stranded) {
+      warn(stranded.title, stranded.description);
+      return;
+    }
     const snapshot = snapshotComposerSend({ ...contents, sendableTerminalContexts });
+    if (composerRef.current?.validateProviderInput(snapshot.messageText) === false) return;
     const { threadId } = threadRef;
     const launchStrategy = resolveQueuedLaunchStrategy(firstSend);
     if (launchStrategy === "missing-base-branch") {
@@ -285,6 +309,7 @@ export function useQueuedMessageComposer(input: {
       });
       // The draft stays until the server has the message, so a failure loses nothing.
       if (result === null || result._tag === "Failure") return;
+      warnExpiredContexts("omitted");
       forgetQueueTrigger(threadKey);
       const store = useComposerDraftStore.getState();
       const attachmentIds = snapshot.attachments.map((attachment) => attachment.id);

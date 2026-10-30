@@ -107,12 +107,10 @@ import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
 import { readEnvironmentScope } from "../../state/session";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
-import {
-  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
-  threadContextsOutsideEnvironment,
-} from "@t3tools/shared/composerContextReferences";
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 import {
   draftSendState,
+  strandedThreadContextWarning,
   type MultipleModelTarget,
   resolveMultipleModelTargets,
   prepareTurnAttachments,
@@ -543,22 +541,13 @@ export function useComposerSend(input: ComposerSendInput) {
           previewAnnotationContextReference(directAnnotation.annotation),
         ])
       : promptRef.current;
-    const strandedThread = threadContextsOutsideEnvironment({
+    const strandedThread = strandedThreadContextWarning({
       text: promptForSend,
       records: composerThreadContexts,
       environmentId,
-    })[0];
+    });
     if (strandedThread) {
-      const owner =
-        readEnvironmentPresentation(strandedThread.environmentId)?.entry.target.label ??
-        "its machine";
-      toastManager.add(
-        stackedThreadToast({
-          type: "warning",
-          title: "Attached thread is on another machine",
-          description: `This machine's agent can't read "${strandedThread.title}". Remove it, or switch back to ${owner} to send.`,
-        }),
-      );
+      toastManager.add(stackedThreadToast({ type: "warning", ...strandedThread }));
       return;
     }
     if (queuedRunEdit.isEditing) {
