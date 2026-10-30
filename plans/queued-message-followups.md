@@ -151,10 +151,122 @@ this order. Scope is what the follow-ups left open, not the older `ISSUES.md` en
 - [x] E. Cancel gaps: `bb4ffe01fe` (server, migration 9), `78d8c8dbaf` (web, docs); a cancel now keeps the message restorable for 7 days
 - [x] F. Imported thread that never ran reads Waiting in Working: `32e9035d29`; runtime stays non-null because it locks the provider
 - [x] I. Local composer commands are sent to the provider when queued: `49ec00c703`; refused at queue time, and `/usage-limits` turned out to be a fourth one
-- [ ] J. Queued messages skip idle compaction (found by entry C)
+- [x] J. Queued messages skip idle compaction: `772238e3b3`; judged at fire time with the composer's rule, `/compact` then the message
 - [ ] K. `message.dispatch` starts a run on a deleted or archived thread (found by entry D)
 - [ ] G. Real-client verification, including the first real firings
 - [ ] H. `t3_send_later` evals
+
+## Entry J result (2026-10-30 11:47 AM PDT, 18:47Z)
+
+Fixed in `772238e3b3`, claimed in `0f94e2fa17`. A contained change: the server already had every input but one.
+
+**What the client read, and where the server gets it.**
+
+| Input                 | Client                                            | At fire time                                                                |
+| --------------------- | ------------------------------------------------- | --------------------------------------------------------------------------- |
+| Token count, last use | `activeContextWindow`, from provider turns        | Same `providerTurns[].tokenUsage` that `idleCompactionWindow` already reads |
+| Cache TTL             | `promptCacheTtlMs`, else 70 minutes               | Same field, same fallback                                                   |
+| Setting               | `resolveIdleCompaction(...) !== "off"`            | Same function, server settings                                              |
+| Keep history          | `keepFullHistory`, per-thread React state         | Not reachable, so the row stores it                                         |
+| "Don't ask again"     | localStorage, plus the thread's answered requests | The thread's answers are read; the browser's flag goes on the row           |
+| Handoff to a provider | Composer pick against the conversation            | Row's `modelSelection.instanceId` against the thread's                      |
+
+**The rule is shared, not copied.** `shouldOfferResumeCompaction` and `hasDismissedResumeCompaction` moved to
+`packages/shared/src/claudeCompaction.ts`, and web imports them from there. `IdleCompaction.ts` split out
+`compactableUsage`, the gate both compactions use, so `shouldCompactBeforeSend` adds only what differs. Settled and
+snoozed threads count, because the message wakes them anyway. A failed or interrupted last run counts too, as it
+does for the chip. The latter's check of a pending merge-back matters here: `/compact` would make the message queue,
+and the orchestrator refuses a queued message on such a thread.
+
+**Decisions.**
+
+- **Judged at fire time,** in `sendMessage`, from reads made there. Nothing is decided at queue time except the keep
+  choice.
+- **Keep history is stored, and unset means compact.** It is a per-send chip, not a setting, so the row needs a value.
+  `sendContext.keepFullHistory` is set when the chip reads Full or this browser has answered "Don't ask again".
+  Compact is the composer's own default, and it is what the issue wants for a message left to wait. It also covers
+  rows already pending and `t3_send_later`, so no migration. The chip resets after queueing, as a send resets it, and
+  a take-back puts it back.
+- **`/compact` then the message, with two dispatches and no new state.** This is the composer's order: the first
+  starts the run, the second lands behind it in the orchestrator's own queue, under the thread lock. So nothing can
+  race, the queue carries the message durably across a restart, and the row goes `sent` when both are in. Both use
+  `queue_after_active`, so a turn that started in the gap puts both behind it. The turn is sent as T3 Code
+  (`createdBy: agent`, `creationSource: server`) with `idleCompaction: "onReturn"`, so it reads "Compacting after
+  being idle" and sends no Done notification of its own. That the real orchestrator starts the first and queues the
+  second is tested in `runtimeLayer.test.ts`.
+- **Failures match the composer.**
+
+| Case                                     | Behavior                                                                                                       |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| Compaction refused at dispatch           | Row goes **failed**, message not sent, Edit message available. A send does the same.                           |
+| Compaction run fails at the provider     | Message stays in the thread's queue, **held**, and is not lost. Resumes on the user's next send or a resume.   |
+| Run completes, compaction item fails     | Message goes next. The thread keeps its history.                                                               |
+| Compaction run interrupted               | Message goes next.                                                                                             |
+| Compaction never finishes                | Thread stays Working, message waits behind it. **Stop** clears the run and holds the message until resumed.    |
+| Reading the session fails or dies        | Message sends without compacting, with a warning logged. A stale session costs tokens; a lost send costs more. |
+| Two rows fire in one tick                | One compaction. The second sees the run in progress, and both messages queue behind it.                        |
+| Row for another provider                 | No compaction: the session is being left.                                                                      |
+| Idle compaction **Never**                | No compaction.                                                                                                 |
+| First message of a new thread            | Launch path, no session, no check.                                                                             |
+| Warm session, under 200K, other provider | Plain dispatch, as before.                                                                                     |
+
+**No watchdog for a compaction that hangs.** The row is already `sent`, so a timer would have to interrupt the run,
+which is a new mechanism for a case that any turn on any thread shares, and the composer has none. It stays visible
+as Working and Stop gets out of it. Say so if a real timeout is wanted.
+
+**Real data, read-only on `statev2.sqlite`.** 154 `/compact` runs: 149 completed, 3 failed, 2 interrupted. All 149
+completed runs reported usage under 200K right after, so a finished compaction can't trigger another; the "never
+compact a compaction" guard is a second line. 3,271 provider turns carry usage, 1,888 over 200K. TTL is `3600000` on
+1,937 and absent on 1,334, so the 70-minute fallback is the common path, not an edge. Three failures in 154 means the
+held case will occur.
+
+**Surfaces.** Applied: server reactor (every trigger type, and `t3_send_later`, which go through `sendMessage`), web and
+desktop composer clock, take-back, contracts (one optional field), shared, user docs (`providers-claude.md`,
+`thread-sidebar.md`). Providers: Claude only, by `compactableUsage`'s driver check, the same as the chip and idle
+compaction; no other adapter has this behavior. Mobile: no queue composer, and it inherits the default through
+`t3_send_later`. The official app is unaffected. `t3-busy.mjs` sees the compact turn as a real run, as the brief
+expects. No fake run is created. Evals: no model-facing text changed.
+
+**Checks.**
+
+- Test first: 15 failed before the fix across `IdleCompaction.test.ts` and `QueuedMessageFirstSend.test.ts`.
+- The first full run after the fix was **not** clean: 10 failed, with an exit code of 0 from the pipeline. Two test
+  mocks had no `runs`, which also showed the check's `Effect.catch` missed defects, so a bug there would have failed
+  the row instead of sending. `Effect.catchDefect` added with a test, mocks given a real answer.
+- `vp test run`: server 238 of 238 across `IdleCompaction`, `src/queue`, `sendLater`, `ThreadLaunchService`,
+  `runtimeLayer`. The final `runtimeLayer` ordering test was added after that, and passes in a `-t "queued message"` run
+  (8 passed, 82 skipped). Web 91 of 91 across `ContextWindowMeter.logic`, `contextWindow`, `queuedMessageRestore`,
+  `ChatView.logic`.
+- `tsc --noEmit` clean in server, web, contracts, shared, client-runtime, mobile.
+- `vp fmt` clean. `vp lint`: only the two long headers already in `ISSUES.md`, at `queuedMessage.ts:16` and
+  `QueuedMessageService.ts:1`.
+
+**Not verified.**
+
+- **No real compaction fired from the queue,** and no real Claude turn. The reactor is tested with a mocked thread service,
+  and the ordering against the real orchestrator without a provider. Entry G should queue on a stale thread over 200K
+  and check `/compact`, then the message, then the reduced usage.
+- **The client half has no test of its own:** `queueDraft` storing the choice, and the chip's reset and take-back, are
+  read and typechecked only, as in entries C and I. The hook needs a browser test. The rule the composer uses did not
+  change, but its import did, and the `ChatView` call now passes raw requests.
+- **Claude's native `resume_return` dialog was not exercised.** In the CLI it is behind feature flags and asks at 70
+  minutes and 100K tokens, in `maybePromptStaleResume`. If it fires on an unattended turn, the question waits for an
+  answer until the CLI's dialog deadline, whose default is `cancelled`. That already applied to fired messages, and
+  this change neither causes nor fixes it. Read from the CLI bundle only; how T3 clears the pending question at that
+  deadline was not checked.
+
+**Open.**
+
+- A message held behind a failed compaction leaves its row `sent` and the Scheduled section, and the thread shows the
+  failure and the held queue. It reads correctly but nothing notifies a user who is away.
+- "Don't ask again" from a browser is carried only by rows that browser queued. An agent's row on a different thread
+  can't see that flag, and it compacts. It only reads that thread's own answers.
+- The chip shows only on a thread that is already stale, so on a warm thread there is no way to choose Full for a
+  later firing. Documented in `providers-claude.md`. The way out is the **Never** setting.
+- A failed `/compact` leaves history intact, and a later firing on the same thread tries again. Each firing makes at
+  most one attempt.
+- Temp files left, per the brief: `C:\temp\entry-j-red.out`, `entry-j-green.out`, `entry-j-replay.mjs`,
+  `entry-j-compact-usage.mjs`.
 
 ## Entry I result (2026-10-30 11:18 AM PDT, 18:18Z)
 
