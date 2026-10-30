@@ -30,6 +30,7 @@ import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import createQueuedMessages from "../persistence/Migrations/fork/002_QueuedMessages.ts";
 import addQueuedMessageContent from "../persistence/Migrations/fork/008_QueuedMessageContent.ts";
+import addQueuedMessageRestore from "../persistence/Migrations/fork/009_QueuedMessageRestore.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as QueuedMessageService from "./QueuedMessageService.ts";
@@ -110,7 +111,12 @@ const layerFor = (
   } as unknown as DocumentText.DocumentText["Service"]);
   return QueuedMessageService.layer.pipe(
     Layer.provideMerge(
-      Layer.effectDiscard(Effect.andThen(createQueuedMessages, addQueuedMessageContent)),
+      Layer.effectDiscard(
+        createQueuedMessages.pipe(
+          Effect.andThen(addQueuedMessageContent),
+          Effect.andThen(addQueuedMessageRestore),
+        ),
+      ),
     ),
     Layer.provide(providers),
     Layer.provide(threads),

@@ -46,6 +46,7 @@ import ForkMigration0005 from "./Migrations/fork/005_RepairUpstreamMigrationRows
 import ForkMigration0006 from "./Migrations/fork/006_AuthPasskeys.ts";
 import ForkMigration0007 from "./Migrations/fork/007_AdministrativePasskeys.ts";
 import ForkMigration0008 from "./Migrations/fork/008_QueuedMessageContent.ts";
+import ForkMigration0009 from "./Migrations/fork/009_QueuedMessageRestore.ts";
 
 /** Tracking table for fork migrations, kept apart from upstream's `effect_sql_migrations`. */
 export const FORK_MIGRATIONS_TABLE = "t3fork_migrations";
@@ -59,6 +60,7 @@ export const forkMigrationEntries = [
   [6, "AuthPasskeys", ForkMigration0006],
   [7, "AdministrativePasskeys", ForkMigration0007],
   [8, "QueuedMessageContent", ForkMigration0008],
+  [9, "QueuedMessageRestore", ForkMigration0009],
 ] as const;
 
 export const makeForkMigrationLoader = (throughId?: number) =>

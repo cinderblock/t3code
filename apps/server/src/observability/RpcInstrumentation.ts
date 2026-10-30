@@ -220,6 +220,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.queueEnqueueMessage]: "queue",
   [WS_METHODS.queueUpdateMessage]: "queue",
   [WS_METHODS.queueCancelMessage]: "queue",
+  [WS_METHODS.queueDiscardMessage]: "queue",
   [WS_METHODS.queueListMessages]: "queue",
   [WS_METHODS.subscribeQueuedMessages]: "queue",
 } as const satisfies Readonly<Record<WsRpcMethod, string>>;

@@ -387,6 +387,7 @@ import { UsageHistoryError, UsageHistoryInput, UsageHistoryResult } from "./quot
 import {
   QueuedMessage,
   QueuedMessageCancelInput,
+  QueuedMessageDiscardInput,
   QueuedMessageEnqueueInput,
   QueuedMessageError,
   QueuedMessageListInput,
@@ -594,6 +595,7 @@ export const WS_METHODS = {
   queueEnqueueMessage: "queue.enqueueMessage",
   queueUpdateMessage: "queue.updateMessage",
   queueCancelMessage: "queue.cancelMessage",
+  queueDiscardMessage: "queue.discardMessage",
   queueListMessages: "queue.listMessages",
   subscribeQueuedMessages: "subscribeQueuedMessages",
   subscribeVcsStatus: "subscribeVcsStatus",
@@ -1955,6 +1957,12 @@ export const WsQueueCancelMessageRpc = Rpc.make(WS_METHODS.queueCancelMessage, {
   error: Schema.Union([QueuedMessageError, EnvironmentAuthorizationError]),
 });
 
+export const WsQueueDiscardMessageRpc = Rpc.make(WS_METHODS.queueDiscardMessage, {
+  payload: QueuedMessageDiscardInput,
+  success: QueuedMessage,
+  error: Schema.Union([QueuedMessageError, EnvironmentAuthorizationError]),
+});
+
 export const WsQueueListMessagesRpc = Rpc.make(WS_METHODS.queueListMessages, {
   payload: QueuedMessageListInput,
   success: QueuedMessageListResult,
@@ -2206,6 +2214,7 @@ export const ForkWsRpcGroup = RpcGroup.make(
   WsQueueEnqueueMessageRpc,
   WsQueueUpdateMessageRpc,
   WsQueueCancelMessageRpc,
+  WsQueueDiscardMessageRpc,
   WsQueueListMessagesRpc,
   WsSubscribeQueuedMessagesRpc,
   WsVcsGraphSnapshotRpc,

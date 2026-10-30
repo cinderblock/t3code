@@ -138,6 +138,10 @@ export function createUsageEnvironmentAtoms<R, E>(
       label: "environment-data:queue:cancel",
       tag: WS_METHODS.queueCancelMessage,
     }),
+    discardQueuedMessage: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:queue:discard",
+      tag: WS_METHODS.queueDiscardMessage,
+    }),
     queuedMessagesProjection: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:queue:projection",
       tag: WS_METHODS.subscribeQueuedMessages,

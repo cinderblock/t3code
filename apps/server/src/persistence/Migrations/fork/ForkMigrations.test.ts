@@ -21,6 +21,7 @@ const FORK_MIGRATION_LIST: ReadonlyArray<readonly [number, string]> = [
   [6, "AuthPasskeys"],
   [7, "AdministrativePasskeys"],
   [8, "QueuedMessageContent"],
+  [9, "QueuedMessageRestore"],
 ];
 
 const tableNames = Effect.gen(function* () {

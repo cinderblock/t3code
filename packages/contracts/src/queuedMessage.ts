@@ -81,7 +81,7 @@ export const QueuedMessageStatus = Schema.Literals([
   "sent",
   /** Dispatch attempted but the orchestration command failed. */
   "failed",
-  /** Cancelled by the user before firing. */
+  /** Cancelled before firing, or dismissed after failing. */
   "cancelled",
 ]);
 export type QueuedMessageStatus = typeof QueuedMessageStatus.Type;
@@ -111,7 +111,7 @@ export const QueuedMessage = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
   text: Schema.String,
-  /** Owned by the row until it sends; empty on a row that has been sent or cancelled. */
+  /** Owned by the row until it sends; empty once sent, or cancelled and no longer restorable. */
   attachments: Schema.optional(Schema.Array(ChatAttachment)),
   context: Schema.optional(OrchestrationMessageContext),
   trigger: QueuedMessageTrigger,
@@ -125,6 +125,9 @@ export const QueuedMessage = Schema.Struct({
   sentAt: Schema.NullOr(IsoDateTime),
   /** Set when status is "failed". */
   failureDetail: Schema.NullOr(Schema.String),
+  /** Set on a cancelled message that still holds its content; the server drops it at this time. */
+  restorableUntil: Schema.optional(IsoDateTime),
+  cancelledBy: Schema.optional(Schema.Literals(["user", "agent"])),
 });
 export type QueuedMessage = typeof QueuedMessage.Type;
 
@@ -155,6 +158,11 @@ export const QueuedMessageCancelInput = Schema.Struct({
   id: QueuedMessageId,
 });
 export type QueuedMessageCancelInput = typeof QueuedMessageCancelInput.Type;
+
+export const QueuedMessageDiscardInput = Schema.Struct({
+  id: QueuedMessageId,
+});
+export type QueuedMessageDiscardInput = typeof QueuedMessageDiscardInput.Type;
 
 export const QueuedMessageListInput = Schema.Struct({
   /** Restrict to one thread; omit for all pending messages. */

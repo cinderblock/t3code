@@ -271,7 +271,10 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
         { baseDir: destDir, source, projects: 5, threadsPerProject: 10 },
         { sharedHome: sourceDir },
       );
-      assert.deepStrictEqual(behind.executedMigrations, ["fork:8_QueuedMessageContent"]);
+      assert.deepStrictEqual(behind.executedMigrations, [
+        "fork:8_QueuedMessageContent",
+        "fork:9_QueuedMessageRestore",
+      ]);
       const columns = yield* withDatabase(
         behind.databasePath,
         Effect.gen(function* () {

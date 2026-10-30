@@ -37,6 +37,7 @@ import {
   ThreadId,
   type QueuedMessage,
   type QueuedMessageCancelInput,
+  type QueuedMessageDiscardInput,
   type QueuedMessageEnqueueInput,
   type QueuedMessageId,
   type QueuedMessageListInput,
@@ -63,6 +64,8 @@ import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
 
 const REACTOR_TICK = Duration.seconds(15);
 const ARCHIVED_WHEN_DUE = "The thread was archived when this message came due";
+/** Long enough to outlast a weekend away from a message an agent cancelled. */
+const RESTORE_WINDOW = Duration.days(7);
 /** A window that falls to this percent from above it has reset. */
 const RESET_EPSILON_PERCENT = 5;
 
@@ -254,6 +257,8 @@ interface QueuedMessageRow {
   readonly updatedAt: string;
   readonly sentAt: string | null;
   readonly failureDetail: string | null;
+  readonly restorableUntil: string | null;
+  readonly cancelledBy: string | null;
 }
 
 /**
@@ -295,6 +300,10 @@ export function decodeQueuedMessageRow(
       updatedAt: row.updatedAt,
       sentAt: row.sentAt,
       failureDetail: row.failureDetail,
+      ...(row.restorableUntil === null ? {} : { restorableUntil: row.restorableUntil }),
+      ...(row.cancelledBy === null
+        ? {}
+        : { cancelledBy: row.cancelledBy as NonNullable<QueuedMessage["cancelledBy"]> }),
     },
   };
 }
@@ -319,17 +328,28 @@ export class QueuedMessageService extends Context.Service<
       input: QueuedMessageUpdateInput,
     ) => Effect.Effect<QueuedMessage, QueuedMessageError>;
     /**
-     * Cancels a pending message and removes its files, or dismisses a failed one. Fails when the
-     * message is past that, so a success proves this caller took it back and nobody else did.
+     * Cancels a pending or failed message, keeping its content for `RESTORE_WINDOW` so that losing
+     * this response can't lose the message. Fails when the message is past that, so a success
+     * proves this caller took it back and nobody else did.
      */
     readonly cancel: (
       input: QueuedMessageCancelInput,
     ) => Effect.Effect<QueuedMessage, QueuedMessageError>;
-    /** `cancel`, refusing a message that belongs to another thread. */
+    /**
+     * An agent's `cancel`, refusing a message that belongs to another thread. The user's message
+     * stays restorable and says who cancelled it; an agent's own has nothing worth keeping.
+     */
     readonly cancelForThread: (input: {
       readonly id: QueuedMessageId;
       readonly threadId: ThreadId;
     }) => Effect.Effect<QueuedMessage, QueuedMessageError>;
+    /**
+     * Drops the content of a failed or restorable message: the second half of a take-back, or a
+     * dismiss. Repeating it succeeds, since the caller wants the same end state either way.
+     */
+    readonly discard: (
+      input: QueuedMessageDiscardInput,
+    ) => Effect.Effect<QueuedMessage, QueuedMessageError>;
     /**
      * Takes back everything not yet sent on a thread that is gone, files included. A failed row
      * goes too: its files are the thread's or nobody's, and either way nothing else removes them.
@@ -378,9 +398,7 @@ export const make = Effect.gen(function* () {
     Scope.close(scope, Exit.void),
   );
 
-  const selectRows = (threadId: string | undefined, status: string | undefined) =>
-    sql`
-      SELECT
+  const rowColumns = sql`
         id,
         thread_id AS "threadId",
         message_id AS "messageId",
@@ -394,7 +412,15 @@ export const make = Effect.gen(function* () {
         created_at AS "createdAt",
         updated_at AS "updatedAt",
         sent_at AS "sentAt",
-        failure_detail AS "failureDetail"
+        failure_detail AS "failureDetail",
+        restorable_until AS "restorableUntil",
+        cancelled_by AS "cancelledBy"
+  `;
+  const isRestorable = sql`(status = 'cancelled' AND restorable_until IS NOT NULL)`;
+
+  const selectRows = (threadId: string | undefined, status: string | undefined) =>
+    sql`
+      SELECT ${rowColumns}
       FROM fork_queued_messages
       WHERE 1 = 1
         ${threadId === undefined ? sql`` : sql`AND thread_id = ${threadId}`}
@@ -405,30 +431,20 @@ export const make = Effect.gen(function* () {
       Effect.mapError(toQueuedError("Failed to load queued messages")),
     );
 
-  const loadById = Effect.fn("QueuedMessageService.loadById")(function* (id: string) {
+  const loadRow = Effect.fn("QueuedMessageService.loadRow")(function* (id: string) {
     const rows = yield* sql`
-      SELECT
-        id,
-        thread_id AS "threadId",
-        message_id AS "messageId",
-        text,
-        attachments_json AS "attachmentsJson",
-        context_json AS "contextJson",
-        trigger_json AS "triggerJson",
-        send_context_json AS "sendContextJson",
-        status,
-        origin,
-        created_at AS "createdAt",
-        updated_at AS "updatedAt",
-        sent_at AS "sentAt",
-        failure_detail AS "failureDetail"
+      SELECT ${rowColumns}
       FROM fork_queued_messages
       WHERE id = ${id}
     `.pipe(Effect.mapError(toQueuedError("Failed to load queued message")));
     if (rows.length === 0) {
       return yield* new QueuedMessageError({ message: `Queued message ${id} was not found` });
     }
-    const decoded = decodeQueuedMessageRow(rows[0] as unknown as QueuedMessageRow);
+    return rows[0] as unknown as QueuedMessageRow;
+  });
+
+  const loadById = Effect.fn("QueuedMessageService.loadById")(function* (id: string) {
+    const decoded = decodeQueuedMessageRow(yield* loadRow(id));
     if ("error" in decoded) {
       return yield* new QueuedMessageError({ message: `Queued message ${id}: ${decoded.error}` });
     }
@@ -611,36 +627,91 @@ export const make = Effect.gen(function* () {
     return message;
   });
 
-  const cancel: QueuedMessageService["Service"]["cancel"] = Effect.fn(
-    "QueuedMessageService.cancel",
-  )(function* (input) {
+  const cancelAs = Effect.fn("QueuedMessageService.cancelAs")(function* (
+    id: QueuedMessageId,
+    cancelledBy: NonNullable<QueuedMessage["cancelledBy"]>,
+  ) {
     const refused = (status: QueuedMessage["status"]) =>
       new QueuedMessageError({
-        message: `Queued message ${input.id} is ${status}; only pending or failed messages can be cancelled`,
+        message: `Queued message ${id} is ${status}; only pending or failed messages can be cancelled`,
       });
-    const existing = yield* loadById(input.id);
+    const existing = yield* loadById(id);
     if (existing.status !== "pending" && existing.status !== "failed") {
       return yield* refused(existing.status);
     }
-    const now = yield* nowIso;
-    // A failed row is dismissed the same way: it stops showing, and nothing
-    // downstream ever distinguishes "cancelled before" from "dismissed after".
+    const now = yield* DateTime.now;
+    const restorableUntil = DateTime.formatIso(DateTime.addDuration(now, RESTORE_WINDOW));
     const updated = yield* sql`
       UPDATE fork_queued_messages
-      SET status = 'cancelled', updated_at = ${now}, attachments_json = NULL, context_json = NULL
-      WHERE id = ${input.id} AND status = ${existing.status}
+      SET status = 'cancelled', updated_at = ${DateTime.formatIso(now)},
+        restorable_until = ${restorableUntil}, cancelled_by = ${cancelledBy}
+      WHERE id = ${id} AND status = ${existing.status}
       RETURNING id
     `.pipe(Effect.mapError(toQueuedError("Failed to cancel queued message")));
     if (updated.length === 0) {
-      return yield* refused((yield* loadById(input.id)).status);
+      return yield* refused((yield* loadById(id)).status);
     }
-    // A failed send may still have reached the thread, which then owns these files.
-    if (existing.status === "pending") {
-      yield* releaseAttachments(existing.attachments ?? []);
-    }
-    const message = yield* loadById(input.id);
+    const message = yield* loadById(id);
     yield* publishUpsert(message);
     return message;
+  });
+
+  const cancel: QueuedMessageService["Service"]["cancel"] = Effect.fn(
+    "QueuedMessageService.cancel",
+  )(function* ({ id }) {
+    return yield* cancelAs(id, "user");
+  });
+
+  /** A send that failed may still have gone out, and then the thread uses these same files. */
+  const threadHoldsFiles = Effect.fn("QueuedMessageService.threadHoldsFiles")(function* (
+    message: QueuedMessage,
+  ) {
+    if (message.failureDetail === null || (message.attachments ?? []).length === 0) return false;
+    const held = Effect.gen(function* () {
+      if ((yield* threads.getThreadShell(message.threadId)) === null) return false;
+      const { messages } = yield* threads.getThreadRecords(message.threadId, ["messages"], {
+        messageIds: [message.messageId],
+      });
+      return messages.length > 0;
+    });
+    return yield* held.pipe(
+      Effect.mapError(toQueuedError("Failed to read a queued message's thread")),
+    );
+  });
+
+  /** A row this build can't read has no client showing it and nothing it could safely remove. */
+  const discardRow = Effect.fn("QueuedMessageService.discardRow")(function* (
+    row: QueuedMessageRow,
+  ) {
+    const decoded = decodeQueuedMessageRow(row);
+    const message = "message" in decoded ? decoded.message : null;
+    const keepFiles = message !== null && (yield* threadHoldsFiles(message));
+    const now = yield* nowIso;
+    const discarded = yield* sql`
+      UPDATE fork_queued_messages
+      SET status = 'cancelled', updated_at = ${now}, attachments_json = NULL, context_json = NULL,
+        restorable_until = NULL
+      WHERE id = ${row.id} AND (status = 'failed' OR ${isRestorable})
+      RETURNING id
+    `.pipe(Effect.mapError(toQueuedError("Failed to discard queued message")));
+    if (discarded.length === 0 || message === null) return;
+    if (!keepFiles) {
+      yield* releaseAttachments(message.attachments ?? []);
+    }
+    yield* loadById(row.id).pipe(Effect.flatMap(publishUpsert));
+  });
+
+  const discard: QueuedMessageService["Service"]["discard"] = Effect.fn(
+    "QueuedMessageService.discard",
+  )(function* ({ id }) {
+    const row = yield* loadRow(id);
+    if (row.status === "pending" || row.status === "sending" || row.status === "sent") {
+      return yield* new QueuedMessageError({
+        message: `Queued message ${id} is ${row.status}; only failed or cancelled messages can be discarded`,
+      });
+    }
+    yield* discardRow(row);
+    return yield* loadById(id);
   });
 
   const cancelForThread: QueuedMessageService["Service"]["cancelForThread"] = Effect.fn(
@@ -650,7 +721,8 @@ export const make = Effect.gen(function* () {
     if (message.threadId !== threadId) {
       return yield* new QueuedMessageError({ message: `Queued message ${id} was not found` });
     }
-    return yield* cancel({ id });
+    const cancelled = yield* cancelAs(id, "agent");
+    return message.origin === "agent" ? yield* discard({ id }) : cancelled;
   });
 
   const cancelForDeletedThread: QueuedMessageService["Service"]["cancelForDeletedThread"] =
@@ -660,8 +732,9 @@ export const make = Effect.gen(function* () {
       // `sending` too: a send racing the delete has nothing left to settle, so it can't undo this.
       const cancelled = yield* sql<{ readonly id: string }>`
         UPDATE fork_queued_messages
-        SET status = 'cancelled', updated_at = ${now}, attachments_json = NULL, context_json = NULL
-        WHERE thread_id = ${threadId} AND status IN ('pending', 'sending', 'failed')
+        SET status = 'cancelled', updated_at = ${now}, attachments_json = NULL, context_json = NULL,
+          restorable_until = NULL
+        WHERE thread_id = ${threadId} AND (status IN ('pending', 'sending', 'failed') OR ${isRestorable})
         RETURNING id
       `.pipe(Effect.mapError(toQueuedError("Failed to cancel a deleted thread's messages")));
       const cancelledIds = new Set(cancelled.map((row) => row.id));
@@ -878,6 +951,18 @@ export const make = Effect.gen(function* () {
     }
   });
 
+  const sweepRestorable = Effect.gen(function* () {
+    const now = yield* nowIso;
+    const expired = yield* sql`
+      SELECT ${rowColumns}
+      FROM fork_queued_messages
+      WHERE status = 'cancelled' AND restorable_until <= ${now}
+    `.pipe(Effect.mapError(toQueuedError("Failed to load expired queued messages")));
+    for (const row of expired as unknown as ReadonlyArray<QueuedMessageRow>) {
+      yield* discardRow(row);
+    }
+  });
+
   // A row left `sending` by a crash mid-dispatch may or may not have started
   // its turn; re-sending could double it, so it is retired with a reason.
   yield* Effect.gen(function* () {
@@ -898,7 +983,7 @@ export const make = Effect.gen(function* () {
     const rows = yield* sql<{ readonly threadId: string }>`
       SELECT DISTINCT thread_id AS "threadId"
       FROM fork_queued_messages
-      WHERE status IN ('pending', 'failed')
+      WHERE status IN ('pending', 'failed') OR ${isRestorable}
     `;
     for (const row of rows) {
       const threadId = ThreadId.make(row.threadId);
@@ -914,7 +999,11 @@ export const make = Effect.gen(function* () {
     ),
   );
 
-  yield* reactorTick.pipe(
+  yield* sweepRestorable.pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Failed to sweep cancelled queued messages", { detail: String(cause) }),
+    ),
+    Effect.andThen(reactorTick),
     Effect.catchCause((cause) =>
       Effect.logWarning("Queued message reactor tick failed", { detail: String(cause) }),
     ),
@@ -929,6 +1018,7 @@ export const make = Effect.gen(function* () {
     update,
     cancel,
     cancelForThread,
+    discard,
     cancelForDeletedThread,
     list,
     streamMessages,

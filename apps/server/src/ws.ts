@@ -3334,6 +3334,7 @@ const layerForkWsRpc = ServerForkWsRpcGroup.toLayer(
       [WS_METHODS.queueEnqueueMessage]: (input) => queuedMessages.enqueue(input),
       [WS_METHODS.queueUpdateMessage]: (input) => queuedMessages.update(input),
       [WS_METHODS.queueCancelMessage]: (input) => queuedMessages.cancel(input),
+      [WS_METHODS.queueDiscardMessage]: (input) => queuedMessages.discard(input),
       [WS_METHODS.queueListMessages]: (input) => queuedMessages.list(input),
       [WS_METHODS.subscribeQueuedMessages]: (input) => queuedMessages.streamMessages(input),
       [WS_METHODS.vcsGraphSnapshot]: (input) => gitWorkflow.graphSnapshot(input),

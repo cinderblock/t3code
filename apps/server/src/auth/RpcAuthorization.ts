@@ -224,6 +224,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.queueEnqueueMessage]: AuthOrchestrationOperateScope,
   [WS_METHODS.queueUpdateMessage]: AuthOrchestrationOperateScope,
   [WS_METHODS.queueCancelMessage]: AuthOrchestrationOperateScope,
+  [WS_METHODS.queueDiscardMessage]: AuthOrchestrationOperateScope,
 } as const satisfies Readonly<Record<WsRpcMethod, AuthEnvironmentScope>>;
 
 export function requiredScopeForRpcMethod(method: string): AuthEnvironmentScope {

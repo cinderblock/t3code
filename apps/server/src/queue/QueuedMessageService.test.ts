@@ -375,6 +375,8 @@ describe("decodeQueuedMessageRow", () => {
     updatedAt: minutesFromNow(0),
     sentAt: null,
     failureDetail: null,
+    restorableUntil: null,
+    cancelledBy: null,
   };
 
   it("decodes a well-formed row", () => {
