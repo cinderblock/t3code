@@ -150,11 +150,67 @@ this order. Scope is what the follow-ups left open, not the older `ISSUES.md` en
 - [x] D. Pending message outlives its deleted thread: `2d3e603d9c`; dispatch on a deleted thread was worse than logged
 - [x] E. Cancel gaps: `bb4ffe01fe` (server, migration 9), `78d8c8dbaf` (web, docs); a cancel now keeps the message restorable for 7 days
 - [x] F. Imported thread that never ran reads Waiting in Working: `32e9035d29`; runtime stays non-null because it locks the provider
-- [ ] I. Local composer commands are sent to the provider when queued (found by entry C)
+- [x] I. Local composer commands are sent to the provider when queued: `49ec00c703`; refused at queue time, and `/usage-limits` turned out to be a fourth one
 - [ ] J. Queued messages skip idle compaction (found by entry C)
 - [ ] K. `message.dispatch` starts a run on a deleted or archived thread (found by entry D)
 - [ ] G. Real-client verification, including the first real firings
 - [ ] H. `t3_send_later` evals
+
+## Entry I result (2026-10-30 11:18 AM PDT, 18:18Z)
+
+Fixed in `49ec00c703`, as the coordinator decided: refused at queue time, never run at fire time. Queueing a
+local command shows a warning toast and the draft stays in the composer.
+
+**Toast, not a disabled clock.** It matches `queueDraft`'s other refusals, and a disabled clock gives no reason.
+The cost is that the user picks a trigger before being refused, as with those other refusals.
+
+**One detection.** `composerLocalCommand` in `composerSend.logic.ts` is now the only place that decides, and both
+`useComposerSend` and `queueDraft` call it. The send's three inline checks are gone, including its copied list of
+"nothing else attached" conditions. It returns what the send needs: the kind, the feedback reason, the mode.
+
+**Found on the way: `/usage-limits` is a fourth local command.** The issue named three. It opens the panel and
+sends no turn, and it had the same bug, so it is refused too. It counts only where the panel is offered. Elsewhere
+a send passes it to the provider, and so does the queue.
+
+**What still queues,** because a send passes it to the provider too: `/compact` with or without instructions,
+skills and any other provider command, `/feedback` on a provider other than Codex, `/plan` and `/default` where
+plan mode is off, and a local command sent with an attachment or context. An expired terminal context doesn't
+count, since a send drops it.
+
+**Behavior changes to a send.**
+
+- `getSendContext()` moved to the top of `onSend`, because `/usage-limits` must work ahead of the busy checks. It is
+  a synchronous read with no await before its old position.
+- `/usage-limits` with only an expired terminal context now opens the panel. It used to go to the provider, because
+  that check read the raw draft. It now shares the rule the other commands use. Nothing else about a send changes.
+
+**Surfaces.** Applied: composer clock (the one entry point), web and desktop (shared), new-thread drafts (same
+path), user docs. Providers: `/feedback` is Codex-only by the shared check, the rest are provider-independent.
+Not applicable: mobile (no composer queue), contracts and server (the refusal is client-side), evals (no
+model-facing text). `t3_send_later` is unchanged: an agent that writes `/plan` gets literal text, as `t3_thread_send`
+does, and the composer's commands aren't the agent's to run.
+
+**Left alone.**
+
+- Rows already pending that hold such text send as they would have. Not looked for in the live database.
+- Editing a run queued behind an active turn (`useQueuedRunEdit`) saves `/plan` as text. That is a different queue
+  from send-later, and it is not new here.
+
+**Checks.**
+
+- The five `composerLocalCommand` tests failed first (`composerLocalCommand is not a function`) and pass now.
+- `vp test run`: 155 passed across `composerSend.logic`, `queuedMessageRestore`, `ChatView.logic`, `composer-logic`.
+- `tsc --noEmit` in `apps/web` printed no errors. `vp fmt` and `vp lint` clean on all touched files.
+
+**Not verified.**
+
+- **The `queueDraft` call itself has no test,** like the checks in `e2ccdb5c3a`: the hook needs a browser test, and
+  browsers are out of scope. The decision is tested; that the hook calls it, and the toast, are from reading and
+  typecheck only. Entry G should queue `/plan` and check the toast, the kept draft, and that no row appears.
+- **The `useComposerSend` refactor has no test of its own:** none exist for these commands on the send path. Entry G
+  should also send `/plan`, `/usage-limits` and, on Codex, `/feedback`.
+
+**Open.** Nothing beyond the above. No temp files were left.
 
 ## Entry F result (2026-10-30 11:12 AM PDT, 18:12Z)
 
