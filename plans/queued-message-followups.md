@@ -148,10 +148,111 @@ this order. Scope is what the follow-ups left open, not the older `ISSUES.md` en
 - [x] B. Window-reset message fires at once on a nearly unused window: `df77fd47b6`
 - [x] C. Queued messages skip the Claude effort prefix: not a bug; mode bug found and fixed, `72edfecd24`, `e2ccdb5c3a`
 - [x] D. Pending message outlives its deleted thread: `2d3e603d9c`; dispatch on a deleted thread was worse than logged
-- [ ] E. Cancel gaps: lost cancel response, agent cancels, dismissed failed messages
+- [x] E. Cancel gaps: `bb4ffe01fe` (server, migration 9), `78d8c8dbaf` (web, docs); a cancel now keeps the message restorable for 7 days
 - [ ] F. Imported thread that never ran reads Waiting in Working
 - [ ] G. Real-client verification, including the first real firings
 - [ ] H. `t3_send_later` evals
+
+## Entry E result (2026-10-30 11:05 AM PDT, 18:05Z)
+
+Done in `bb4ffe01fe` and `78d8c8dbaf`. A cancel no longer destroys anything: it keeps the message
+restorable, and one later step removes the content. That single change closes gaps 1 and 2, and the same
+step closes gap 3.
+
+**Item 3's order already had the bytes in memory.** The client downloaded, then cancelled, so a lost response
+never lost the bytes on the server's side of the cancel alone: it threw away its own copy by treating the
+failure as a lost race. An idempotent retry would fix only that case. It would not cover a tab closed
+mid-cancel, and it does nothing for an agent's cancel, so the state had to live on the server.
+
+Decisions:
+
+- **Cancel is soft, discard is the removal.** `cancel` sets `status = 'cancelled'` plus `restorable_until`
+  and `cancelled_by`, and keeps text, attachments, context and files. `queue.discardMessage` removes them.
+  Why this over the alternatives: a retry token solves only gap 1, and a client-held copy dies with the tab.
+  One retained row solves 1 and 2 with one sweep. It costs one RPC and fork migration 9.
+- **Take-back is download, cancel, restore, discard.** The server's copy goes only after the draft holds the
+  message. Every failure leaves a row that can be restored, so the worst case is a duplicate, never a loss. A
+  failed discard leaves a harmless row that the X or the sweep clears.
+- **Seven days** (`RESTORE_WINDOW`). The row exists mostly for a message an agent cancelled while the user was
+  away, so a short window would defeat it. The bound is enforced by the sweep.
+- **Sweep on the reactor loop.** `sweepRestorable` runs before each 15s tick, with its own error catch so it
+  can't stop sends. It covers startup too, and a long-running server. It shares `discardRow` with the X.
+- **Thread deletion extends entry D's paths.** `cancelForDeletedThread` and its startup scan now also take
+  restorable rows, so a delete removes everything at once. No second mechanism.
+- **Failed rows: the X discards and removes files, unless the send landed.** `dispatch` passes the row's
+  claimed files straight to the thread message, so an interrupted send that went out shares those files.
+  `threadHoldsFiles` looks up `messageId` in the thread for rows with a `failureDetail` and attachments. A
+  read failure fails the discard, leaving the row, rather than guessing. Edit message on a failed row keeps
+  the files until the draft has them.
+- **An agent cancelling its own message keeps nothing.** It isn't the user's work and it has no attachments.
+- **`cancelledBy` is a column, not a reuse of `failure_detail`.** That field means a send failed, and
+  `threadHoldsFiles` depends on that meaning.
+- **Two clients restoring the same row both succeed.** Restore has no claim step, because a claim's lost
+  response would recreate gap 1. A duplicate draft is the failure mode, and cancel itself stays first-wins.
+- **Model-facing text is unchanged.** The tool description and result shape are the same, so no eval changes.
+
+| Case                                    | Behavior                                                                                           |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Cancel response lost, or tab closed     | Row shows **Cancelled** with **Restore** and **X**. A toast points at it when the client survives. |
+| Restore clicked                         | Downloads, fills the draft, discards. Download failure leaves the row, with a toast.               |
+| Agent cancels the user's message        | Row shows **Cancelled by an agent** for 7 days. No draft changes.                                  |
+| Agent cancels its own message           | Discarded at once. Nothing shows.                                                                  |
+| X on a failed message                   | Discarded. Files removed, unless the send reached the thread.                                      |
+| Edit message on a failed message        | Files stay until the draft holds it, then as above.                                                |
+| Failed on an archived thread (entry D)  | Not landed, so the X removes the files. That gap is closed.                                        |
+| 7 days pass                             | Swept: content and files gone, clients get an upsert, the row leaves the panel.                    |
+| Thread or project deleted               | Everything gone at once, restorable rows included.                                                 |
+| Restorable row on a thread gone at boot | Cleared by the startup scan.                                                                       |
+| First message of an unstarted thread    | Restore uses the same path, so it reopens a new-thread draft and deletes the empty thread.         |
+
+**Migration 9** adds two nullable columns and touches no rows, so existing cancelled rows read as not
+restorable, which is right because their content is already gone. Measured read-only on the live database at
+11:00 AM PDT (18:00Z): 16 rows (14 sent, 1 cancelled, 1 pending), migrations at 8, no attachments held. Both
+`ALTER`s ran on a copy of that table in `C:\temp\entry-e-queue-copy.sqlite`, all 16 rows kept, both columns
+NULL. Rows dismissed before this keep whatever files they leaked: their ids are gone, and today's database
+holds none.
+
+**Surfaces.** Applied: server, contracts (additive optional fields, one RPC), client-runtime, web and desktop
+(shared panel), user docs (`docs/user/thread-sidebar.md`), reverse states (Restore and X are both ways out of
+the cancelled row, re-queue is the way back). Agents: `t3_send_later` cancel is the case being fixed, and
+`list` still leaves cancelled rows out. Mobile has no panel: `apps/mobile` still compiles and only reads
+pending rows, so a phone shows no Restore row, but the same row is on web or desktop for 7 days. Not
+applicable: providers, keybindings, settings. Connection modes: the download path is item 3's, not exercised
+on a real remote.
+
+**Checks.**
+
+- Test first: 9 of the server tests in `QueuedMessageAttachments.test.ts` failed before the service change, and
+  5 in `queuedMessageRestore.test.ts` before the web change. Two more are guards that passed by design: an
+  agent cancelling its own message, and delete removing a restorable row (the old cancel had already removed
+  it).
+- `vp test run`: server 368 of 368 across `src/queue`, `sendLater`, fork migrations, `migrate-dev-db`,
+  `runtimeLayer`, `src/project`, `GuestShareService`, `ws.test.ts`. Web 51 of 51 across `queuedMessageRestore`,
+  `queuedMessageEdit`, `composerSend.logic`.
+- `tsc --noEmit` clean in server, web, contracts, client-runtime, mobile, desktop.
+- `vp fmt` clean. `vp lint` clean on web files. Four old long-header `no-low-value-comments` errors remain on
+  `ForkMigrations.ts`, `queuedMessage.ts`, `rpc.ts` and `QueuedMessageService.ts`, on lines this didn't touch.
+
+**Not verified.**
+
+- **Not seen in a running client.** The Restore row, its toast and its focus behavior are read and typechecked
+  only. The panel's filter and the take-back order are tested, the panel's markup and `useQueuedMessageComposer`
+  are not. Entry G should cover a Restore, an X on a failed row, and an agent cancel.
+- **No server boot.** The change adds no layer or dependency, and the tests run the real service against real
+  SQLite, so migration 9 has run through the real migrator only in tests. The relaunch preflight's boot on a
+  database copy is its first full run.
+- `threadHoldsFiles` is tested against a mocked thread. The `messageIds` filter it passes is read from
+  `ProjectionStore`, not run here.
+
+**Open.**
+
+- A user who is not looking at the thread gets no notice of an agent's cancel: the row waits in the panel,
+  and the thread leaves Scheduled with it. A toast or sidebar mark would be new scope.
+- Attachments over the composer's limit during a restore are named in a toast and then lost with the discard.
+  That is item 3's accepted behavior, unchanged.
+- A failed row that is never dismissed keeps its files until its thread is deleted. Nothing sweeps those, by
+  design: it is the user's undelivered message.
+- Temp files left, per the brief: `C:\temp\entry-e-*`.
 
 ## Entry D result (2026-10-30 10:50 AM PDT, 17:50Z)
 
