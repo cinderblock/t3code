@@ -84,6 +84,22 @@ Relaunch thread: `t3-thread://v1/mcp:2cf06899-8261-49a9-bb43-530157899ff1`
    with `master`'s HEAD, check the new features are in the running bundles, delete the task, and
    send the result to the coordinator.
 
+### Phase 2 preflight (2026-10-30 4:30 AM PDT, 11:30Z)
+
+Passed at `1caf826cc9`, in a sibling worktree removed afterwards. The running app was not touched.
+
+- **Build:** `vp i` then `vp run build:desktop`, 5 of 5 tasks.
+- **Copy:** `migrate-dev-db --projects 1000 --threads-per-project 100000` gave 4.2 GB, 703,482 events,
+  11 queue rows (2 pending, due later today), no scheduled tasks, no active runs.
+- **Migration 8, first run on real data: pass.** The tool did not run it (see `ISSUES.md`), so the boot
+  did: the server logged `fork:8_QueuedMessageContent`, `t3fork_migrations` went from 7 to 8, both
+  columns exist, all 11 rows kept their statuses with NULL in both new columns, as designed.
+- **Boot with `befbb8ce81`'s layer: pass.** `/.well-known/t3/environment` answered 200 in 5s and the
+  server stayed up about 30s, through two 15s queue ticks over those rows. No errors, no run started,
+  nothing sent. Two warnings: a deleted worktree's PR lookup, and a git spawn-rate notice.
+- `t3_send_later` is in the server bundle, "Scheduled section" and "Edit message" in the web bundles.
+- **Not covered:** Electron itself, a queue `list` RPC, and any feature used by hand.
+
 ## Progress
 
 - [x] Item 1: `3c5f230f83`, plus four lines of its drag test that landed in `d94f7ab701`
@@ -521,6 +537,9 @@ evals (no model-facing text changed), keybindings (the queue has none).
 - Watcher outcomes tested against a stub launcher in `C:\temp`: success, slow backend, failed with
   the app up, failed once with the app down, failed twice with the app down. The real launcher's
   `-NoElevate -DryRun -WaitForIdle` exits 0 and lists the right five processes plus launcher 11888.
+
+- Under vite-plus, `node.exe` is a shim: `Stop-Process` on the PID from `Start-Process` left the real
+  server listening under another PID. Stop the port owner as well, after checking its command line.
 
 ## Things not to do
 
