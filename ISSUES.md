@@ -101,6 +101,8 @@ Confirmed against `presentThreadShell`; no such thread exists in this install's 
 
 ## Queued messages skip the Claude effort prefix
 
+in progress — queued-message follow-ups entry C, `master`
+
 `useComposerSend` wraps outgoing text in `formatOutgoingPrompt`, which adds the prompt-injected effort
 keyword for Claude models. `useQueuedMessageComposer` sends the raw draft text. So a message queued at
 an effort that relies on that keyword runs without it. Matters because the fired turn quietly uses less
