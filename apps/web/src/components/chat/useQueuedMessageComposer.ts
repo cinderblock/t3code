@@ -4,13 +4,18 @@ import {
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
 import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
-import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+  type AtomCommandResult,
+} from "@t3tools/client-runtime/state/runtime";
 import { isAssetAttachmentNotFoundFailure } from "@t3tools/client-runtime/state/attachments";
 import {
   QueuedMessageId,
   type ChatAttachment,
   type EnvironmentId,
   type ProjectId,
+  type ProviderInteractionMode,
   type QueuedMessage,
   type QueuedMessageTrigger,
   type RuntimeMode,
@@ -59,6 +64,7 @@ import { pendingDraftWork } from "./pendingDraftWork";
 import {
   draftStillHoldsSnapshot,
   draftWorkspaceForLaunch,
+  enqueueAfterSavingModes,
   forgetQueueTrigger,
   rememberQueueTrigger,
   resolveQueuedLaunchStrategy,
@@ -93,6 +99,12 @@ export function useQueuedMessageComposer(input: {
   readonly threadDraftTarget: ComposerThreadTarget;
   readonly promptRef: { current: string };
   readonly runtimeMode: RuntimeMode;
+  readonly persistThreadSettings: (input: {
+    readonly threadId: ScopedThreadRef["threadId"];
+    readonly createdAt: string;
+    readonly runtimeMode: RuntimeMode;
+    readonly interactionMode: ProviderInteractionMode;
+  }) => Promise<AtomCommandResult<void, unknown>>;
   /** What a first send would use; a message queued as the first one has to keep it. */
   readonly firstSend: {
     readonly isLocalDraftThread: boolean;
@@ -117,6 +129,7 @@ export function useQueuedMessageComposer(input: {
     threadDraftTarget,
     promptRef,
     runtimeMode,
+    persistThreadSettings,
     firstSend,
     setThreadError,
   } = input;
@@ -219,39 +232,59 @@ export function useQueuedMessageComposer(input: {
           attachmentId: attachments[index]!.id,
         })),
       });
-      const result = await enqueueQueuedMessage({
-        environmentId,
-        input: {
-          id: QueuedMessageId.make(randomUUID()),
-          threadId,
-          messageId: newMessageId(),
-          text: snapshot.messageText,
-          ...(attachments.length > 0 ? { attachments } : {}),
-          ...(context === undefined ? {} : { context }),
-          trigger,
-          sendContext: {
-            modelSelection: sendContext.selectedModelSelection,
+      const result = await enqueueAfterSavingModes({
+        saveModes: async () => {
+          const saved = await persistThreadSettings({
+            threadId,
+            createdAt: new Date().toISOString(),
             runtimeMode,
             interactionMode: sendContext.interactionMode,
-            ...(launchStrategy !== null && firstSend.projectId !== null
-              ? {
-                  launch: {
-                    projectId: firstSend.projectId,
-                    title: deriveThreadTitleSeed({
-                      text: snapshot.messageText,
-                      attachments: snapshot.attachments,
-                      fallbackLabels: sendTitleFallbackLabels(snapshot),
-                    }),
-                    workspaceStrategy: launchStrategy,
-                  },
-                }
-              : {}),
-          },
-          origin: "user",
+          });
+          if (saved._tag !== "Failure") return true;
+          if (!isAtomCommandInterrupted(saved)) {
+            const error = squashAtomCommandFailure(saved);
+            setThreadError(
+              threadId,
+              error instanceof Error ? error.message : "Failed to save the thread's modes.",
+            );
+          }
+          return false;
         },
+        enqueue: () =>
+          enqueueQueuedMessage({
+            environmentId,
+            input: {
+              id: QueuedMessageId.make(randomUUID()),
+              threadId,
+              messageId: newMessageId(),
+              text: snapshot.messageText,
+              ...(attachments.length > 0 ? { attachments } : {}),
+              ...(context === undefined ? {} : { context }),
+              trigger,
+              sendContext: {
+                modelSelection: sendContext.selectedModelSelection,
+                runtimeMode,
+                interactionMode: sendContext.interactionMode,
+                ...(launchStrategy !== null && firstSend.projectId !== null
+                  ? {
+                      launch: {
+                        projectId: firstSend.projectId,
+                        title: deriveThreadTitleSeed({
+                          text: snapshot.messageText,
+                          attachments: snapshot.attachments,
+                          fallbackLabels: sendTitleFallbackLabels(snapshot),
+                        }),
+                        workspaceStrategy: launchStrategy,
+                      },
+                    }
+                  : {}),
+              },
+              origin: "user",
+            },
+          }),
       });
       // The draft stays until the server has the message, so a failure loses nothing.
-      if (result._tag === "Failure") return;
+      if (result === null || result._tag === "Failure") return;
       forgetQueueTrigger(threadKey);
       const store = useComposerDraftStore.getState();
       const attachmentIds = snapshot.attachments.map((attachment) => attachment.id);

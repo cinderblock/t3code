@@ -102,6 +102,12 @@ describe("applyClaudePromptEffortPrefix", () => {
       "Ultrathink:\n/home/theo/app.ts crashed on load",
     );
   });
+
+  it("does not double a prefix the prompt already has", () => {
+    expect(applyClaudePromptEffortPrefix("Ultrathink:\nFix the bug", "ultrathink")).toBe(
+      "Ultrathink:\nFix the bug",
+    );
+  });
 });
 
 describe("readCustomModelEntries", () => {

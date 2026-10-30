@@ -73,6 +73,18 @@ export async function takeBackQueuedMessage(input: {
 }
 
 /**
+ * A mode toggled in the composer stays in the draft until a send saves it to the thread, and a row
+ * never replays its own, so queueing saves them first or the message fires in the old modes. The
+ * caller's own permissions apply here, which a replay from the server at fire time would skip.
+ */
+export async function enqueueAfterSavingModes<Enqueued>(input: {
+  readonly saveModes: () => Promise<boolean>;
+  readonly enqueue: () => Promise<Enqueued>;
+}): Promise<Enqueued | null> {
+  return (await input.saveModes()) ? input.enqueue() : null;
+}
+
+/**
  * What a queued message must carry to start its thread later: the same choice a send makes
  * between `bootstrap` and a plain dispatch. Null when the send would be a plain dispatch.
  */

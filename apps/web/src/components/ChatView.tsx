@@ -2750,6 +2750,7 @@ export default function ChatView(props: ChatViewProps) {
     threadDraftTarget: baseComposerDraftTarget,
     promptRef,
     runtimeMode,
+    persistThreadSettings: persistThreadSettingsForNextTurn,
     firstSend: {
       isLocalDraftThread,
       activeMessageCount,

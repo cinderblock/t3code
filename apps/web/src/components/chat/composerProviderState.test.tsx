@@ -11,6 +11,7 @@ import {
   getComposerReasoningStep,
   withImplicitFastModeDefault,
 } from "./composerProviderState";
+import { formatOutgoingPrompt } from "../ChatView.logic";
 import { readPromptUltrathink } from "./TraitsPicker";
 
 const PROVIDER: ProviderDriverKind = ProviderDriverKind.make("codex");
@@ -285,6 +286,32 @@ describe("getComposerReasoningStep", () => {
       ...input,
     });
   }
+
+  // Ultrathink lives in the draft text, which a queued message stores as it is. If a selection
+  // could reach the outgoing prompt, the queue would need `formatOutgoingPrompt` too.
+  it.each(["medium", "high", "ultrathink", undefined])(
+    "leaves the prefix to the draft text with effort %s selected",
+    (effort) => {
+      const { promptEffort } = getComposerProviderState({
+        provider: CLAUDE.provider,
+        model: MODEL,
+        models: CLAUDE.models,
+        modelOptions: effort === undefined ? undefined : selections(["effort", effort]),
+        planModeEnabled: true,
+      });
+
+      const send = (text: string) =>
+        formatOutgoingPrompt({
+          provider: CLAUDE.provider,
+          model: MODEL,
+          models: CLAUDE.models,
+          effort: promptEffort,
+          text,
+        });
+      expect(send("Fix the bug")).toBe("Fix the bug");
+      expect(send("Ultrathink:\nFix the bug")).toBe("Ultrathink:\nFix the bug");
+    },
+  );
 
   it("walks the catalog order, wrapping at both ends and keeping the other traits", () => {
     const models = modelWith([

@@ -87,11 +87,9 @@ export const QueuedMessageStatus = Schema.Literals([
 export type QueuedMessageStatus = typeof QueuedMessageStatus.Type;
 
 /**
- * The composer settings captured at queue time. Only `modelSelection` is
- * replayed on the eventual `message.dispatch`: runtime and interaction mode
- * are thread state in orchestration v2, so the send follows the thread's
- * current modes. The two mode fields stay in the schema because rows queued
- * before v2 carry them.
+ * Only `modelSelection` is replayed: runtime and interaction mode are thread state, so the
+ * composer saves them when it queues, as a send does, and the message uses the thread's modes
+ * when it fires. The two fields stay because rows queued before orchestration v2 carry them.
  */
 export const QueuedMessageSendContext = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),

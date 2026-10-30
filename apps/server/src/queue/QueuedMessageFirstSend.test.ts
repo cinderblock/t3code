@@ -217,6 +217,25 @@ it.layer(Layer.empty)("first send of a new thread", (it) => {
     ),
   );
 
+  it.effect("fires a first message with the text and effort it was queued with", () =>
+    withHarness(NEW_THREAD, (harness, queue) =>
+      Effect.gen(function* () {
+        const effortSelection: ModelSelection = {
+          ...modelSelection,
+          options: [{ id: "effort", value: "max" }],
+        };
+        yield* queue.enqueue({
+          ...enqueueInput("effort", { ...firstSendContext, modelSelection: effortSelection }),
+          text: "Ultrathink:\nfix the login redirect",
+        });
+        yield* fire;
+        const [launch] = yield* Ref.get(harness.launches);
+        assert.deepStrictEqual(launch?.modelSelection, effortSelection);
+        assert.strictEqual(launch?.initialMessage?.text, "Ultrathink:\nfix the login redirect");
+      }),
+    ),
+  );
+
   it.effect("fires an attachment-only first message with its claimed files", () =>
     withHarness(NEW_THREAD, (harness, queue) =>
       Effect.gen(function* () {

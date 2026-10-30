@@ -17,6 +17,7 @@ import { useComposerDraftStore } from "../../composerDraftStore";
 import {
   draftStillHoldsSnapshot,
   draftWorkspaceForLaunch,
+  enqueueAfterSavingModes,
   mergeRestoredPrompt,
   pendingQueuedLaunch,
   rememberedQueueTrigger,
@@ -169,6 +170,48 @@ describe("restoreQueuedMessageToDraft", () => {
 
     expect(unrestoredNames).toEqual(["notes.txt"]);
     expect(draft()?.images).toHaveLength(1);
+  });
+
+  it("restores a picked Ultrathink as the draft had it, so queueing again can't double it", () => {
+    const { prompt } = restore(queued({ text: "Ultrathink:\nFix the bug" }));
+
+    expect(prompt).toBe("Ultrathink:\nFix the bug");
+    expect(draft()?.prompt).toBe("Ultrathink:\nFix the bug");
+  });
+});
+
+describe("enqueueAfterSavingModes", () => {
+  const steps = () => {
+    const order: Array<string> = [];
+    return {
+      order,
+      enqueue: async () => {
+        order.push("enqueue");
+        return "queued" as const;
+      },
+    };
+  };
+
+  it("saves the composer's modes to the thread before the message is queued", async () => {
+    const { order, enqueue } = steps();
+    const result = await enqueueAfterSavingModes({
+      saveModes: async () => {
+        order.push("save");
+        return true;
+      },
+      enqueue,
+    });
+
+    expect(result).toBe("queued");
+    expect(order).toEqual(["save", "enqueue"]);
+  });
+
+  it("queues nothing if the modes can't be saved, so the message can't fire in the wrong ones", async () => {
+    const { order, enqueue } = steps();
+    const result = await enqueueAfterSavingModes({ saveModes: async () => false, enqueue });
+
+    expect(result).toBeNull();
+    expect(order).toEqual([]);
   });
 });
 

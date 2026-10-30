@@ -169,6 +169,9 @@ abandon stays in the composer. A message that has failed offers **Edit message**
 dismisses it without restoring it. A message that an agent cancelled, or that you cancelled on another
 device, doesn't appear in this composer.
 
+Queueing a message applies the composer's plan and access modes to the thread, as sending does. The
+message uses the thread's modes when it sends, so a mode you change after queueing applies to it too.
+
 **When the window resets** means the window's next reset after you queue, however little of it you
 have used. A window that is idle may have no reset coming: its clock starts with your next message
 on that provider, and the send-later message goes out when that window resets. If you redeem a reset
