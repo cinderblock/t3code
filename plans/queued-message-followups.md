@@ -90,7 +90,7 @@ Relaunch thread: `t3-thread://v1/mcp:2cf06899-8261-49a9-bb43-530157899ff1`
 - [x] Item 2: `t3_send_later` built; evals not run (no API key)
 - [x] Item 3: `1fe8d05411` (server), `6617e3db3b` (web and user docs)
 - [x] Item 4: verified, one fix in `eea3dab9a1`
-- [ ] Item 5
+- [x] Item 5: `befbb8ce81` (server), `dce4536401` (web and docs)
 - [ ] Relaunch, confirmed on the new commit
 
 ## Item 1 result (2026-10-30 3:25 AM PDT, 10:25Z)
@@ -395,6 +395,110 @@ web, mobile. `vp test run`: 70 in `threadInbox`, `entities`, `threadShell`; 120 
 `Sidebar.drag`; 64 in mobile `threadListV2`. The two new held-message cases failed before the fix.
 Read-only query of `~/.t3/userdata/statev2.sqlite` for the count above. Not seen in a running client:
 the stream ordering is from reading the server code.
+
+## Item 5 result (2026-10-30 4:20 AM PDT, 11:20Z)
+
+Done: `befbb8ce81` (server), `dce4536401` (web and docs), plus one attachment test with this note. A new
+thread's first message can be queued from the composer's clock, with any trigger, and goes out later as
+the thread's first turn.
+
+**Confirmed first.** A new thread is a client-side draft. The clock was gated on `isServerThread`. A
+first send is not `thread.create` plus a message: it is `orchestration.launchThread`, which owns the
+worktree, setup script, branch rename, title seed and Scratch folder. `launch` with
+`reuseExistingThread` already accepts an existing empty thread.
+
+**Design: the real thread at queue time, the launch at fire time.** The row carries a spec,
+`sendContext.launch` (`projectId`, `title`, `workspaceStrategy`), in the existing JSON column, so no
+migration. `enqueue` creates the thread with plain `thread.create`: no run, no worktree, no provider
+session. When it fires, a row with a spec on a still-empty thread goes through
+`ThreadLaunchService.launch`, otherwise plain `message.dispatch`. This reuses the queue, sidebar and
+cancel code unchanged, a send fires with no client attached, and the launch path is the real first
+send rather than a copy of it. Keeping it client-side was rejected: a closed client can't fire.
+
+Decisions:
+
+- **Creation happens in `enqueue`, on the server,** not as a client `thread.create` then enqueue, so one
+  request does both. A failed insert deletes the thread it just made and releases the claims.
+- **While waiting, the thread's `branch` is the base ref,** standing in until the launch records the
+  real branch. Same shape as an empty server thread picking a worktree.
+- **`checkWorktreeBase` runs at queue time,** so a bad base is refused now, not a week later.
+- **The draft is finalized explicitly.** Promotion normally waits for a message or run, which will not
+  appear, so it would have stayed on the draft route forever.
+- **Reverse state: Cancel or Edit message reopens a draft and deletes the empty thread.** The draft is
+  written first, then the thread is deleted, because deleting the thread under its own route navigates
+  to `/`. Text, attachments, context, model, worktree or branch choice, runtime and interaction mode,
+  and the trigger for the picker all come back. No junk thread and no lost text. It is client-driven
+  because only the client holds the bytes; a failed delete leaves an empty thread, which is harmless.
+- **The thread stays, and the text goes to its own draft, when:** it has started, another message is
+  still waiting on it, or the user navigated away during the take-back (no yanking them to a draft).
+- **A second message queued on the thread inherits the spec,** so cancelling the first can't send the
+  second at the project root instead of the chosen worktree.
+- **Sending directly on the waiting thread uses the queued setup.** `ChatView` reads the pending spec for
+  env mode and start-from-origin. Without this it read as Local and ran at the root. The queued
+  message then sends as a follow-up, because the fire re-checks that the thread is empty.
+- **A title the user changed while it waited is kept** (`generateTitle` only if unchanged).
+- **Multiple models: clock disabled.** A row sends once on one model. The docs say so.
+- **Runtime and interaction mode come from the thread at fire time,** like every queued message. They
+  were set on the thread at queue time, so nothing is lost.
+
+**Checks from the brief.**
+
+- **Same first-send path: pass.** Real orchestrator test: no run or worktree while waiting, then message,
+  run, worktree and setup on fire.
+- **Worktree timing:** created at fire, never at queue, so it starts from the base as it is then. In
+  `docs/user`.
+- **Attachments (`1fe8d05411`): pass.** Claimed at enqueue, passed through `initialMessage`. The
+  attachment-only prompt is tested. Context records go through the same field; no test of their own.
+- **Title:** the seed shows at once, and regeneration runs on fire through `titleSeed`.
+- **No provider session:** fine, `launch` starts one. `thread.create` sets `activeProviderThreadId` null.
+- **Model:** `sendContext.modelSelection`, asserted in the test.
+- **Sidebar: Scheduled, not Waiting in Working.** Runtime is null for a never-run thread (`entities.test`),
+  and a shelf test was added. The imported-thread issue does not apply.
+- **Auto-settle: holds.** The skip filters by pending row before anything looks at runs.
+- **`t3-busy.mjs`: nothing busy by construction.** No run and no request while waiting; script unchanged.
+- **Restart:** row and thread are both durable, and a test reads the spec back from storage. Not tested
+  across a real restart.
+- **Agents: no change.** `t3_send_later` targets a thread that has already run, and `t3_thread_launch`
+  covers new threads.
+
+**Surfaces.** Applied: new-thread composer (every entry point, including `/new` links, the sidebar, palette,
+project-scoped new thread and keybinding, lands on the one `/draft/$draftId` `ChatView`), web and desktop
+(shared), contracts (one optional field), reverse states, user docs. Empty server threads in worktree mode
+now keep their worktree too. Providers: all, through the launch path. Connection modes: unchanged, one
+server call; not verified on a real remote. Not applicable: mobile UI (`apps/mobile` compiles), MCP and
+evals (no model-facing text changed), keybindings (the queue has none).
+
+**Checks run.**
+
+- `vp fmt` clean. `vp lint` clean on web and test files; three `no-low-value-comments` errors remain on
+  the long headers of `queuedMessage.ts` and `QueuedMessageService.ts`, already in `ISSUES.md`.
+- `tsc --noEmit` clean in contracts, client-runtime, server, web, mobile.
+- `vp test run`: server 76 across `src/queue`, `sendLater`, `ThreadSettlementService`; `ThreadLaunchService`
+  43; web 160 across `queuedMessageRestore`, `queuedMessageEdit`, `composerSend.logic`, `composerDraftStore`,
+  `ChatView.logic`; client-runtime `threadInbox` 46.
+- Eight of the nine original `QueuedMessageFirstSend` tests failed before the server change.
+- Boot: `src/bin.ts` on an empty isolated `--base-dir` answered `/.well-known/t3/environment` 200, proving
+  the new layer dependency resolves. Stopped by the port owner's PID after checking its command line.
+
+**Not verified.**
+
+- **Not seen in a running client.** Browsers are out of scope and the app must not be restarted. The hook
+  and `ChatView` wiring have no test: draft promotion on queue, the reopen navigation and focus are from
+  reading and typecheck. `ChatComposer.attach.browser.test.tsx` was edited for the removed prop and
+  typechecks, but browser tests were not run.
+- Not fired against a real provider or a real git repository; the integration test mocks git and uses the
+  replay adapter.
+
+**Open.**
+
+- **Changing the worktree toolbar on a waiting thread doesn't change the queued message.** It applies to a
+  direct send. Edit message is the way to change the setup, and the docs say so.
+- The **X** on a failed first message dismisses it and leaves the empty thread, which then behaves as an
+  empty server thread. Failing with the thread still empty needs a disabled provider or similar, so left.
+- Deleting a waiting new thread from the sidebar leaves the row to fail at its trigger. That is the
+  existing `ISSUES.md` entry.
+- A new thread may show in the active list until the queue row arrives, because the shell and queue are
+  separate streams. Expected to be about a frame; unmeasured.
 
 ## Findings / gotchas
 

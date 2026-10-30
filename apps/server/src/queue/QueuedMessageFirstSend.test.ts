@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  ChatAttachmentId,
   MessageId,
   ProjectId,
   ProviderInstanceId,
@@ -12,13 +13,17 @@ import {
   type QueuedMessageSendContext,
   type ServerProvider,
 } from "@t3tools/contracts";
+import { ATTACHMENT_ONLY_BOOTSTRAP_PROMPT } from "@t3tools/shared/composerContextReferences";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
+import { createPendingAttachmentId } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
@@ -143,7 +148,7 @@ const withHarness = <A, E>(
   program: (
     harness: Harness,
     queue: QueuedMessageService.QueuedMessageService["Service"],
-  ) => Effect.Effect<A, E>,
+  ) => Effect.Effect<A, E, ServerConfig.ServerConfig | FileSystem.FileSystem | Path.Path>,
   options: Parameters<typeof layerFor>[1] = {},
 ) =>
   Effect.gen(function* () {
@@ -208,6 +213,39 @@ it.layer(Layer.empty)("first send of a new thread", (it) => {
         );
         const [row] = (yield* queue.list({ threadId })).messages;
         assert.strictEqual(row?.status, "sent");
+      }),
+    ),
+  );
+
+  it.effect("fires an attachment-only first message with its claimed files", () =>
+    withHarness(NEW_THREAD, (harness, queue) =>
+      Effect.gen(function* () {
+        const config = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const id = createPendingAttachmentId(".txt");
+        yield* fileSystem.makeDirectory(config.attachmentsDir, { recursive: true });
+        yield* fileSystem.writeFileString(path.join(config.attachmentsDir, `${id}.txt`), "notes");
+        yield* queue.enqueue({
+          ...enqueueInput("attachment"),
+          text: "",
+          attachments: [
+            {
+              type: "file",
+              id: ChatAttachmentId.make(id),
+              name: "notes.txt",
+              mimeType: "text/plain",
+              sizeBytes: 5,
+            },
+          ],
+        });
+        yield* fire;
+        const [launch] = yield* Ref.get(harness.launches);
+        assert.strictEqual(launch?.initialMessage?.text, ATTACHMENT_ONLY_BOOTSTRAP_PROMPT);
+        const attachment = launch?.initialMessage?.attachments[0];
+        assert.strictEqual(attachment?.name, "notes.txt");
+        // Claimed into the thread's space, so the upload sweep can't take it while it waits.
+        assert.notStrictEqual(attachment?.id, id);
       }),
     ),
   );
