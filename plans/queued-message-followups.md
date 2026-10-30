@@ -147,11 +147,112 @@ this order. Scope is what the follow-ups left open, not the older `ISSUES.md` en
 - [x] A. `migrate-dev-db` keeps pending send-later messages: `a8bd3de314`
 - [x] B. Window-reset message fires at once on a nearly unused window: `df77fd47b6`
 - [x] C. Queued messages skip the Claude effort prefix: not a bug; mode bug found and fixed, `72edfecd24`, `e2ccdb5c3a`
-- [ ] D. Pending message outlives its deleted thread
+- [x] D. Pending message outlives its deleted thread: `2d3e603d9c`; dispatch on a deleted thread was worse than logged
 - [ ] E. Cancel gaps: lost cancel response, agent cancels, dismissed failed messages
 - [ ] F. Imported thread that never ran reads Waiting in Working
 - [ ] G. Real-client verification, including the first real firings
 - [ ] H. `t3_send_later` evals
+
+## Entry D result (2026-10-30 10:50 AM PDT, 17:50Z)
+
+Done in `2d3e603d9c`. Deleting a thread now takes back what was waiting on it, and a row can no longer
+start a turn on a thread that is gone.
+
+**The issue undersold it.** It said the row "fails at dispatch". Measured with a real orchestrator in
+`runtimeLayer.test.ts`: `message.dispatch` on a deleted thread succeeds, commits the message and leaves
+a run in `starting`, and the same happens on an archived thread. Launch rows and `sendToThread` are the
+ones that refuse. So a plain row could go out as `sent` into an invisible thread, and the check has to
+come before the send. Reacting to a failed dispatch would not have worked. `ISSUES.md` logs the
+orchestrator gap.
+
+Decisions:
+
+- **Delete cancels; it does not fail.** Nothing is left to show a failure on, and the user chose to
+  delete. Pending, `sending` and failed rows all go to `cancelled` with their files removed.
+- **Failed rows lose their files here, unlike a dismiss.** A dismiss keeps them because the thread may
+  own them. With the thread gone they are the thread's or nobody's, and thread cleanup only knows ids
+  on messages that landed.
+- **The trigger is an outbox effect, `queued-messages.cleanup`,** from `planThreadDeletion`, next to
+  `scheduled-tasks.cleanup` and handled through `ResourceCleanupService`. `thread.delete` and the project
+  cascade share that plan, so both get it, and it runs after commit, durably, replay-safe and idempotent.
+  The orchestrator's decide step only adds the effect.
+- **One instance.** `QueuedMessageService.layer` moved from `server.ts` to `runtimeLayer.ts`
+  (`layerQueuedMessageProvided`), the same shape as `layerScheduledTaskProvided`. Consumers share that one
+  layer reference, so it builds once and only one dispatcher runs. Layer order is safe: the effect worker
+  starts after layer build in both positions, and the queue's dependencies still build first.
+- **Two backstops, because the effect can't reach everything.** The reactor reads the thread before each
+  claim, covering the gap before the effect runs and an enqueue that raced the delete. Startup clears
+  pending and failed rows on gone threads, covering rows from an earlier build. The running app is still
+  the old build, so deletes before the next relaunch make exactly these rows.
+- **Archive keeps the row, and a due row fails with a reason.** Archive is reversible, so the row stays.
+  If it comes due while archived it is marked failed with "The thread was archived when this message came
+  due", no run starts, and files stay. Unarchiving shows it with **Edit message**. Sending on unarchive was
+  rejected: a stale prompt would start a turn without asking. Unarchiving before it is due sends normally.
+
+| Case                                     | Behavior                                                                                      |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------- |
+| Thread deleted, row pending              | `cancelled`, files gone, clients get an upsert, as the cancel path does.                      |
+| Project deleted                          | Same; each child thread's delete queues the effect (tested).                                  |
+| New thread deleted from the sidebar      | Same row, same result, so nothing fails at the trigger.                                       |
+| `sending` at delete                      | `cancelled`. The send's `markSent`/`markFailed` match no row, and it republishes `cancelled`. |
+| Failed row at delete                     | `cancelled`, files gone.                                                                      |
+| Sent or cancelled row                    | Untouched; a replayed effect changes nothing.                                                 |
+| Due before the effect ran                | Cancelled by the reactor, no send.                                                            |
+| Archived, comes due                      | `failed` with the reason, no run, files kept.                                                 |
+| Archived, unarchived before due          | Sends normally.                                                                               |
+| Existing rows on deleted threads at boot | Cleared at startup, silently. Live rows untouched. A read failure logs and retries next boot. |
+| Take-back of a waiting new thread        | Unchanged: bytes download, cancel, draft, then delete. The row is already `cancelled`.        |
+
+**Live database, read-only, 2026-10-30 10:30 AM PDT (17:30Z):** 16 rows (14 sent, 1 cancelled, 1 pending),
+all on live threads with a v2 row. None on deleted or archived threads, no failed rows, no attachments
+held. So the startup path has nothing to do today; it exists for deletes between now and the relaunch.
+
+**Restored drafts are safe.** A draft holds downloaded bytes, not server ids (`takeBackQueuedMessage`), and
+it is written only after the cancel, so the row is already `cancelled` and this path doesn't see it. Pending
+uploads the composer may retry from are separate files, because claims copy.
+
+**Scheduled section.** It follows the queue stream, and this publishes the same `upserted` event as cancel.
+The thread itself leaves the sidebar on the delete. Read from the code, not seen in a client.
+
+**Surfaces.** Applied: server, both delete routes (`thread.delete` and `ProjectService.delete`, which every
+client, MCP and CLI path ends in), user docs (`docs/user/thread-sidebar.md`). Web, desktop and mobile take it
+from the stream, no client change. Not applicable: contracts (the status and event already existed), evals
+(no model-facing text), providers.
+
+**Checks.**
+
+- Test first: 7 of 9 new tests in `QueuedMessageAttachments.test.ts` and both effect-list tests failed before
+  the change. The other two are guards that passed by design. The first green run also caught a real bug:
+  `RETURNING attachments_json` hands back the new NULL, so the row is read before the update.
+- `vp test run`: 240 of 240 across `src/queue`, `sendLater`, `ThreadDeletion`, `ProjectService.deletion`,
+  `runtimeLayer`, `GuestShareService`, `ThreadSettlementService`, `EffectOutbox`, `EffectWorker`, `Migrations`.
+- `userInputAttachments.test.ts`: 3 failures, Windows path escaping in tests that don't use this change.
+  Not confirmed against a clean `master`. Logged in `ISSUES.md`.
+- `tsc --noEmit` clean in `apps/server`, the only package with code changes. `vp fmt` clean. `vp lint` clean
+  except the old `no-low-value-comments` header on `QueuedMessageService.ts`.
+- Boot: `node src/bin.ts` on an empty isolated `--base-dir` answered `/.well-known/t3/environment` 200, ran
+  20s more with no errors, and stopped by its captured PID. Run here rather than in a sibling worktree: it
+  builds nothing and doesn't touch `apps/web/dist`. A 503 before startup finishes is normal.
+
+**Not verified.**
+
+- Not seen in a client, and no thread deleted on a running server with a real row. The effect's route is
+  tested against a recording mock, the service against mocked threads. Real `getThreadShell` was measured
+  separately: null for deleted, non-null for archived.
+- That one dispatcher runs is from layer memoization and the `ScheduledTaskService` precedent, plus the boot.
+  No test counts instances.
+
+**Open.**
+
+- An archived-then-failed row keeps its files, and dismissing it with the **X** leaks them, since a dismiss
+  never removes files. That is entry E's "dismissed failed messages" gap, with one more way in.
+- A failed row on an archived thread stays invisible until the thread is reopened. Nothing notifies. If the
+  user would rather have it sent, or hold until unarchive, that is a small change in `sendIfThreadIsLive`.
+- A delete landing between the reactor's read and its dispatch can still start one run on the deleted thread.
+  The row and files are cleaned up; closing it needs the orchestrator fix in `ISSUES.md`.
+- Temp files left, per the brief: `C:\temp\entry-d-*`, `C:\temp\scratch.*`, `C:\temp\red.out`,
+  `C:\temp\green.out`, `C:\temp\final.out`, `C:\temp\runtimeLayer.test.ts.orig`, `C:\temp\uia.test.ts`,
+  and two `t3-entry-d-boot-*` directories under `%TEMP%`.
 
 ## Entry A result (2026-10-30 9:47 AM PDT, 16:47Z)
 
