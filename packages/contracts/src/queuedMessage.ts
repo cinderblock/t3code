@@ -1,6 +1,8 @@
 import * as Schema from "effect/Schema";
 
 import { IsoDateTime, MessageId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ChatAttachment } from "./chatAttachment.ts";
+import { OrchestrationMessageContext } from "./composerContext.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 
@@ -91,6 +93,9 @@ export const QueuedMessage = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
   text: Schema.String,
+  /** Owned by the row until it sends; empty on a row that has been sent or cancelled. */
+  attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  context: Schema.optional(OrchestrationMessageContext),
   trigger: QueuedMessageTrigger,
   sendContext: QueuedMessageSendContext,
   status: QueuedMessageStatus,
@@ -110,6 +115,9 @@ export const QueuedMessageEnqueueInput = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
   text: Schema.String,
+  /** Pending uploads; the server claims them for the thread, so they outlive the upload sweep. */
+  attachments: Schema.optional(Schema.Array(ChatAttachment)),
+  context: Schema.optional(OrchestrationMessageContext),
   trigger: QueuedMessageTrigger,
   sendContext: QueuedMessageSendContext,
   origin: Schema.Literals(["user", "cap-hit-auto", "agent"]),

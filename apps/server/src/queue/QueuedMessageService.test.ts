@@ -234,6 +234,8 @@ describe("decodeQueuedMessageRow", () => {
     threadId: "thread_1",
     messageId: "msg_1",
     text: "hello",
+    attachmentsJson: null,
+    contextJson: null,
     triggerJson: JSON.stringify({ type: "at", at: minutesFromNow(5) }),
     sendContextJson: JSON.stringify({ runtimeMode: "full-access", interactionMode: "default" }),
     status: "pending",

@@ -18,6 +18,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Scope from "effect/Scope";
@@ -25,8 +26,10 @@ import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import {
+  ChatAttachment,
   CommandId,
   MessageId,
+  OrchestrationMessageContext,
   QueuedMessageError,
   QueuedMessageSendContext,
   QueuedMessageStatus,
@@ -45,8 +48,16 @@ import {
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
 } from "@t3tools/contracts";
+import {
+  ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
+  remapComposerContextAttachments,
+} from "@t3tools/shared/composerContextReferences";
 
+import { resolveAttachmentPath } from "../attachmentStore.ts";
+import * as ServerConfig from "../config.ts";
+import * as AttachmentClaims from "../orchestration-v2/AttachmentClaims.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as DocumentText from "../provider/DocumentText.ts";
 import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
 
 const REACTOR_TICK = Duration.seconds(15);
@@ -55,11 +66,17 @@ const RESET_EPSILON_PERCENT = 5;
 
 const TriggerJson = Schema.fromJsonString(QueuedMessageTrigger);
 const SendContextJson = Schema.fromJsonString(QueuedMessageSendContext);
+const AttachmentsJson = Schema.fromJsonString(Schema.Array(ChatAttachment));
+const ContextJson = Schema.fromJsonString(OrchestrationMessageContext);
 const decodeTriggerExit = Schema.decodeUnknownExit(TriggerJson);
 const decodeSendContextExit = Schema.decodeUnknownExit(SendContextJson);
+const decodeAttachmentsExit = Schema.decodeUnknownExit(AttachmentsJson);
+const decodeContextExit = Schema.decodeUnknownExit(ContextJson);
 const decodeStatusExit = Schema.decodeUnknownExit(QueuedMessageStatus);
 const encodeTrigger = Schema.encodeSync(TriggerJson);
 const encodeSendContext = Schema.encodeSync(SendContextJson);
+const encodeAttachments = Schema.encodeSync(AttachmentsJson);
+const encodeContext = Schema.encodeSync(ContextJson);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 
@@ -196,6 +213,8 @@ interface QueuedMessageRow {
   readonly threadId: string;
   readonly messageId: string;
   readonly text: string;
+  readonly attachmentsJson: string | null;
+  readonly contextJson: string | null;
   readonly triggerJson: string;
   readonly sendContextJson: string;
   readonly status: string;
@@ -220,12 +239,23 @@ export function decodeQueuedMessageRow(
   if (Exit.isFailure(sendContext)) return { error: "Stored send settings could not be read" };
   const status = decodeStatusExit(row.status);
   if (Exit.isFailure(status)) return { error: `Unknown status "${row.status}"` };
+  const attachments =
+    row.attachmentsJson === null ? null : decodeAttachmentsExit(row.attachmentsJson);
+  if (attachments !== null && Exit.isFailure(attachments)) {
+    return { error: "Stored attachments could not be read" };
+  }
+  const context = row.contextJson === null ? null : decodeContextExit(row.contextJson);
+  if (context !== null && Exit.isFailure(context)) {
+    return { error: "Stored context could not be read" };
+  }
   return {
     message: {
       id: row.id as QueuedMessageId,
       threadId: ThreadId.make(row.threadId),
       messageId: MessageId.make(row.messageId),
       text: row.text,
+      ...(attachments === null ? {} : { attachments: attachments.value }),
+      ...(context === null ? {} : { context: context.value }),
       trigger: trigger.value,
       sendContext: sendContext.value,
       status: status.value,
@@ -257,7 +287,10 @@ export class QueuedMessageService extends Context.Service<
     readonly update: (
       input: QueuedMessageUpdateInput,
     ) => Effect.Effect<QueuedMessage, QueuedMessageError>;
-    /** Cancels a pending message, or dismisses a failed one. */
+    /**
+     * Cancels a pending message and removes its files, or dismisses a failed one. Fails when the
+     * message is past that, so a success proves this caller took it back and nobody else did.
+     */
     readonly cancel: (
       input: QueuedMessageCancelInput,
     ) => Effect.Effect<QueuedMessage, QueuedMessageError>;
@@ -282,6 +315,10 @@ export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const providerRegistry = yield* ProviderRegistry;
+  const config = yield* ServerConfig.ServerConfig;
+  const attachmentServices = yield* Effect.context<
+    FileSystem.FileSystem | ServerConfig.ServerConfig | DocumentText.DocumentText
+  >();
 
   const eventsPubSub = yield* Effect.acquireRelease(
     PubSub.unbounded<QueuedMessageStreamEvent>(),
@@ -298,6 +335,8 @@ export const make = Effect.gen(function* () {
         thread_id AS "threadId",
         message_id AS "messageId",
         text,
+        attachments_json AS "attachmentsJson",
+        context_json AS "contextJson",
         trigger_json AS "triggerJson",
         send_context_json AS "sendContextJson",
         status,
@@ -323,6 +362,8 @@ export const make = Effect.gen(function* () {
         thread_id AS "threadId",
         message_id AS "messageId",
         text,
+        attachments_json AS "attachmentsJson",
+        context_json AS "contextJson",
         trigger_json AS "triggerJson",
         send_context_json AS "sendContextJson",
         status,
@@ -350,17 +391,40 @@ export const make = Effect.gen(function* () {
   const enqueue: QueuedMessageService["Service"]["enqueue"] = Effect.fn(
     "QueuedMessageService.enqueue",
   )(function* (input) {
+    const uploads = input.attachments ?? [];
+    // `cancel` deletes these files, so a row may only hold copies made for it.
+    if (!uploads.every(AttachmentClaims.attachmentIsPendingUpload)) {
+      return yield* new QueuedMessageError({ message: "Attachments must be pending uploads" });
+    }
+    // A pending upload is swept after a day; a message can wait a week for its window.
+    const claimed = yield* AttachmentClaims.claimPendingAttachments({
+      threadId: input.threadId,
+      attachments: uploads,
+    }).pipe(
+      Effect.provide(attachmentServices),
+      Effect.mapError((cause) => new QueuedMessageError({ message: cause.message, cause })),
+    );
+    const context = remapComposerContextAttachments(input.context, uploads, claimed.attachments);
     const now = yield* nowIso;
     yield* sql`
       INSERT INTO fork_queued_messages (
-        id, thread_id, message_id, text, trigger_json, send_context_json,
-        status, origin, created_at, updated_at, sent_at, failure_detail
+        id, thread_id, message_id, text, attachments_json, context_json, trigger_json,
+        send_context_json, status, origin, created_at, updated_at, sent_at, failure_detail
       ) VALUES (
         ${input.id}, ${input.threadId}, ${input.messageId}, ${input.text},
+        ${claimed.attachments.length === 0 ? null : encodeAttachments(claimed.attachments)},
+        ${context === undefined ? null : encodeContext(context)},
         ${encodeTrigger(input.trigger)}, ${encodeSendContext(input.sendContext)},
         ${"pending"}, ${input.origin}, ${now}, ${now}, ${null}, ${null}
       )
-    `.pipe(Effect.mapError(toQueuedError("Failed to enqueue message")));
+    `.pipe(
+      Effect.mapError(toQueuedError("Failed to enqueue message")),
+      Effect.tapError(() =>
+        AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths).pipe(
+          Effect.provide(attachmentServices),
+        ),
+      ),
+    );
     const message = yield* loadById(input.id);
     yield* publishUpsert(message);
     return message;
@@ -414,20 +478,39 @@ export const make = Effect.gen(function* () {
   const cancel: QueuedMessageService["Service"]["cancel"] = Effect.fn(
     "QueuedMessageService.cancel",
   )(function* (input) {
+    const refused = (status: QueuedMessage["status"]) =>
+      new QueuedMessageError({
+        message: `Queued message ${input.id} is ${status}; only pending or failed messages can be cancelled`,
+      });
+    const existing = yield* loadById(input.id);
+    if (existing.status !== "pending" && existing.status !== "failed") {
+      return yield* refused(existing.status);
+    }
     const now = yield* nowIso;
     // A failed row is dismissed the same way: it stops showing, and nothing
     // downstream ever distinguishes "cancelled before" from "dismissed after".
-    yield* sql`
+    const updated = yield* sql`
       UPDATE fork_queued_messages
-      SET status = 'cancelled', updated_at = ${now}
-      WHERE id = ${input.id} AND status IN ('pending', 'failed')
+      SET status = 'cancelled', updated_at = ${now}, attachments_json = NULL, context_json = NULL
+      WHERE id = ${input.id} AND status = ${existing.status}
+      RETURNING id
     `.pipe(Effect.mapError(toQueuedError("Failed to cancel queued message")));
-    const message = yield* loadById(input.id);
-    if (message.status !== "cancelled") {
-      return yield* new QueuedMessageError({
-        message: `Queued message ${input.id} is ${message.status}; only pending or failed messages can be cancelled`,
-      });
+    if (updated.length === 0) {
+      return yield* refused((yield* loadById(input.id)).status);
     }
+    // A failed send may still have reached the thread, which then owns these files.
+    if (existing.status === "pending") {
+      yield* AttachmentClaims.releaseClaimedAttachments(
+        (existing.attachments ?? []).flatMap((attachment) => {
+          const path = resolveAttachmentPath({
+            attachmentsDir: config.attachmentsDir,
+            attachment,
+          });
+          return path === null ? [] : [path];
+        }),
+      ).pipe(Effect.provide(attachmentServices));
+    }
+    const message = yield* loadById(input.id);
     yield* publishUpsert(message);
     return message;
   });
@@ -493,7 +576,8 @@ export const make = Effect.gen(function* () {
     const now = yield* nowIso;
     yield* sql`
       UPDATE fork_queued_messages
-      SET status = 'sent', sent_at = ${now}, updated_at = ${now}
+      SET status = 'sent', sent_at = ${now}, updated_at = ${now},
+        attachments_json = NULL, context_json = NULL
       WHERE id = ${id} AND status = 'sending'
     `.pipe(Effect.mapError(toQueuedError("Failed to mark queued message sent")));
     const message = yield* loadById(id);
@@ -521,14 +605,19 @@ export const make = Effect.gen(function* () {
     // send follows the thread's current modes; only the model rides along.
     // `queue_after_active` starts the run when the thread is idle and lines it
     // up behind a run that is still going when the trigger fires.
+    const attachments = message.attachments ?? [];
     const dispatched = yield* threads
       .dispatch({
         type: "message.dispatch",
         commandId: CommandId.make(`server:queued-message:${message.id}`),
         threadId: message.threadId,
         messageId: message.messageId,
-        text: message.text,
-        attachments: [],
+        text:
+          message.text.length === 0 && attachments.length > 0
+            ? ATTACHMENT_ONLY_BOOTSTRAP_PROMPT
+            : message.text,
+        ...(message.context !== undefined ? { context: message.context } : {}),
+        attachments,
         ...(message.sendContext.modelSelection !== undefined
           ? { modelSelection: message.sendContext.modelSelection }
           : {}),

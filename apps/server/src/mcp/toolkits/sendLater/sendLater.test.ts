@@ -1,4 +1,5 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   EnvironmentId,
@@ -16,8 +17,11 @@ import * as Layer from "effect/Layer";
 import { McpSchema, McpServer } from "effect/ai";
 import * as TestClock from "effect/testing/TestClock";
 
+import * as ServerConfig from "../../../config.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import createQueuedMessages from "../../../persistence/Migrations/fork/002_QueuedMessages.ts";
+import addQueuedMessageContent from "../../../persistence/Migrations/fork/008_QueuedMessageContent.ts";
+import * as DocumentText from "../../../provider/DocumentText.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as QueuedMessageService from "../../../queue/QueuedMessageService.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
@@ -63,8 +67,13 @@ const layerFor = (onDispatch: (command: OrchestrationV2ServerCommand) => Effect.
     getProviders: Effect.succeed<ReadonlyArray<ServerProvider>>([]),
   });
   const queued = QueuedMessageService.layer.pipe(
-    Layer.provideMerge(Layer.effectDiscard(createQueuedMessages)),
+    Layer.provideMerge(
+      Layer.effectDiscard(Effect.andThen(createQueuedMessages, addQueuedMessageContent)),
+    ),
     Layer.provide(providers),
+    Layer.provide(Layer.mock(DocumentText.DocumentText)({})),
+    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-send-later-" })),
+    Layer.provide(NodeServices.layer),
     Layer.provide(NodeSqliteClient.layer({ filename: ":memory:" })),
   );
   return McpHttpServer.layerSendLaterToolkit.pipe(
