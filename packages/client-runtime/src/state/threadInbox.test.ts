@@ -93,6 +93,33 @@ describe("createInboxReturnTracker", () => {
     expect(held.returnedAt(thread("a", false))).toBeUndefined();
   });
 
+  it.each([
+    {
+      runtime: { ...thread("a", true).runtime!, status: "failed" as const, lastError: "limit" },
+    },
+    { interactionMode: "plan" as const, hasActionableProposedPlan: true },
+  ])("holds a scheduled thread with old news until its sent message runs: %j", (change) => {
+    const tracker = createInboxReturnTracker();
+    const idle = { ...thread("a", false), ...change };
+    let scheduled = true;
+    const isScheduled = () => scheduled;
+    tracker.observe([idle], isScheduled);
+    scheduled = false;
+    const sent = tracker.observe([idle], isScheduled);
+    expect(sent.shelf(idle)).toBe("scheduled");
+    expect(sent.returnedAt(idle)).toBeUndefined();
+    const started = tracker.observe([thread("a", true)], isScheduled);
+    expect(started.shelf(thread("a", true))).toBe("working");
+    expect(started.returnedAt(idle)).toBeUndefined();
+  });
+
+  it("returns a scheduled thread at once when it asks the user something", () => {
+    const tracker = createInboxReturnTracker();
+    tracker.observe([thread("a", false)], () => true);
+    const asking = { ...thread("a", false), hasPendingUserInput: true };
+    expect(tracker.observe([asking], () => true).shelf(asking)).toBeNull();
+  });
+
   it("shelves a scheduled thread until its message is no longer scheduled, then returns it", () => {
     const tracker = createInboxReturnTracker();
     let scheduled = true;

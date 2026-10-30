@@ -267,14 +267,19 @@ export function createInboxReturnTracker() {
           thread.activeOrderKey,
         ]);
         const previous = states.get(key);
-        const actionable =
+        const from = previous?.shelf ?? null;
+        const asksUser =
           thread.hasPendingApprovals ||
           thread.hasPendingUserInput ||
           thread.pendingSubagentRequest != null ||
-          (thread.pendingGuestMessageCount ?? 0) > 0 ||
-          (thread.interactionMode === "plan" && thread.hasActionableProposedPlan) ||
-          thread.runtime?.lastError != null ||
-          thread.latestRun?.status === "failed";
+          (thread.pendingGuestMessageCount ?? 0) > 0;
+        // A failure or plan it sat in Scheduled with is no news when its message goes out.
+        const actionable =
+          asksUser ||
+          (from !== "scheduled" &&
+            ((thread.interactionMode === "plan" && thread.hasActionableProposedPlan) ||
+              thread.runtime?.lastError != null ||
+              thread.latestRun?.status === "failed"));
         const moved = previous !== undefined && previous.placement !== placement;
         const excluded =
           thread.archivedAt != null ||
@@ -283,7 +288,6 @@ export function createInboxReturnTracker() {
           thread.settledOverride === "settled" ||
           effectiveSnoozed(thread, { now: observedAt });
         const actual = resolveThreadShelf(thread, isScheduled?.(thread) === true);
-        const from = previous?.shelf ?? null;
         // Only shelf placement is held: execution state and attention requests stay authoritative.
         // Leaving Working holds even onto Scheduled, and a sent message holds until its run starts.
         const deadline =
