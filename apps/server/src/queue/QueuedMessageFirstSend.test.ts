@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
   ChatAttachmentId,
+  CommandId,
   MessageId,
   ProjectId,
   ProviderInstanceId,
@@ -33,6 +34,7 @@ import addQueuedMessageContent from "../persistence/Migrations/fork/008_QueuedMe
 import addQueuedMessageRestore from "../persistence/Migrations/fork/009_QueuedMessageRestore.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as QueuedMessageService from "./QueuedMessageService.ts";
 
 const threadId = ThreadId.make("first-send-thread");
@@ -74,6 +76,9 @@ const layerFor = (
       command: OrchestrationV2ServerCommand,
     ) => Effect.Effect<void, Orchestrator.OrchestratorV2Error>;
     readonly baseCheck?: Effect.Effect<void, ThreadLaunch.ThreadLaunchBaseRefError>;
+    /** What the thread reads as at fire time, for a thread that already has a session. */
+    readonly records?: Effect.Effect<unknown, Orchestrator.OrchestratorV2Error>;
+    readonly settings?: Parameters<typeof ServerSettings.layerTest>[0];
   } = {},
 ) => {
   const threads = Layer.mock(ThreadManagement.ThreadManagementService)({
@@ -93,7 +98,9 @@ const layerFor = (
         ),
       ),
     getThreadRecords: () =>
-      Ref.get(harness.thread).pipe(Effect.map((state) => threadRecords(state) as never)),
+      options.records === undefined
+        ? Ref.get(harness.thread).pipe(Effect.map((state) => threadRecords(state) as never))
+        : options.records.pipe(Effect.map((records) => records as never)),
     getMessageCount: () => Ref.get(harness.thread).pipe(Effect.map((state) => state.messages)),
   });
   const launches = Layer.mock(ThreadLaunch.ThreadLaunchService)({
@@ -122,6 +129,7 @@ const layerFor = (
     Layer.provide(threads),
     Layer.provide(launches),
     Layer.provide(documents),
+    Layer.provide(ServerSettings.layerTest(options.settings)),
     Layer.provide(NodeSqliteClient.layer({ filename: ":memory:" })),
     Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-queued-first-send-" }).pipe(
@@ -384,6 +392,203 @@ it.layer(Layer.empty)("first send of a new thread", (it) => {
         const [row] = (yield* queue.list({ threadId })).messages;
         assert.deepStrictEqual(row?.sendContext.launch, firstSendContext.launch);
       }),
+    ),
+  );
+});
+
+const claudeInstance = ProviderInstanceId.make("claudeAgent");
+const claudeSelection: ModelSelection = { instanceId: claudeInstance, model: "claude-opus-5-5" };
+const claudeSendContext: QueuedMessageSendContext = {
+  modelSelection: claudeSelection,
+  runtimeMode: "full-access",
+  interactionMode: "default",
+};
+const STARTED_THREAD: ThreadState = { title: "Started", messages: 2, runs: 1 };
+const QUEUED_TEXT = "fix the login redirect";
+
+/** A Claude session over the size limit, last used a day before the test clock's epoch. */
+const staleSession = (runStatus = "completed") => ({
+  thread: {
+    id: threadId,
+    projectId,
+    providerInstanceId: claudeInstance,
+    modelSelection: claudeSelection,
+    activeProviderThreadId: "provider-thread",
+    lineage: { relationshipToParent: null },
+  },
+  runs: [
+    {
+      id: "run-1",
+      ordinal: 1,
+      status: runStatus,
+      userMessageId: "user-message",
+      providerThreadId: "provider-thread",
+      providerInstanceId: claudeInstance,
+    },
+  ],
+  messages: [{ id: "user-message", role: "user", text: "Explain this code", attachments: [] }],
+  providerThreads: [
+    {
+      id: "provider-thread",
+      driver: "claudeAgent",
+      providerInstanceId: claudeInstance,
+      pendingBackgroundTasks: [],
+    },
+  ],
+  providerTurns: [
+    {
+      providerThreadId: "provider-thread",
+      tokenUsage: { usedTokens: 250_000, updatedAt: "1969-12-31T00:00:00.000Z" },
+    },
+  ],
+  runtimeRequests: [],
+  turnItems: [],
+  contextTransfers: [],
+});
+
+const dispatchedTexts = (commands: ReadonlyArray<OrchestrationV2ServerCommand>) =>
+  commands.flatMap((command) => (command.type === "message.dispatch" ? [command.text] : []));
+
+it.layer(Layer.empty)("a message firing on a stale session", (it) => {
+  it.effect("compacts first, then lines the message up behind the compaction", () =>
+    withHarness(
+      STARTED_THREAD,
+      (harness, queue) =>
+        Effect.gen(function* () {
+          yield* queue.enqueue(enqueueInput("stale", claudeSendContext));
+          yield* fire;
+          const commands = yield* Ref.get(harness.commands);
+          assert.deepStrictEqual(dispatchedTexts(commands), ["/compact", QUEUED_TEXT]);
+          const [compact, message] = commands;
+          assert.isTrue(compact?.type === "message.dispatch");
+          assert.isTrue(message?.type === "message.dispatch");
+          if (compact?.type !== "message.dispatch" || message?.type !== "message.dispatch") return;
+          assert.strictEqual(compact.idleCompaction, "onReturn");
+          assert.strictEqual(compact.createdBy, "agent");
+          assert.strictEqual(compact.creationSource, "server");
+          assert.deepStrictEqual(compact.modelSelection, claudeSelection);
+          assert.deepStrictEqual(compact.dispatchMode, { type: "queue_after_active" });
+          assert.deepStrictEqual(message.dispatchMode, { type: "queue_after_active" });
+          assert.strictEqual(message.idleCompaction, undefined);
+          const [row] = (yield* queue.list({ threadId })).messages;
+          assert.strictEqual(row?.status, "sent");
+        }),
+      { records: Effect.succeed(staleSession()) },
+    ),
+  );
+
+  it.effect("keeps full history when the message was queued that way", () =>
+    withHarness(
+      STARTED_THREAD,
+      (harness, queue) =>
+        Effect.gen(function* () {
+          yield* queue.enqueue(
+            enqueueInput("keep", { ...claudeSendContext, keepFullHistory: true }),
+          );
+          yield* fire;
+          assert.deepStrictEqual(dispatchedTexts(yield* Ref.get(harness.commands)), [QUEUED_TEXT]);
+        }),
+      { records: Effect.succeed(staleSession()) },
+    ),
+  );
+
+  it.effect("does nothing when idle compaction is off", () =>
+    withHarness(
+      STARTED_THREAD,
+      (harness, queue) =>
+        Effect.gen(function* () {
+          yield* queue.enqueue(enqueueInput("off", claudeSendContext));
+          yield* fire;
+          assert.deepStrictEqual(dispatchedTexts(yield* Ref.get(harness.commands)), [QUEUED_TEXT]);
+        }),
+      { records: Effect.succeed(staleSession()), settings: { idleCompaction: "off" } },
+    ),
+  );
+
+  it.effect("does not compact a session the message is leaving for another provider", () =>
+    withHarness(
+      STARTED_THREAD,
+      (harness, queue) =>
+        Effect.gen(function* () {
+          yield* queue.enqueue(enqueueInput("handoff", { ...claudeSendContext, modelSelection }));
+          yield* fire;
+          assert.deepStrictEqual(dispatchedTexts(yield* Ref.get(harness.commands)), [QUEUED_TEXT]);
+        }),
+      { records: Effect.succeed(staleSession()) },
+    ),
+  );
+
+  it.effect("compacts once for two messages firing together", () =>
+    Effect.gen(function* () {
+      const session = yield* Ref.make<unknown>(staleSession());
+      yield* withHarness(
+        STARTED_THREAD,
+        (harness, queue) =>
+          Effect.gen(function* () {
+            yield* queue.enqueue(enqueueInput("one", claudeSendContext));
+            yield* queue.enqueue(enqueueInput("two", claudeSendContext));
+            yield* fire;
+            assert.deepStrictEqual(dispatchedTexts(yield* Ref.get(harness.commands)), [
+              "/compact",
+              QUEUED_TEXT,
+              QUEUED_TEXT,
+            ]);
+          }),
+        {
+          records: Ref.get(session),
+          onDispatch: (command) =>
+            command.type === "message.dispatch" && command.text === "/compact"
+              ? Ref.set(session, staleSession("running"))
+              : Effect.void,
+        },
+      );
+    }),
+  );
+
+  it.effect("fails the row visibly when the compaction is refused, as a send does", () =>
+    withHarness(
+      STARTED_THREAD,
+      (harness, queue) =>
+        Effect.gen(function* () {
+          yield* queue.enqueue(enqueueInput("refused", claudeSendContext));
+          yield* fire;
+          assert.deepStrictEqual(dispatchedTexts(yield* Ref.get(harness.commands)), []);
+          const [row] = (yield* queue.list({ threadId })).messages;
+          assert.strictEqual(row?.status, "failed");
+          assert.isNotNull(row?.failureDetail);
+        }),
+      {
+        records: Effect.succeed(staleSession()),
+        onDispatch: () =>
+          Effect.fail(
+            new Orchestrator.OrchestratorDispatchError({
+              commandId: CommandId.make("refused"),
+              commandType: "message.dispatch",
+              cause: "compaction refused",
+            }),
+          ),
+      },
+    ),
+  );
+
+  it.effect.each([
+    [
+      "fails",
+      Effect.fail(new Orchestrator.OrchestratorProjectionError({ threadId, cause: "read failed" })),
+    ],
+    ["dies", Effect.die("unreadable projection")],
+  ] as const)("sends the message when reading the session %s", ([, records]) =>
+    withHarness(
+      STARTED_THREAD,
+      (harness, queue) =>
+        Effect.gen(function* () {
+          yield* queue.enqueue(enqueueInput("unread", claudeSendContext));
+          yield* fire;
+          assert.deepStrictEqual(dispatchedTexts(yield* Ref.get(harness.commands)), [QUEUED_TEXT]);
+          const [row] = (yield* queue.list({ threadId })).messages;
+          assert.strictEqual(row?.status, "sent");
+        }),
+      { records },
     ),
   );
 });

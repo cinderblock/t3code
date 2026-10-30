@@ -57,6 +57,11 @@ history for that message. The cache lasts about an hour on a Claude
 subscription and 5 minutes with an API key, Bedrock, or Vertex. See [commands and skills](./composer.md#commands-and-skills) for using
 composer commands.
 
+A [queued message](./thread-sidebar.md) gets the same check when it sends, not when you queue it. If
+the thread has gone cold by then, it compacts first and the message follows. To keep the full history,
+set the chip to **Full** before you queue. The chip only shows on a thread that is already cold, so a
+message queued on a warm thread always compacts if it needs to.
+
 **Compact idle threads** in **Settings > Providers > Advanced** controls this for threads
 over 200,000 tokens. Each Claude provider's settings can override it:
 

@@ -4416,6 +4416,52 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("a queued message firing behind its compaction waits for that run", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const threadId = ThreadId.make("runtime-layer-queued-compaction");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make(`${threadId}:create`),
+        threadId,
+        projectId: ProjectId.make(`${threadId}:project`),
+        title: "Queued compaction",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: process.cwd(),
+      });
+      const send = (name: string, text: string) =>
+        orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: name === "compact" ? "agent" : "user",
+          creationSource: "server",
+          commandId: CommandId.make(`${threadId}:${name}`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:${name}`),
+          text,
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "queue_after_active" },
+          ...(name === "compact" ? { idleCompaction: "onReturn" as const } : {}),
+        });
+      yield* send("compact", "/compact");
+      yield* send("message", "Pick up where we left off");
+
+      const { runs } = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(
+        runs.map((run) => [run.userMessageId, run.status]),
+        [
+          [MessageId.make(`${threadId}:compact`), "starting"],
+          [MessageId.make(`${threadId}:message`), "queued"],
+        ],
+      );
+    }),
+  );
+
   it.effect.each(["usage_limit", "provider_error"] as const)(
     "handles a queued message after a %s failure",
     (failureClass) =>

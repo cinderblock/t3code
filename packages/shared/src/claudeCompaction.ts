@@ -44,3 +44,49 @@ export function claudeResumeCompactionAge(questionAnswer: {
  * idleCompaction default of 200K.
  */
 export const COMPACTION_SUGGESTION_MIN_TOKENS = 200_000;
+
+// Fallback TTL: Claude's 1h cache plus slack.
+const CLAUDE_RESUME_COMPACTION_FALLBACK_MS = 70 * 60_000;
+
+/** Whether someone answered Claude's resume prompt with "Don't ask again" on this thread. */
+export function hasDismissedResumeCompaction(
+  requests: ReadonlyArray<{
+    readonly kind: string;
+    readonly status: string;
+    readonly answers?: Readonly<Record<string, unknown>> | undefined;
+  }>,
+): boolean {
+  return requests.some(
+    (request) =>
+      request.kind === "user_input" &&
+      request.status === "resolved" &&
+      Object.entries(request.answers ?? {}).some(
+        ([question, answer]) =>
+          isClaudeResumeCompactionQuestion(question) &&
+          answer === CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
+      ),
+  );
+}
+
+export function shouldOfferResumeCompaction(input: {
+  readonly provider: string | null | undefined;
+  readonly usedTokens: number | null | undefined;
+  readonly updatedAt: string | null | undefined;
+  readonly promptCacheTtlMs?: number | undefined;
+  readonly now: string;
+}): boolean {
+  if (
+    input.provider !== "claudeAgent" ||
+    (input.usedTokens ?? 0) < COMPACTION_SUGGESTION_MIN_TOKENS
+  ) {
+    return false;
+  }
+
+  const updatedAt = Date.parse(input.updatedAt ?? "");
+  const now = Date.parse(input.now);
+  return (
+    Number.isFinite(updatedAt) &&
+    Number.isFinite(now) &&
+    now - updatedAt >= (input.promptCacheTtlMs ?? CLAUDE_RESUME_COMPACTION_FALLBACK_MS)
+  );
+}

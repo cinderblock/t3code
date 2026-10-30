@@ -39,6 +39,7 @@ import addQueuedMessageContent from "../persistence/Migrations/fork/008_QueuedMe
 import addQueuedMessageRestore from "../persistence/Migrations/fork/009_QueuedMessageRestore.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as QueuedMessageService from "./QueuedMessageService.ts";
 
 const threadId = ThreadId.make("queue-attachments-thread");
@@ -74,6 +75,7 @@ const layerFor = (
     getThreadRecords: ((_threadId: ThreadId, _fields: never, filter?: ProjectionRecordFilter) =>
       Effect.succeed({
         thread: shellOf("active"),
+        runs: [],
         messages: options.landed ? (filter?.messageIds ?? []).map((id) => ({ id })) : [],
       })) as never,
   });
@@ -98,6 +100,7 @@ const layerFor = (
     Layer.provide(threads),
     Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
     Layer.provide(documents),
+    Layer.provide(ServerSettings.layerTest()),
     Layer.provide(NodeSqliteClient.layer({ filename: ":memory:" })),
     Layer.provideMerge(
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-queued-attachments-" }).pipe(

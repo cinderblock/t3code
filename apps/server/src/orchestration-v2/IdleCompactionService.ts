@@ -15,7 +15,11 @@ import * as Stream from "effect/Stream";
 
 import { forkParked } from "../serverActivation.ts";
 import * as ServerSettings from "../serverSettings.ts";
-import { idleCompactionWindow } from "./IdleCompaction.ts";
+import {
+  IDLE_COMPACTION_RECORD_FIELDS,
+  idleCompactionRecordFilter,
+  idleCompactionWindow,
+} from "./IdleCompaction.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
@@ -37,16 +41,8 @@ export const make = Effect.gen(function* () {
         const current = yield* settings.getSettings;
         const records = yield* projections.getThreadRecords(
           threadId,
-          [
-            "runs",
-            "messages",
-            "providerThreads",
-            "providerTurns",
-            "runtimeRequests",
-            "turnItems",
-            "contextTransfers",
-          ],
-          { messageRunIds: [runId], turnItemStatuses: ["pending", "running", "waiting"] },
+          IDLE_COMPACTION_RECORD_FIELDS,
+          idleCompactionRecordFilter(runId),
         );
         if (
           resolveIdleCompaction(current, records.thread.providerInstanceId) !==

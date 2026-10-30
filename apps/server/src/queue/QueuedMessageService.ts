@@ -28,12 +28,15 @@ import * as SqlClient from "effect/sql/SqlClient";
 import {
   ChatAttachment,
   CommandId,
+  IDLE_COMPACTION_TEXT,
   MessageId,
   OrchestrationMessageContext,
   QueuedMessageError,
   QueuedMessageSendContext,
   QueuedMessageStatus,
   QueuedMessageTrigger,
+  resolveIdleCompaction,
+  resolveProjectProviderInstanceEnabled,
   ThreadId,
   type QueuedMessage,
   type QueuedMessageCancelInput,
@@ -57,10 +60,17 @@ import {
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as AttachmentClaims from "../orchestration-v2/AttachmentClaims.ts";
+import {
+  IDLE_COMPACTION_RECORD_FIELDS,
+  idleCompactionRecordFilter,
+  resumedRun,
+  shouldCompactBeforeSend,
+} from "../orchestration-v2/IdleCompaction.ts";
 import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 const REACTOR_TICK = Duration.seconds(15);
 const ARCHIVED_WHEN_DUE = "The thread was archived when this message came due";
@@ -375,6 +385,7 @@ export const make = Effect.gen(function* () {
   const launches = yield* ThreadLaunch.ThreadLaunchService;
   const providerRegistry = yield* ProviderRegistry;
   const config = yield* ServerConfig.ServerConfig;
+  const settings = yield* ServerSettings.ServerSettingsService;
   const attachmentServices = yield* Effect.context<
     FileSystem.FileSystem | ServerConfig.ServerConfig | DocumentText.DocumentText
   >();
@@ -822,6 +833,41 @@ export const make = Effect.gen(function* () {
     yield* publishUpsert(message);
   });
 
+  /** Staleness is read here, not at queue time: the wait is what makes a session go cold. */
+  const compactsFirst = Effect.fn("QueuedMessageService.compactsFirst")(
+    function* (message: QueuedMessage) {
+      if (message.sendContext.keepFullHistory === true) return false;
+      const { runs, thread } = yield* threads.getThreadRecords(message.threadId, ["runs"]);
+      const run = resumedRun(runs);
+      const instanceId = thread.providerInstanceId;
+      const current = yield* settings.getSettings;
+      if (
+        run === null ||
+        // Compacting a session this message is leaving for another provider helps nobody.
+        (message.sendContext.modelSelection?.instanceId ?? instanceId) !== instanceId ||
+        resolveIdleCompaction(current, instanceId) === "off" ||
+        !resolveProjectProviderInstanceEnabled(current, thread.projectId, instanceId)
+      ) {
+        return false;
+      }
+      const records = yield* threads.getThreadRecords(
+        message.threadId,
+        IDLE_COMPACTION_RECORD_FIELDS,
+        idleCompactionRecordFilter(run.id),
+      );
+      return shouldCompactBeforeSend(records, yield* nowIso);
+    },
+    (effect, message) => {
+      // A stale session costs tokens; losing the send would cost the message.
+      const sendAnyway = (cause: unknown) =>
+        Effect.logWarning("queued message sent without idle compaction", {
+          threadId: message.threadId,
+          cause,
+        }).pipe(Effect.as(false));
+      return effect.pipe(Effect.catch(sendAnyway), Effect.catchDefect(sendAnyway));
+    },
+  );
+
   /** Null once the thread has started, whoever started it; the message is then a follow-up. */
   const unstartedThread = Effect.fn("QueuedMessageService.unstartedThread")(function* (
     threadId: ThreadId,
@@ -862,6 +908,23 @@ export const make = Effect.gen(function* () {
           ...(message.context !== undefined ? { context: message.context } : {}),
         },
         createdBy,
+        creationSource: "server",
+      });
+    }
+    // As in the composer: the message below queues behind this run, so a compaction that fails
+    // holds it in the thread rather than losing it, and a refused one fails this row.
+    if (yield* compactsFirst(message)) {
+      yield* threads.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`${commandId}:compact`),
+        threadId: message.threadId,
+        messageId: MessageId.make(`queued-compact:${message.id}`),
+        text: IDLE_COMPACTION_TEXT,
+        attachments: [],
+        ...(modelSelection !== undefined ? { modelSelection } : {}),
+        dispatchMode: { type: "queue_after_active" },
+        idleCompaction: "onReturn",
+        createdBy: "agent",
         creationSource: "server",
       });
     }

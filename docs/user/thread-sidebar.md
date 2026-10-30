@@ -181,6 +181,8 @@ Queueing a message applies the composer's plan and access modes to the thread, a
 message uses the thread's modes when it sends, so a mode you change after queueing applies to it too.
 Commands the composer runs itself, such as `/plan` or `/usage-limits`, can't be queued: send them now.
 Commands that go to the provider, such as `/compact`, queue like any other message.
+A message that sends to a large Claude thread after its prompt cache expired [compacts first](./providers-claude.md#compact-long-conversations),
+as a send would.
 
 **When the window resets** means the window's next reset after you queue, however little of it you
 have used. A window that is idle may have no reset coming: its clock starts with your next message

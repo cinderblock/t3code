@@ -28,6 +28,7 @@ import addQueuedMessageRestore from "../../../persistence/Migrations/fork/009_Qu
 import * as DocumentText from "../../../provider/DocumentText.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as QueuedMessageService from "../../../queue/QueuedMessageService.ts";
+import * as ServerSettings from "../../../serverSettings.ts";
 import * as McpHttpServer from "../../McpHttpServer.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
@@ -67,6 +68,7 @@ const layerFor = (
 ) => {
   const threads = Layer.mock(ThreadManagement.ThreadManagementService)({
     getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+    getThreadRecords: () => Effect.succeed({ thread: shell, runs: [] } as never),
     getProjectThreadRecords: () => Effect.succeed(McpToolAccessTestkit.idleThreadProjection(shell)),
     dispatch: (command) => onDispatch(command).pipe(Effect.as({ sequence: 1, storedEvents: [] })),
   });
@@ -85,6 +87,7 @@ const layerFor = (
     Layer.provide(providers),
     Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
     Layer.provide(Layer.mock(DocumentText.DocumentText)({})),
+    Layer.provide(ServerSettings.layerTest()),
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-send-later-" })),
     Layer.provide(NodeServices.layer),
     Layer.provide(NodeSqliteClient.layer({ filename: ":memory:" })),

@@ -1,5 +1,9 @@
-import type { OrchestrationV2ThreadProjection } from "@t3tools/contracts";
-import { COMPACTION_SUGGESTION_MIN_TOKENS } from "@t3tools/shared/claudeCompaction";
+import type { OrchestrationV2ThreadProjection, RunId } from "@t3tools/contracts";
+import {
+  COMPACTION_SUGGESTION_MIN_TOKENS,
+  hasDismissedResumeCompaction,
+  shouldOfferResumeCompaction,
+} from "@t3tools/shared/claudeCompaction";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
 
@@ -11,51 +15,51 @@ const MIN_CONTEXT_TOKENS = COMPACTION_SUGGESTION_MIN_TOKENS;
 // and send the compaction while the cache is still warm.
 const LEAD_MS = 2 * 60_000;
 
+export const IDLE_COMPACTION_RECORD_FIELDS = [
+  "runs",
+  "messages",
+  "providerThreads",
+  "providerTurns",
+  "runtimeRequests",
+  "turnItems",
+  "contextTransfers",
+] as const;
+
+/** Reads only the latest run's message and the turn items still open, which is all this needs. */
+export const idleCompactionRecordFilter = (runId: RunId) =>
+  ({ messageRunIds: [runId], turnItemStatuses: ["pending", "running", "waiting"] }) as const;
+
 export type IdleCompactionRecords = Pick<
   OrchestrationV2ThreadProjection,
-  | "thread"
-  | "runs"
-  | "messages"
-  | "providerThreads"
-  | "providerTurns"
-  | "runtimeRequests"
-  | "turnItems"
-  | "contextTransfers"
+  "thread" | (typeof IDLE_COMPACTION_RECORD_FIELDS)[number]
 >;
 
+type Run = IdleCompactionRecords["runs"][number];
+
+const latestOf = (runs: ReadonlyArray<Run>) =>
+  runs.reduce<Run | null>(
+    (latest, run) => (latest === null || run.ordinal > latest.ordinal ? run : latest),
+    null,
+  );
+
 /**
- * When an idle Claude thread should compact, or null when it should not. The
- * window ends when the prompt cache of Claude's last request expires (1h on
- * subscriptions, 5m on API keys); compacting after that pays a full uncached
- * read.
+ * The context size of the Claude session `latestRun` left behind, or null when T3 must not compact
+ * it: too small, not this thread's current session, or holding work for the next turn.
  */
-export function idleCompactionWindow(
+function compactableUsage(
   {
     thread,
-    runs,
     messages,
     providerThreads,
     providerTurns,
     runtimeRequests,
     turnItems,
     contextTransfers,
+    runs,
   }: IdleCompactionRecords,
-  nowMs: number,
-): {
-  readonly runId: (typeof runs)[number]["id"];
-  readonly startMs: number;
-  readonly endMs: number;
-} | null {
-  if (thread.deletedAt !== null || thread.archivedAt !== null) return null;
-  if (thread.settledAt !== null || thread.settledOverride === "settled") return null;
-  if (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs)
-    return null;
+  latestRun: Run,
+) {
   if (thread.lineage.relationshipToParent === "subagent") return null;
-  const latestRun = runs.reduce<(typeof runs)[number] | null>(
-    (latest, run) => (latest === null || run.ordinal > latest.ordinal ? run : latest),
-    null,
-  );
-  if (latestRun?.status !== "completed" || latestRun.completedAt === null) return null;
   const message = messages.find((candidate) => candidate.id === latestRun.userMessageId);
   // Never compact a compaction, so one idle spell compacts at most once.
   if (message === undefined || message.text.trim().toLowerCase() === "/compact") return null;
@@ -93,11 +97,74 @@ export function idleCompactionWindow(
     .filter((turn) => turn.providerThreadId === providerThread.id && turn.tokenUsage !== undefined)
     .map((turn) => turn.tokenUsage!)
     .toSorted((left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt));
-  if ((usages[0]?.usedTokens ?? 0) < MIN_CONTEXT_TOKENS) return null;
+  const usage = usages[0];
+  return usage !== undefined && usage.usedTokens >= MIN_CONTEXT_TOKENS ? usage : null;
+}
+
+/**
+ * When an idle Claude thread should compact, or null when it should not. The
+ * window ends when the prompt cache of Claude's last request expires (1h on
+ * subscriptions, 5m on API keys); compacting after that pays a full uncached
+ * read.
+ */
+export function idleCompactionWindow(
+  records: IdleCompactionRecords,
+  nowMs: number,
+): {
+  readonly runId: Run["id"];
+  readonly startMs: number;
+  readonly endMs: number;
+} | null {
+  const { thread, runs } = records;
+  if (thread.deletedAt !== null || thread.archivedAt !== null) return null;
+  if (thread.settledAt !== null || thread.settledOverride === "settled") return null;
+  if (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs)
+    return null;
+  const latestRun = latestOf(runs);
+  if (latestRun?.status !== "completed" || latestRun.completedAt === null) return null;
+  const usage = compactableUsage(records, latestRun);
+  if (usage === null) return null;
   // A request served fully from cache creates no cache entry and reports no
   // TTL, but it still refreshes the cache. Treat it as unknown and skip.
-  const expiresAt = usages[0]?.promptCacheExpiresAt;
+  const expiresAt = usage.promptCacheExpiresAt;
   const endMs = expiresAt === undefined ? Number.NaN : Date.parse(expiresAt);
   if (!Number.isFinite(endMs) || nowMs >= endMs) return null;
   return { runId: latestRun.id, startMs: endMs - LEAD_MS, endMs };
+}
+
+/** The run a message sent now would continue from, or null while other work is still ahead of it. */
+export function resumedRun(runs: ReadonlyArray<Run>): Run | null {
+  const ended = runs.filter(
+    (run) => run.status === "completed" || run.status === "failed" || run.status === "interrupted",
+  );
+  const busy = runs.some(
+    (run) =>
+      run.status === "preparing" ||
+      run.status === "queued" ||
+      run.status === "starting" ||
+      run.status === "running" ||
+      run.status === "waiting",
+  );
+  return busy ? null : latestOf(ended);
+}
+
+/**
+ * The composer's Compact chip, for a send with no composer attached: whether a message sent now
+ * lands on a session whose prompt cache has expired. Settled and snoozed threads count, unlike
+ * `idleCompactionWindow`, since the message wakes them anyway.
+ */
+export function shouldCompactBeforeSend(records: IdleCompactionRecords, now: string): boolean {
+  const latestRun = resumedRun(records.runs);
+  if (latestRun === null || hasDismissedResumeCompaction(records.runtimeRequests)) return false;
+  const usage = compactableUsage(records, latestRun);
+  return (
+    usage !== null &&
+    shouldOfferResumeCompaction({
+      provider: "claudeAgent",
+      usedTokens: usage.usedTokens,
+      updatedAt: usage.updatedAt,
+      promptCacheTtlMs: usage.promptCacheTtlMs,
+      now,
+    })
+  );
 }

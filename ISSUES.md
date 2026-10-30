@@ -97,13 +97,3 @@ don't.
 `question answer paths`: the "extracts notebook cells", "preserves corrupt documents" and "keeps
 selected values intact" tests fail on Windows. They expect a raw path and the answer holds it with
 doubled backslashes. Matters because a focused run of this file is red on the maintainer's machine.
-
-## Queued messages skip idle compaction
-
-In progress: entry J, `plans/queued-message-followups.md`, on `master`.
-
-`useComposerSend` compacts a stale Claude session before the message (`compactBeforeSend` from
-`planComposerTurn`, then a `/compact` turn with `idleCompaction: "onReturn"`). The token count and the
-keep-history choice exist only in the client, so a fired message dispatches straight onto the stale
-session. Matters because a message that waited for a window reset is the likeliest to find its session
-stale, so it re-reads the whole history and spends the fresh window on that.

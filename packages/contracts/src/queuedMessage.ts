@@ -95,6 +95,8 @@ export const QueuedMessageSendContext = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
+  /** Skips the compaction a stale Claude session gets when this fires. Unset means compact. */
+  keepFullHistory: Schema.optional(Schema.Boolean),
   /** Set when this may be the thread's first message, which starts it the way a first send does. */
   launch: Schema.optional(
     Schema.Struct({

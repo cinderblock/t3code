@@ -109,6 +109,8 @@ export function useQueuedMessageComposer(input: {
     readonly runtimeMode: RuntimeMode;
     readonly interactionMode: ProviderInteractionMode;
   }) => Promise<AtomCommandResult<void, unknown>>;
+  readonly keepFullHistory: boolean;
+  readonly setKeepFullHistory: (threadKey: string, keep: boolean) => void;
   /** What a first send would use; a message queued as the first one has to keep it. */
   readonly firstSend: {
     readonly isLocalDraftThread: boolean;
@@ -135,6 +137,8 @@ export function useQueuedMessageComposer(input: {
     promptRef,
     runtimeMode,
     persistThreadSettings,
+    keepFullHistory,
+    setKeepFullHistory,
     firstSend,
     setThreadError,
   } = input;
@@ -302,6 +306,7 @@ export function useQueuedMessageComposer(input: {
                 modelSelection: sendContext.selectedModelSelection,
                 runtimeMode,
                 interactionMode: sendContext.interactionMode,
+                ...(keepFullHistory ? { keepFullHistory } : {}),
                 ...(launchStrategy !== null && firstSend.projectId !== null
                   ? {
                       launch: {
@@ -324,6 +329,7 @@ export function useQueuedMessageComposer(input: {
       if (result === null || result._tag === "Failure") return;
       warnExpiredContexts("omitted");
       forgetQueueTrigger(threadKey);
+      setKeepFullHistory(threadKey, false);
       const store = useComposerDraftStore.getState();
       const attachmentIds = snapshot.attachments.map((attachment) => attachment.id);
       if (
@@ -423,6 +429,9 @@ export function useQueuedMessageComposer(input: {
             : scopedThreadKey(scopeThreadRef(environmentId, reopened.threadId)),
           message.trigger,
         );
+        if (reopened === null) {
+          setKeepFullHistory(threadKey, message.sendContext.keepFullHistory === true);
+        }
         const { prompt, unrestoredNames } = restoreQueuedMessageToDraft({
           target: reopened?.draftId ?? threadDraftTarget,
           threadId: reopened?.threadId ?? threadRef.threadId,
