@@ -85,6 +85,8 @@ regressions and costs each agent time re-proving they are pre-existing.
 
 ## `message.dispatch` starts a run on a deleted or archived thread
 
+in progress — `master`, entry K of `plans/queued-message-followups.md`
+
 `Orchestrator.dispatchMessage` has no `deletedAt` or `archivedAt` check for a plain message, so
 `orchestrator.dispatch` of `message.dispatch` on a thread that was just deleted or archived succeeds,
 commits the message and leaves a run in `starting` (measured in `runtimeLayer.test.ts`, 2026-10-30).
