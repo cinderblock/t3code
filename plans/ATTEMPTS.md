@@ -636,8 +636,9 @@ Read-through, not an observed incident, while preparing the queued-message relau
   launcher only; the real path has not been exercised. The real success path then ran on 2026-10-30
   4:36 AM PDT (11:36Z): closed normally, backend answered in 6s. The failure paths remain stub-only.
 - Preflight that worked before that relaunch: build in a sibling worktree, then boot `dist/bin.mjs`
-  with `--base-dir` on a `migrate-dev-db` copy. `migrate-dev-db` does not run fork migrations, so that
-  boot was the real test of fork migration 8. Answered in 5s with 703,482 events.
+  with `--base-dir` on a `migrate-dev-db` copy. `migrate-dev-db` did not run fork migrations then, so that
+  boot was the real test of fork migration 8. Answered in 5s with 703,482 events. It runs them since
+  `a8bd3de314`, so a boot on a new copy no longer tests a pending fork migration.
 - `start-t3.ps1 -BuildOnly` is not a way to check a build under a running app: it refuses, because
   the rebuild would replace the hashed web chunks and break lazy routes. Build in a sibling worktree.
 

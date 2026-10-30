@@ -144,7 +144,7 @@ this order. Scope is what the follow-ups left open, not the older `ISSUES.md` en
   Dev servers and builds belong in a sibling worktree.
 - The running app stays on `dc5788d30a`; these fixes need another relaunch to go live.
 
-- [ ] A. `migrate-dev-db` keeps pending send-later messages
+- [x] A. `migrate-dev-db` keeps pending send-later messages: `a8bd3de314`
 - [ ] B. Window-reset message fires at once on a nearly unused window
 - [ ] C. Queued messages skip the Claude effort prefix
 - [ ] D. Pending message outlives its deleted thread
@@ -152,6 +152,45 @@ this order. Scope is what the follow-ups left open, not the older `ISSUES.md` en
 - [ ] F. Imported thread that never ran reads Waiting in Working
 - [ ] G. Real-client verification, including the first real firings
 - [ ] H. `t3_send_later` evals
+
+## Entry A result (2026-10-30 9:47 AM PDT, 16:47Z)
+
+Done in `a8bd3de314`. A new seed holds no queued messages, and the tool runs fork migrations.
+
+- **All statuses are cleared, not just pending.** `fork_queued_messages` joins `CLEARED_TABLES`, so its
+  rows are never copied. Only `pending` fires. `sending` becomes `failed` at boot, and `sent`, `failed`
+  and `cancelled` are inert. But they are real message text, the tool copies no attachments for them,
+  `scheduled_tasks` loses its history the same way, and a future status fails safe. Entry G queues its
+  own messages, so it loses nothing.
+- **Fork migrations run after upstream's, as at boot.** They are reported as `fork:8_QueuedMessageContent`,
+  so "already current" is now true. The two parts depend on each other: a source with no fork tables
+  would otherwise fail the prune's `DELETE` on a missing table.
+- **Other pending work: none found.** Every table in the live database was checked. `fork_usage_samples`
+  and `fork_auth_*` hold no work. Scheduled tasks, webhook pending rows (by foreign key), the effect
+  outbox and launch workflows were already cleared. Webhook delivery tables are dedupe history.
+  Threads with active runs or open requests are already excluded as not stopped.
+- **First-run and manual seeding are the same path.** `dev-runner.ts` runs this script, so one fix covers
+  both. No guard was added to dev starts: it would delete messages queued on purpose in a sandbox.
+- **Existing seeds: nothing to clean.** A read-only scan of `~/.t3/dev`, this checkout's `.t3` and every
+  worktree found one database, `mobile-attach-pr`, with no queue rows. It is at fork 7, and its own
+  server boot migrates it. Any older seed elsewhere needs a rerun of `vp run migrate-dev-db`.
+
+**Checks.** The new test cases failed before the fix (3 failed, 5 passed) and pass now (8 of 8). `vp fmt`
+clean, `vp lint` exit 0 on both files, `tsc --noEmit` clean in `apps/server`. Real seed into a temp
+directory, `--projects 200 --threads-per-project 30`: source `pending=1 sent=14 cancelled=1`, seed 0 queue
+rows, 0 scheduled tasks, 0 outbox rows, 778 threads, fork 8, and the pending row's thread was kept.
+
+**Not verified.** No dev server was booted on the seed. The source is already at fork 8, so on real data
+the "already current" line was correct but no fork migration ran; that case is covered by the test only.
+
+**Open.**
+
+- `verifyMigrationSlots` still checks upstream ids only, so a fork id clash between branches would not
+  be caught. Not seen, so left.
+- A waiting new thread's row is dropped but its empty thread stays in the seed. Harmless.
+- The real-data seed and check scripts from this entry were left in place for the user to decide about:
+  `C:\Users\camer\AppData\Local\Temp\seedcheck.sl2g` (3.4 GB copy of real data), and `src.mjs`,
+  `check.mjs`, `seeds.mjs` and `tables.mjs` in `C:\Users\camer\AppData\Local\Temp\`.
 
 ## Item 1 result (2026-10-30 3:25 AM PDT, 10:25Z)
 
