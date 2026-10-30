@@ -83,7 +83,7 @@ being changed there.
 Why it matters: every Windows run shows red in suites unrelated to the change, which hides real
 regressions and costs each agent time re-proving they are pre-existing.
 
-## A pending send-later message outlives its deleted thread
+## A pending send-later message outlives its deleted thread (in progress — entry D, master)
 
 Deleting a thread does not touch its `fork_queued_messages` rows (`apps/server/src/queue/`). The row
 stays pending, then fails at dispatch when its trigger fires. Since queued messages began holding
