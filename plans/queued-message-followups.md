@@ -86,15 +86,58 @@ Relaunch thread: `t3-thread://v1/mcp:2cf06899-8261-49a9-bb43-530157899ff1`
 
 ## Progress
 
-- [ ] Item 1
+- [x] Item 1: `3c5f230f83`, plus four lines of its drag test that landed in `d94f7ab701`
 - [ ] Item 2
 - [ ] Item 3
 - [ ] Item 4
 - [ ] Item 5
 - [ ] Relaunch, confirmed on the new commit
 
+## Item 1 result (2026-10-30 3:25 AM PDT, 10:25Z)
+
+- **Section name: Scheduled**, not "Waiting". "Waiting" is already the row status for a thread
+  parked on background work or another thread (`resolveSidebarThreadStatus`), and those rows sit
+  in Working, so a Waiting section would hold rows that don't read Waiting while Working holds
+  rows that do. "Queued" would collide with the composer follow-up queue and the `queued` run
+  status. "Scheduled" is the row status these threads already had, and it matches the section
+  names Working, Snoozed and Settled.
+- **Setting: `sidebarScheduledShelfEnabled`, label "Scheduled section"**, default on, shown only
+  while the Working section is on. Off leaves these threads in the active list. Not migrated:
+  the running app's bundles are `c7d2e59252`, older than the old key, and
+  `~/.t3/userdata/client-settings.json` does not contain it. A dev browser that switched the old
+  option off goes back to the default.
+- **Idle has a trap.** `runtime.status === "idle"` does not mean an idle thread. It means parked
+  on background work (`shellRuntime`, row reads Waiting), which the existing rule counts as
+  working, so those threads stay in Working with a queued message. A finished thread is
+  `completed` or null, and only those reach Scheduled.
+- **Tracker.** `createInboxReturnTracker` keeps its grace and return stamps, and now reports a
+  shelf (`working`, `scheduled`, none) with `resolveThreadShelf`. Working to Scheduled is held for
+  the grace, so chained runs don't flicker, and stamps no return. A sent message holds its place
+  until its run starts, then moves straight to Working. A cancelled message returns the thread
+  after the grace; an approval or question returns it at once.
+- **Web behavior.** Order is Active, Working, Scheduled, Snoozed, Settled. Card rows, because slim
+  rows have no status and a Failed or Limited one must stay visible. Collapsed by default. Drag out
+  as chat context only, like Working. Sorted by last sent message, because soonest-to-send would
+  need trigger data in `scheduledThreadKeysAtom`; window triggers have no stored time on the row.
+- **Surfaces.** Applied: web and desktop sidebar (shared `Sidebar.tsx`, jump order, search list,
+  undo notice host), Settings row, search entry and restore list, contracts, user docs. Reverse
+  states: cancel in the thread, or the setting. No keybinding or palette entry exists for sections.
+  Not applicable: providers (client placement only), agents and MCP (no sidebar placement is
+  exposed), connection modes (reuses the per-environment queue subscription, no new traffic or
+  per-row subscription), server (auto-settle untouched).
+- **Mobile, deliberately left.** The fork's native code never reaches the user's phone, so no new
+  shelf. `useThreadListV2.ts` maps any shelf to Working, so behavior, the "Send-later messages
+  count as working" switch and the `scheduledMessagesWorking` preference are unchanged. Docs say so.
+- **Checks.** `vp fmt` and `vp lint` on touched files: only `settings.ts:269`, which predates this.
+  `tsc --noEmit` clean in contracts, client-runtime, web, mobile. `vp test run`: `threadInbox` 42,
+  `Sidebar.logic` + `Sidebar.drag` 120, `threadListV2` 64, contracts `settings` 24, all passing.
+  Not seen in a running client: browsers are out of scope here.
+- **Open.** Whether the section should work with the Working section off (it does not today).
+
 ## Findings / gotchas
 
+- `d94f7ab701` (relaunch thread) swept in four lines of item 1's `Sidebar.drag.test.ts` from the
+  shared tree. Harmless and left as is; it passes with `3c5f230f83`.
 - Last watcher run ended 2026-10-27 3:30 PM PDT (22:30Z) by launching; none is running as of
   2026-10-30 3:02 AM PDT (10:02Z).
 - The running app's bundles are `c7d2e59252`, older than `master`'s HEAD (build stamp, and the

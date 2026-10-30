@@ -1,5 +1,10 @@
 # Threads with send-later messages count as in progress
 
+**Superseded on web and desktop (2026-10-30):** idle threads with a send-later message now sit in
+their own Scheduled section, and `sidebarScheduledMessagesWorking` became
+`sidebarScheduledShelfEnabled`. See item 1 in `plans/queued-message-followups.md`. Mobile still
+behaves as described here. The auto-settle section below still holds.
+
 ## Goal
 
 User request (2026-10-27): an option that marks threads with queued (send-later) messages
