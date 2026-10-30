@@ -290,6 +290,16 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Steer with", "Steering with", "Requested steering with", "a queued message"],
     "queue-steer",
   ),
+  t3_send_later: tool(["Manage", "Managing", "Managed", "send-later messages"], "queue-edit"),
+  t3_send_later_schedule: tool(
+    ["Schedule", "Scheduling", "Scheduled", "a send-later message"],
+    "queue-edit",
+  ),
+  t3_send_later_list: tool(["List", "Listing", "Listed", "send-later messages"], "queue-list"),
+  t3_send_later_cancel: tool(
+    ["Cancel", "Canceling", "Canceled", "a send-later message"],
+    "queue-cancel",
+  ),
   t3_pending_request_list: tool(
     ["List", "Listing", "Listed", "pending questions"],
     "question-list",
@@ -397,6 +407,7 @@ const asSummaryInput = (input: unknown): SummaryInput | undefined =>
 const ACTION_TOOLS: Readonly<Record<string, (action: string) => string | undefined>> = {
   preview_act: (action) => `preview_${action}`,
   t3_queue: (action) => `t3_queue_${action}`,
+  t3_send_later: (action) => `t3_send_later_${action}`,
   t3_pending_request: (action) => `t3_pending_request_${action}`,
   t3_thread_transfer: (action) =>
     ({ fork: "t3_thread_fork", merge_back: "t3_thread_merge_back", status: "t3_thread_transfers" })[

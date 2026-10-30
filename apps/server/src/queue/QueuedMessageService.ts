@@ -40,6 +40,7 @@ import {
   type QueuedMessageListResult,
   type QueuedMessageStreamEvent,
   type QueuedMessageUpdateInput,
+  type OrchestrationV2ThreadShell,
   type ServerProvider,
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
@@ -156,6 +157,40 @@ export function isTriggerDue(
   }
 }
 
+/** When an agent's message sends. Windows are named by kind; the provider's ids vary. */
+export type QueuedMessageWhen =
+  | { readonly at: string }
+  | { readonly windowReset: "session" | "weekly" };
+
+/**
+ * Refuses what would send at once or never, since an agent cannot see the sidebar to notice.
+ * A window this empty already reads as freshly reset, so `isTriggerDue` would send it now.
+ */
+export function resolveScheduledTrigger(
+  when: QueuedMessageWhen,
+  accountKey: string,
+  nowMs: number,
+  limitsByInstance: UsageLimitsByInstance,
+): { readonly trigger: QueuedMessageTrigger } | { readonly error: string } {
+  if ("at" in when) {
+    return Date.parse(when.at) > nowMs
+      ? { trigger: { type: "at", at: when.at } }
+      : { error: `${when.at} is not in the future` };
+  }
+  const window = findTriggerWindow(limitsByInstance.get(accountKey), `${when.windowReset}:all`);
+  if (window === null) {
+    return { error: `This thread's provider reports no ${when.windowReset} usage window` };
+  }
+  if (window.usedPercent <= RESET_EPSILON_PERCENT) {
+    const useAt =
+      window.resetsAt === undefined ? "`at`" : `\`at\` with its reset time, ${window.resetsAt}`;
+    return {
+      error: `The ${when.windowReset} window is nearly unused and would send now. Use ${useAt}.`,
+    };
+  }
+  return { trigger: { type: "window-reset", accountKey, windowId: window.id } };
+}
+
 interface QueuedMessageRow {
   readonly id: string;
   readonly threadId: string;
@@ -209,6 +244,16 @@ export class QueuedMessageService extends Context.Service<
     readonly enqueue: (
       input: QueuedMessageEnqueueInput,
     ) => Effect.Effect<QueuedMessage, QueuedMessageError>;
+    /** Queues a message an agent wrote. It sends as the agent, in the thread's modes and model. */
+    readonly enqueueForThread: (input: {
+      readonly id: QueuedMessageId;
+      readonly thread: Pick<
+        OrchestrationV2ThreadShell,
+        "id" | "providerInstanceId" | "runtimeMode" | "interactionMode"
+      >;
+      readonly text: string;
+      readonly when: QueuedMessageWhen;
+    }) => Effect.Effect<QueuedMessage, QueuedMessageError>;
     readonly update: (
       input: QueuedMessageUpdateInput,
     ) => Effect.Effect<QueuedMessage, QueuedMessageError>;
@@ -216,6 +261,11 @@ export class QueuedMessageService extends Context.Service<
     readonly cancel: (
       input: QueuedMessageCancelInput,
     ) => Effect.Effect<QueuedMessage, QueuedMessageError>;
+    /** `cancel`, refusing a message that belongs to another thread. */
+    readonly cancelForThread: (input: {
+      readonly id: QueuedMessageId;
+      readonly threadId: ThreadId;
+    }) => Effect.Effect<QueuedMessage, QueuedMessageError>;
     readonly list: (
       input: QueuedMessageListInput,
     ) => Effect.Effect<QueuedMessageListResult, QueuedMessageError>;
@@ -316,6 +366,29 @@ export const make = Effect.gen(function* () {
     return message;
   });
 
+  const enqueueForThread: QueuedMessageService["Service"]["enqueueForThread"] = Effect.fn(
+    "QueuedMessageService.enqueueForThread",
+  )(function* ({ id, thread, text, when }) {
+    const resolved = resolveScheduledTrigger(
+      when,
+      thread.providerInstanceId,
+      yield* Clock.currentTimeMillis,
+      usageLimitsByInstance(yield* providerRegistry.getProviders),
+    );
+    if ("error" in resolved) {
+      return yield* new QueuedMessageError({ message: resolved.error });
+    }
+    return yield* enqueue({
+      id,
+      threadId: thread.id,
+      messageId: MessageId.make(`send-later:${id}`),
+      text,
+      trigger: resolved.trigger,
+      sendContext: { runtimeMode: thread.runtimeMode, interactionMode: thread.interactionMode },
+      origin: "agent",
+    });
+  });
+
   const update: QueuedMessageService["Service"]["update"] = Effect.fn(
     "QueuedMessageService.update",
   )(function* (input) {
@@ -357,6 +430,16 @@ export const make = Effect.gen(function* () {
     }
     yield* publishUpsert(message);
     return message;
+  });
+
+  const cancelForThread: QueuedMessageService["Service"]["cancelForThread"] = Effect.fn(
+    "QueuedMessageService.cancelForThread",
+  )(function* ({ id, threadId }) {
+    const message = yield* loadById(id);
+    if (message.threadId !== threadId) {
+      return yield* new QueuedMessageError({ message: `Queued message ${id} was not found` });
+    }
+    return yield* cancel({ id });
   });
 
   const list: QueuedMessageService["Service"]["list"] = Effect.fn("QueuedMessageService.list")(
@@ -450,7 +533,7 @@ export const make = Effect.gen(function* () {
           ? { modelSelection: message.sendContext.modelSelection }
           : {}),
         dispatchMode: { type: "queue_after_active" },
-        createdBy: "user",
+        createdBy: message.origin === "agent" ? "agent" : "user",
         creationSource: "server",
       })
       .pipe(Effect.exit);
@@ -511,8 +594,10 @@ export const make = Effect.gen(function* () {
 
   return QueuedMessageService.of({
     enqueue,
+    enqueueForThread,
     update,
     cancel,
+    cancelForThread,
     list,
     streamMessages,
   });

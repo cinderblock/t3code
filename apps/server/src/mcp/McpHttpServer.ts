@@ -48,6 +48,8 @@ import * as ProjectHandlers from "./toolkits/project/handlers.ts";
 import { AttachmentToolkit } from "./toolkits/attachment/tools.ts";
 import * as AttachmentHandlers from "./toolkits/attachment/handlers.ts";
 import { ThreadToolkit } from "./toolkits/thread/tools.ts";
+import * as SendLaterHandlers from "./toolkits/sendLater/handlers.ts";
+import { SendLaterToolkit } from "./toolkits/sendLater/tools.ts";
 import * as ThreadHandlers from "./toolkits/thread/handlers.ts";
 import * as ThreadMetadataMcpService from "./ThreadMetadataMcpService.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
@@ -759,6 +761,7 @@ const HANDOFF_TOOLS: ReadonlySet<string> = new Set([
 /** Tool actions that hand work over with only a `{ sequence }` result; the input names the thread. */
 const INPUT_TARGET_ACTIONS: Readonly<Record<string, ReadonlySet<string>>> = {
   t3_queue: new Set(["edit", "promote_to_steer"]),
+  t3_send_later: new Set(["schedule"]),
   t3_pending_request: new Set(["respond"]),
 };
 
@@ -1036,6 +1039,8 @@ export const layerOrchestratorToolkit = toolkitRegistration(
 
 export const layerThreadToolkit = toolkitRegistration(ThreadToolkit, ThreadHandlers.layer);
 
+export const layerSendLaterToolkit = toolkitRegistration(SendLaterToolkit, SendLaterHandlers.layer);
+
 const layerWorktreeToolkitRegistration = toolkitRegistration(
   WorktreeToolkit,
   WorktreeHandlers.layer,
@@ -1091,6 +1096,7 @@ export const layerTools = Layer.mergeAll(
   layerPreviewToolkit,
   layerOrchestratorToolkit,
   layerThreadToolkit,
+  layerSendLaterToolkit,
   layerAttachmentToolkit,
   layerProjectRegistration,
   layerEnvironmentToolkit,

@@ -58,6 +58,7 @@ describe("resolveT3McpSummaryAction", () => {
       "queue-list",
     );
     expect(resolveT3McpSummaryAction("t3_queue", { action: "edit" })).toBe("queue-edit");
+    expect(resolveT3McpSummaryAction("t3_send_later", { action: "cancel" })).toBe("queue-cancel");
     expect(resolveT3McpSummaryAction("t3_thread_transfer", { action: "status" })).toBe(
       "thread-transfers",
     );

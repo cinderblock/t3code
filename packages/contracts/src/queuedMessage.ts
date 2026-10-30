@@ -95,7 +95,7 @@ export const QueuedMessage = Schema.Struct({
   sendContext: QueuedMessageSendContext,
   status: QueuedMessageStatus,
   /** Why the message was queued (e.g. auto-converted after a cap hit). */
-  origin: Schema.Literals(["user", "cap-hit-auto"]),
+  origin: Schema.Literals(["user", "cap-hit-auto", "agent"]),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
   /** Set when status is "sent". */
@@ -112,7 +112,7 @@ export const QueuedMessageEnqueueInput = Schema.Struct({
   text: Schema.String,
   trigger: QueuedMessageTrigger,
   sendContext: QueuedMessageSendContext,
-  origin: Schema.Literals(["user", "cap-hit-auto"]),
+  origin: Schema.Literals(["user", "cap-hit-auto", "agent"]),
 });
 export type QueuedMessageEnqueueInput = typeof QueuedMessageEnqueueInput.Type;
 

@@ -10,6 +10,7 @@ import {
   decodeQueuedMessageRow,
   findTriggerWindow,
   isTriggerDue,
+  resolveScheduledTrigger,
   type UsageLimitsByInstance,
 } from "./QueuedMessageService.ts";
 
@@ -177,6 +178,53 @@ describe("isTriggerDue", () => {
       ]);
       expect(isTriggerDue(trigger, NOW_MS, limits)).toBe(false);
     });
+  });
+});
+
+describe("resolveScheduledTrigger", () => {
+  const limits = (usedPercent: number) =>
+    makeLimits("claude", [
+      makeWindow({
+        id: "five_hour",
+        kind: "session",
+        label: "5-hour",
+        usedPercent,
+        resetsAt: minutesFromNow(30),
+      }),
+    ]);
+
+  it("stores the provider's own id for a window named by kind", () => {
+    expect(
+      resolveScheduledTrigger({ windowReset: "session" }, "claude", NOW_MS, limits(60)),
+    ).toEqual({ trigger: { type: "window-reset", accountKey: "claude", windowId: "five_hour" } });
+  });
+
+  it("refuses a window the provider does not report, which would never fire", () => {
+    expect(
+      resolveScheduledTrigger({ windowReset: "weekly" }, "claude", NOW_MS, limits(60)),
+    ).toEqual({ error: "This thread's provider reports no weekly usage window" });
+  });
+
+  it("refuses a nearly empty window, which would fire on the next tick", () => {
+    const resolved = resolveScheduledTrigger(
+      { windowReset: "session" },
+      "claude",
+      NOW_MS,
+      limits(3),
+    );
+    expect(resolved).toEqual({
+      error: `The session window is nearly unused and would send now. Use \`at\` with its reset time, ${minutesFromNow(30)}.`,
+    });
+  });
+
+  it("accepts a future time and refuses a past one", () => {
+    const at = minutesFromNow(10);
+    expect(resolveScheduledTrigger({ at }, "claude", NOW_MS, noLimits)).toEqual({
+      trigger: { type: "at", at },
+    });
+    expect(resolveScheduledTrigger({ at: minutesFromNow(-1) }, "claude", NOW_MS, noLimits)).toEqual(
+      { error: `${minutesFromNow(-1)} is not in the future` },
+    );
   });
 });
 

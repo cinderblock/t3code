@@ -161,6 +161,12 @@ agents to go idle.
 On mobile there is no Scheduled section: these threads stay in Working, controlled by **Send-later
 messages count as working**.
 
+The composer's send-later button is on web and desktop only. From a phone, ask the agent in a thread
+instead, such as "send 'run the release check' here at 3 AM" or "send this when my 5-hour limit
+resets". You can ask it what's waiting or to cancel one the same way. It sends once, and the sent
+message shows as coming from the agent. Asking takes a turn, so it can't help once that provider is
+out of usage; use **Resume at reset** on the thread for that.
+
 This is on by default. Turn it off with **Settings → General → Working section** on web, desktop,
 iOS and Android. Each device keeps its own choice.
 
