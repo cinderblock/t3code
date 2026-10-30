@@ -1,9 +1,16 @@
+import {
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
+import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { isAssetAttachmentNotFoundFailure } from "@t3tools/client-runtime/state/attachments";
 import {
   QueuedMessageId,
   type ChatAttachment,
   type EnvironmentId,
+  type ProjectId,
   type QueuedMessage,
   type QueuedMessageTrigger,
   type RuntimeMode,
@@ -18,8 +25,10 @@ import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { collapseExpandedComposerCursor } from "../../composer-logic";
 import {
   composerTargetKey,
+  finalizePromotedDraftThreadByRef,
   useComposerDraftStore,
   type ComposerThreadTarget,
+  type DraftThreadEnvMode,
 } from "../../composerDraftStore";
 import type { ComposerHandleRef } from "../../composerHandleContext";
 import {
@@ -31,20 +40,31 @@ import {
   startAttachmentUpload,
 } from "../../lib/attachmentUploadQueue";
 import { buildMessageContext } from "../../lib/composerContextRecords";
+import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
+import { readThreadShell } from "../../state/entities";
 import { environmentServerConfigsAtom } from "../../state/server";
-import { usageEnvironment } from "../../state/quota";
+import { queuedMessagesAtom, usageEnvironment } from "../../state/quota";
+import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
-import { deriveComposerSendState, snapshotComposerSend } from "../ChatView.logic";
+import {
+  deriveComposerSendState,
+  sendTitleFallbackLabels,
+  snapshotComposerSend,
+} from "../ChatView.logic";
 import { toastManager, stackedThreadToast } from "../ui/toast";
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
 import { pendingDraftWork } from "./pendingDraftWork";
 import {
   draftStillHoldsSnapshot,
+  draftWorkspaceForLaunch,
   forgetQueueTrigger,
   rememberQueueTrigger,
+  resolveQueuedLaunchStrategy,
   restoreQueuedMessageToDraft,
   takeBackQueuedMessage,
+  takeBackReopensDraft,
   type AttachmentDownload,
 } from "./queuedMessageRestore";
 import { downloadAttachmentBlob } from "./useComposerContextImport";
@@ -66,12 +86,23 @@ export function useQueuedMessageComposer(input: {
   readonly threadKey: string;
   readonly currentRouteThreadKeyRef: { readonly current: string | null };
   readonly canQueue: boolean;
+  readonly awaitingMachine: boolean;
   readonly composerRef: ComposerHandleRef;
   /** The draft on screen, which is not the thread's own during a queued-run edit. */
   readonly composerDraftTarget: ComposerThreadTarget;
   readonly threadDraftTarget: ComposerThreadTarget;
   readonly promptRef: { current: string };
   readonly runtimeMode: RuntimeMode;
+  /** What a first send would use; a message queued as the first one has to keep it. */
+  readonly firstSend: {
+    readonly isLocalDraftThread: boolean;
+    readonly activeMessageCount: number;
+    readonly projectId: ProjectId | null;
+    readonly sendEnvMode: DraftThreadEnvMode;
+    readonly worktreePath: string | null;
+    readonly branch: string | null;
+    readonly startFromOrigin: boolean;
+  };
   readonly setThreadError: (threadId: ScopedThreadRef["threadId"], error: string | null) => void;
 }) {
   const {
@@ -80,11 +111,13 @@ export function useQueuedMessageComposer(input: {
     threadKey,
     currentRouteThreadKeyRef,
     canQueue,
+    awaitingMachine,
     composerRef,
     composerDraftTarget,
     threadDraftTarget,
     promptRef,
     runtimeMode,
+    firstSend,
     setThreadError,
   } = input;
   const enqueueQueuedMessage = useAtomCommand(
@@ -95,10 +128,16 @@ export function useQueuedMessageComposer(input: {
     reportFailure: false,
   });
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
+  const deleteThread = useOrchestrationCommand(threadEnvironment.delete, { reportFailure: false });
+  const handleNewThread = useNewThreadHandler();
   const queueInFlightRef = useRef(false);
 
   const queueDraft = async (trigger: QueuedMessageTrigger) => {
     if (!canQueue || threadRef === null || queueInFlightRef.current) return;
+    if (awaitingMachine) {
+      warn("Choose a machine to continue", "Pick one in the composer, then queue this again.");
+      return;
+    }
     const sendContext = composerRef.current?.getSendContext();
     if (!sendContext) return;
     if (pendingDraftWork.has(composerTargetKey(composerDraftTarget))) {
@@ -130,6 +169,15 @@ export function useQueuedMessageComposer(input: {
     if (!hasSendableContent) return;
     const snapshot = snapshotComposerSend({ ...contents, sendableTerminalContexts });
     const { threadId } = threadRef;
+    const launchStrategy = resolveQueuedLaunchStrategy(firstSend);
+    if (launchStrategy === "missing-base-branch") {
+      setThreadError(threadId, "Select a base branch before queueing in New worktree mode.");
+      return;
+    }
+    if (launchStrategy !== null && firstSend.projectId === null) {
+      warn("Choose a project first", "This draft no longer points to an available project.");
+      return;
+    }
     const fileBlockReason = () => {
       const config = appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId) ?? null;
       return fileAttachmentCapabilityBlockReason({
@@ -185,6 +233,19 @@ export function useQueuedMessageComposer(input: {
             modelSelection: sendContext.selectedModelSelection,
             runtimeMode,
             interactionMode: sendContext.interactionMode,
+            ...(launchStrategy !== null && firstSend.projectId !== null
+              ? {
+                  launch: {
+                    projectId: firstSend.projectId,
+                    title: deriveThreadTitleSeed({
+                      text: snapshot.messageText,
+                      attachments: snapshot.attachments,
+                      fallbackLabels: sendTitleFallbackLabels(snapshot),
+                    }),
+                    workspaceStrategy: launchStrategy,
+                  },
+                }
+              : {}),
           },
           origin: "user",
         },
@@ -195,24 +256,26 @@ export function useQueuedMessageComposer(input: {
       const store = useComposerDraftStore.getState();
       const attachmentIds = snapshot.attachments.map((attachment) => attachment.id);
       if (
-        !draftStillHoldsSnapshot(store.getComposerDraft(composerDraftTarget), {
+        draftStillHoldsSnapshot(store.getComposerDraft(composerDraftTarget), {
           prompt: contents.prompt,
           attachmentIds,
         })
       ) {
+        store.clearComposerContent(composerDraftTarget);
+        releaseDraftAttachments(snapshot.attachments);
+        if (currentRouteThreadKeyRef.current === threadKey) {
+          promptRef.current = "";
+          composerRef.current?.resetCursorState();
+        }
+      } else {
         toastManager.add({
           type: "info",
           title: "Message queued",
           description: "The draft changed while it was queueing, so it stayed in the composer.",
         });
-        return;
       }
-      store.clearComposerContent(composerDraftTarget);
-      releaseDraftAttachments(snapshot.attachments);
-      if (currentRouteThreadKeyRef.current === threadKey) {
-        promptRef.current = "";
-        composerRef.current?.resetCursorState();
-      }
+      // No message or run will appear to finalize this draft, which is what a send waits for.
+      if (firstSend.isLocalDraftThread) finalizePromotedDraftThreadByRef(threadRef);
     } finally {
       queueInFlightRef.current = false;
     }
@@ -237,6 +300,34 @@ export function useQueuedMessageComposer(input: {
       : new File([blob], attachment.name, { type: attachment.mimeType || blob.type });
   };
 
+  /** Opens a new draft with the setup a first message was queued with, if it should go back. */
+  const reopenDraft = async (message: QueuedMessage) => {
+    const { launch, runtimeMode: queuedRuntimeMode, interactionMode } = message.sendContext;
+    if (
+      launch === undefined ||
+      threadRef === null ||
+      currentRouteThreadKeyRef.current !== threadKey ||
+      !takeBackReopensDraft({
+        message,
+        allMessages: appAtomRegistry.get(queuedMessagesAtom(environmentId)),
+        thread: readThreadShell(threadRef),
+      })
+    ) {
+      return null;
+    }
+    const opened = await handleNewThread(scopeProjectRef(environmentId, launch.projectId), {
+      ...draftWorkspaceForLaunch(launch.workspaceStrategy),
+      replace: true,
+    });
+    if (opened !== null) {
+      useComposerDraftStore.getState().setDraftThreadContext(opened.draftId, {
+        runtimeMode: queuedRuntimeMode,
+        interactionMode,
+      });
+    }
+    return opened;
+  };
+
   /**
    * Cancels a message and puts it back in the composer. Only this client's own click restores,
    * never the queue stream, so a cancel elsewhere touches no draft.
@@ -250,11 +341,18 @@ export function useQueuedMessageComposer(input: {
         const cancelled = await cancelQueuedMessage({ environmentId, input: { id: message.id } });
         return cancelled._tag === "Success";
       },
-      restore: (files) => {
-        rememberQueueTrigger(threadKey, message.trigger);
+      restore: async (files) => {
+        // The draft is written before the thread goes: deleting it navigates away from it.
+        const reopened = await reopenDraft(message);
+        rememberQueueTrigger(
+          reopened === null
+            ? threadKey
+            : scopedThreadKey(scopeThreadRef(environmentId, reopened.threadId)),
+          message.trigger,
+        );
         const { prompt, unrestoredNames } = restoreQueuedMessageToDraft({
-          target: threadDraftTarget,
-          threadId: threadRef.threadId,
+          target: reopened?.draftId ?? threadDraftTarget,
+          threadId: reopened?.threadId ?? threadRef.threadId,
           message,
           files,
         });
@@ -264,7 +362,9 @@ export function useQueuedMessageComposer(input: {
             `${unrestoredNames.join(", ")} could not be added. Attach them again if you still need them.`,
           );
         }
-        if (
+        if (reopened !== null) {
+          await deleteThread({ environmentId, input: { threadId: threadRef.threadId } });
+        } else if (
           currentRouteThreadKeyRef.current === threadKey &&
           composerDraftTarget === threadDraftTarget
         ) {

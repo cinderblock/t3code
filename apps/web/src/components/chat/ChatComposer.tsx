@@ -388,7 +388,6 @@ export interface ChatComposerProps {
   activeThread: Thread | undefined;
   activeThreadShell: ThreadShell | null;
   promptHistoryMessages: ReadonlyArray<ChatMessage>;
-  isServerThread: boolean;
   isLocalDraftThread: boolean;
   forceExpandedOnMobile: boolean;
   projectSelectionRequired: boolean;
@@ -552,7 +551,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThreadEnvironmentId: _activeThreadEnvironmentId,
     activeThread,
     promptHistoryMessages,
-    isServerThread,
     isLocalDraftThread: _isLocalDraftThread,
     forceExpandedOnMobile,
     projectSelectionRequired,
@@ -1284,7 +1282,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // Queue draft ("send later") affordance next to the send button.
   const usageAccounts = useAtomValue(usageAccountsAtom(environmentId));
   const showQueueDraftButton =
-    isServerThread &&
     !isEditingQueuedMessage &&
     pendingPrimaryAction === null &&
     !(pendingUserInputs.length === 0 && showPlanFollowUpPrompt);
@@ -1292,6 +1289,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     isSendBusy ||
     isConnecting ||
     environmentUnavailable !== null ||
+    projectSelectionRequired ||
+    multipleModelSelections !== null ||
     !composerSendState.hasSendableContent;
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;

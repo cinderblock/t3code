@@ -37,6 +37,10 @@ function thread(id: string, working: boolean) {
 }
 
 describe("resolveThreadShelf", () => {
+  it("shelves a thread that has never run, waiting on its first message, as scheduled", () => {
+    expect(resolveThreadShelf(thread("new", false), true)).toBe("scheduled");
+  });
+
   it("shelves an idle or failed thread holding a scheduled message as scheduled", () => {
     expect(resolveThreadShelf(thread("a", false), true)).toBe("scheduled");
     expect(resolveThreadShelf(thread("a", false), false)).toBeNull();

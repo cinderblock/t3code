@@ -2,11 +2,16 @@ import type {
   ChatAttachment,
   ChatFileAttachment,
   ChatImageAttachment,
+  OrchestrationV2ThreadLaunchWorkspaceStrategy,
   QueuedMessage,
   QueuedMessageTrigger,
   ThreadId,
 } from "@t3tools/contracts";
-import { useComposerDraftStore, type ComposerThreadTarget } from "../../composerDraftStore";
+import {
+  useComposerDraftStore,
+  type ComposerThreadTarget,
+  type DraftThreadEnvMode,
+} from "../../composerDraftStore";
 import { producerIdFromComposerContextId } from "../../lib/composerContextReferences";
 import {
   asKnownContextRecord,
@@ -51,7 +56,7 @@ export async function takeBackQueuedMessage(input: {
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly download: (attachment: ChatAttachment) => Promise<AttachmentDownload>;
   readonly cancel: () => Promise<boolean>;
-  readonly restore: (files: ReadonlyMap<string, File>) => void;
+  readonly restore: (files: ReadonlyMap<string, File>) => void | Promise<void>;
 }): Promise<
   | { readonly outcome: "restored" | "lost-race" }
   | { readonly outcome: "download-failed"; readonly name: string }
@@ -63,8 +68,105 @@ export async function takeBackQueuedMessage(input: {
     if (downloaded !== "missing") files.set(attachment.id, downloaded);
   }
   if (!(await input.cancel())) return { outcome: "lost-race" };
-  input.restore(files);
+  await input.restore(files);
   return { outcome: "restored" };
+}
+
+/**
+ * What a queued message must carry to start its thread later: the same choice a send makes
+ * between `bootstrap` and a plain dispatch. Null when the send would be a plain dispatch.
+ */
+export function resolveQueuedLaunchStrategy(input: {
+  readonly isLocalDraftThread: boolean;
+  readonly activeMessageCount: number;
+  readonly sendEnvMode: DraftThreadEnvMode;
+  readonly worktreePath: string | null;
+  readonly branch: string | null;
+  readonly startFromOrigin: boolean;
+}): OrchestrationV2ThreadLaunchWorkspaceStrategy | "missing-base-branch" | null {
+  const { branch, worktreePath, startFromOrigin } = input;
+  const isFirstMessage = input.isLocalDraftThread || input.activeMessageCount === 0;
+  if (isFirstMessage && input.sendEnvMode === "worktree" && worktreePath === null) {
+    if (branch === null) return "missing-base-branch";
+    return { type: "worktree", baseRef: branch, ...(startFromOrigin ? { startFromOrigin } : {}) };
+  }
+  if (!input.isLocalDraftThread) return null;
+  const onBranch = branch === null ? {} : { branch };
+  return worktreePath === null
+    ? { type: "root", ...onBranch }
+    : { type: "existing_worktree", worktreePath, ...onBranch };
+}
+
+/** The draft setup a launch strategy came from, for taking a first message back. */
+export function draftWorkspaceForLaunch(strategy: OrchestrationV2ThreadLaunchWorkspaceStrategy): {
+  readonly branch: string | null;
+  readonly worktreePath: string | null;
+  readonly envMode: DraftThreadEnvMode;
+  readonly startFromOrigin: boolean;
+} {
+  switch (strategy.type) {
+    case "worktree":
+      return {
+        branch: strategy.baseRef,
+        worktreePath: null,
+        envMode: "worktree",
+        startFromOrigin: strategy.startFromOrigin === true,
+      };
+    case "existing_worktree":
+      return {
+        branch: strategy.branch ?? null,
+        worktreePath: strategy.worktreePath,
+        envMode: "worktree",
+        startFromOrigin: false,
+      };
+    case "root":
+      return {
+        branch: strategy.branch ?? null,
+        worktreePath: null,
+        envMode: "local",
+        startFromOrigin: false,
+      };
+  }
+}
+
+/** The setup a thread's waiting first message will start with. */
+export function pendingQueuedLaunch(
+  messages: ReadonlyArray<QueuedMessage>,
+  threadId: ThreadId | undefined,
+) {
+  return messages.find(
+    (message) =>
+      message.threadId === threadId &&
+      message.status === "pending" &&
+      message.sendContext.launch !== undefined,
+  )?.sendContext.launch;
+}
+
+/**
+ * A first message taken back leaves a thread that only existed to hold it, so it goes back to
+ * being a draft. A thread that has started, or still holds another message, stays.
+ */
+export function takeBackReopensDraft(input: {
+  readonly message: QueuedMessage;
+  readonly allMessages: ReadonlyArray<QueuedMessage>;
+  readonly thread: {
+    readonly latestUserMessageAt: string | null;
+    readonly latestRun: unknown;
+  } | null;
+}): boolean {
+  const { message, allMessages, thread } = input;
+  return (
+    message.sendContext.launch !== undefined &&
+    thread !== null &&
+    thread.latestUserMessageAt === null &&
+    thread.latestRun === null &&
+    !allMessages.some(
+      (other) =>
+        other.id !== message.id &&
+        other.threadId === message.threadId &&
+        (other.status === "pending" || other.status === "sending"),
+    )
+  );
 }
 
 const queueTriggersByThreadKey = new Map<string, QueuedMessageTrigger>();

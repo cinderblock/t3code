@@ -294,7 +294,9 @@ import {
   getProviderStatusBannerKey,
   shouldShowProviderStatusBanner,
 } from "./chat/ProviderStatusBanner";
+import { queuedMessagesAtom } from "../state/quota";
 import { QueuedMessagesPanel } from "./chat/QueuedMessagesPanel";
+import { pendingQueuedLaunch } from "./chat/queuedMessageRestore";
 import { useQueuedMessageComposer } from "./chat/useQueuedMessageComposer";
 import { UsageStatusBar } from "./quota/UsageStatusBar";
 import {
@@ -2100,8 +2102,17 @@ export default function ChatView(props: ChatViewProps) {
   const setPendingServerThreadBranch = (branch: string | null) => {
     if (activeThread) setPendingServerThreadBranchEntry({ threadId: activeThread.id, branch });
   };
+  // A thread waiting on its first message still has the setup that message will start with.
+  const queuedMessages = useAtomValue(queuedMessagesAtom(environmentId));
+  const queuedLaunchStrategy = pendingQueuedLaunch(
+    queuedMessages,
+    activeThread?.id,
+  )?.workspaceStrategy;
+  const queuedWorktree = queuedLaunchStrategy?.type === "worktree" ? queuedLaunchStrategy : null;
   const envMode: DraftThreadEnvMode = canOverrideServerThreadEnvMode
-    ? (pendingServerThreadEnvMode ?? draftThread?.envMode ?? derivedEnvMode)
+    ? (pendingServerThreadEnvMode ??
+      draftThread?.envMode ??
+      (queuedWorktree !== null ? "worktree" : derivedEnvMode))
     : derivedEnvMode;
   const activeThreadBranch =
     canOverrideServerThreadEnvMode && pendingServerThreadBranchEntryForThread !== null
@@ -2111,6 +2122,7 @@ export default function ChatView(props: ChatViewProps) {
     ? (draftThread?.startFromOrigin ?? false)
     : canOverrideServerThreadEnvMode
       ? (pendingServerThreadStartFromOriginByThreadId[activeThread?.id ?? ""] ??
+        queuedWorktree?.startFromOrigin ??
         activeProjectSettings.settings.newWorktreesStartFromOrigin)
       : false;
   const sendEnvMode = resolveSendEnvMode({
@@ -2731,12 +2743,22 @@ export default function ChatView(props: ChatViewProps) {
     threadRef: activeThread ? scopeThreadRef(environmentId, activeThread.id) : null,
     threadKey: routeThreadKey,
     currentRouteThreadKeyRef,
-    canQueue: isServerThread && !activeEnvironmentUnavailable,
+    canQueue: !activeEnvironmentUnavailable,
+    awaitingMachine: needsLoadBalancing,
     composerRef,
     composerDraftTarget,
     threadDraftTarget: baseComposerDraftTarget,
     promptRef,
     runtimeMode,
+    firstSend: {
+      isLocalDraftThread,
+      activeMessageCount,
+      projectId: activeProject?.id ?? null,
+      sendEnvMode,
+      worktreePath: activeWorktreePath,
+      branch: activeThreadBranch,
+      startFromOrigin,
+    },
     setThreadError,
   });
   const onQueueDraftStable = useStableCallback(queueDraft);
@@ -3442,7 +3464,6 @@ export default function ChatView(props: ChatViewProps) {
                               activeThread={activeThread}
                               activeThreadShell={activeThreadShell}
                               promptHistoryMessages={timelineMessages}
-                              isServerThread={isServerThread}
                               isLocalDraftThread={isLocalDraftThread}
                               forceExpandedOnMobile={
                                 forceExpandedMobileComposer && isDraftHeroState

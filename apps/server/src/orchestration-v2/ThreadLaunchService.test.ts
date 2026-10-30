@@ -18,6 +18,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   GitCommandError,
   MessageId,
+  QueuedMessageId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -42,6 +43,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import * as QueuedMessageService from "../queue/QueuedMessageService.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProjectService from "../project/ProjectService.ts";
@@ -882,6 +884,64 @@ it.effect("starts an empty thread created earlier in any workspace, as a queued 
         assert.equal(launched.projection.runs.length, 1);
       }
     }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
+it.effect("runs a first message queued before its thread existed through the launch", () =>
+  Effect.gen(function* () {
+    const setupEntered = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      hasCommit: () => Effect.succeed(true),
+      runSetup: () =>
+        Deferred.succeed(setupEntered, undefined).pipe(Effect.as({ status: "no-script" as const })),
+    });
+    const threadId = ThreadId.make("thread:launch:queued-before-it-existed");
+    const layer = QueuedMessageService.layer.pipe(
+      Layer.provide(Layer.mock(DocumentText.DocumentText)({})),
+      Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-queued-launch-" })),
+      Layer.provide(NodeServices.layer),
+      Layer.provideMerge(harness.layer),
+    );
+    yield* Effect.gen(function* () {
+      const queue = yield* QueuedMessageService.QueuedMessageService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      yield* queue.enqueue({
+        id: QueuedMessageId.make("queued-before-it-existed"),
+        threadId,
+        messageId: MessageId.make("message:queued-before-it-existed"),
+        text: "Fix the login redirect",
+        trigger: { type: "at", at: "1970-01-01T00:01:00.000Z" },
+        sendContext: {
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          launch: {
+            projectId,
+            title: "Fix the login redirect",
+            workspaceStrategy: { type: "worktree", baseRef: "main" },
+          },
+        },
+        origin: "user",
+      });
+
+      const waiting = yield* threads.getThreadProjection(threadId);
+      assert.isEmpty(waiting.runs);
+      assert.isEmpty(waiting.messages);
+      assert.equal(waiting.thread.branch, "main");
+      assert.isNull(waiting.thread.worktreePath);
+      assert.equal(harness.createWorktree.mock.calls.length, 0);
+
+      yield* TestClock.adjust("2 minutes");
+      yield* Deferred.await(setupEntered);
+
+      const started = yield* threads.getThreadProjection(threadId);
+      assert.equal(started.messages[0]?.id, MessageId.make("message:queued-before-it-existed"));
+      assert.equal(started.runs.length, 1);
+      assert.equal(started.thread.worktreePath, "/repo-worktrees/feature");
+      assert.equal(harness.createWorktree.mock.calls.length, 1);
+      const [row] = (yield* queue.list({ threadId })).messages;
+      assert.equal(row?.status, "sent");
+    }).pipe(Effect.provide(layer));
   }),
 );
 

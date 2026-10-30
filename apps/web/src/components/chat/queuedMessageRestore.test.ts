@@ -4,6 +4,7 @@ import {
   ComposerContextId,
   EnvironmentId,
   MessageId,
+  ProjectId,
   ProviderInstanceId,
   QueuedMessageId,
   ThreadId,
@@ -15,11 +16,15 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { useComposerDraftStore } from "../../composerDraftStore";
 import {
   draftStillHoldsSnapshot,
+  draftWorkspaceForLaunch,
   mergeRestoredPrompt,
+  pendingQueuedLaunch,
   rememberedQueueTrigger,
   rememberQueueTrigger,
+  resolveQueuedLaunchStrategy,
   restoreQueuedMessageToDraft,
   takeBackQueuedMessage,
+  takeBackReopensDraft,
 } from "./queuedMessageRestore";
 
 const environmentId = EnvironmentId.make("environment-restore");
@@ -167,8 +172,159 @@ describe("restoreQueuedMessageToDraft", () => {
   });
 });
 
+describe("resolveQueuedLaunchStrategy", () => {
+  const draft = {
+    isLocalDraftThread: true,
+    activeMessageCount: 0,
+    sendEnvMode: "local" as const,
+    worktreePath: null,
+    branch: null,
+    startFromOrigin: false,
+  };
+
+  it("starts a draft where the composer says", () => {
+    expect(resolveQueuedLaunchStrategy(draft)).toEqual({ type: "root" });
+    expect(resolveQueuedLaunchStrategy({ ...draft, branch: "main" })).toEqual({
+      type: "root",
+      branch: "main",
+    });
+    expect(
+      resolveQueuedLaunchStrategy({
+        ...draft,
+        sendEnvMode: "worktree",
+        worktreePath: "/worktrees/feature",
+        branch: "feature",
+      }),
+    ).toEqual({
+      type: "existing_worktree",
+      worktreePath: "/worktrees/feature",
+      branch: "feature",
+    });
+  });
+
+  it("asks a new worktree for a base, as a send does", () => {
+    const worktree = { ...draft, sendEnvMode: "worktree" as const };
+    expect(resolveQueuedLaunchStrategy(worktree)).toBe("missing-base-branch");
+    expect(
+      resolveQueuedLaunchStrategy({ ...worktree, branch: "main", startFromOrigin: true }),
+    ).toEqual({ type: "worktree", baseRef: "main", startFromOrigin: true });
+  });
+
+  it("leaves a started thread, or an empty one staying where it is, to a plain dispatch", () => {
+    const serverThread = { ...draft, isLocalDraftThread: false };
+    expect(resolveQueuedLaunchStrategy(serverThread)).toBeNull();
+    expect(
+      resolveQueuedLaunchStrategy({
+        ...serverThread,
+        activeMessageCount: 3,
+        sendEnvMode: "worktree",
+        branch: "main",
+      }),
+    ).toBeNull();
+  });
+
+  it("gives an empty server thread in worktree mode its worktree", () => {
+    expect(
+      resolveQueuedLaunchStrategy({
+        ...draft,
+        isLocalDraftThread: false,
+        sendEnvMode: "worktree",
+        branch: "main",
+      }),
+    ).toEqual({ type: "worktree", baseRef: "main" });
+  });
+});
+
+describe("draftWorkspaceForLaunch", () => {
+  it("turns each strategy back into the draft that produced it", () => {
+    for (const sendEnvMode of ["local", "worktree"] as const) {
+      for (const worktreePath of [null, "/worktrees/feature"]) {
+        const draft = {
+          isLocalDraftThread: true,
+          activeMessageCount: 0,
+          sendEnvMode: worktreePath === null ? sendEnvMode : ("worktree" as const),
+          worktreePath,
+          branch: "main",
+          startFromOrigin: worktreePath === null && sendEnvMode === "worktree",
+        };
+        const strategy = resolveQueuedLaunchStrategy(draft);
+        if (strategy === null || strategy === "missing-base-branch") {
+          throw new Error("expected a strategy");
+        }
+        expect(draftWorkspaceForLaunch(strategy)).toEqual({
+          branch: draft.branch,
+          worktreePath: draft.worktreePath,
+          envMode: draft.sendEnvMode,
+          startFromOrigin: draft.startFromOrigin,
+        });
+      }
+    }
+  });
+});
+
+describe("first messages on an unstarted thread", () => {
+  const launch = {
+    projectId: ProjectId.make("project-restore"),
+    title: "Title",
+    workspaceStrategy: { type: "worktree", baseRef: "main" },
+  } as const;
+  const plain = queued();
+  const first: QueuedMessage = { ...plain, sendContext: { ...plain.sendContext, launch } };
+  const otherThreadId = ThreadId.make("thread-other");
+  const unstarted = { latestUserMessageAt: null, latestRun: null };
+  const reopens = (overrides: Partial<Parameters<typeof takeBackReopensDraft>[0]>) =>
+    takeBackReopensDraft({ message: first, allMessages: [first], thread: unstarted, ...overrides });
+
+  it("reopens a draft when the thread only held this message", () => {
+    expect(reopens({})).toBe(true);
+  });
+
+  it("keeps a thread that has started, or that holds nothing to take back", () => {
+    expect(reopens({ message: plain })).toBe(false);
+    expect(reopens({ thread: null })).toBe(false);
+    expect(
+      reopens({ thread: { latestUserMessageAt: "2026-10-30T12:00:00.000Z", latestRun: null } }),
+    ).toBe(false);
+    expect(reopens({ thread: { latestUserMessageAt: null, latestRun: { runId: "run" } } })).toBe(
+      false,
+    );
+  });
+
+  it("keeps a thread with another message still waiting, but not one already sent", () => {
+    const other = { ...first, id: QueuedMessageId.make("other") };
+    expect(reopens({ allMessages: [first, other] })).toBe(false);
+    expect(reopens({ allMessages: [first, { ...other, status: "sent" as const }] })).toBe(true);
+    expect(reopens({ allMessages: [first, { ...other, threadId: otherThreadId }] })).toBe(true);
+  });
+
+  it("reads the waiting setup only for that thread, and only while it waits", () => {
+    expect(pendingQueuedLaunch([first], first.threadId)).toEqual(launch);
+    expect(pendingQueuedLaunch([first], otherThreadId)).toBeUndefined();
+    expect(pendingQueuedLaunch([first], undefined)).toBeUndefined();
+    expect(
+      pendingQueuedLaunch([{ ...first, status: "sent" as const }], first.threadId),
+    ).toBeUndefined();
+  });
+});
+
 describe("takeBackQueuedMessage", () => {
   const image = files.get(imageAttachment.id)!;
+
+  it("waits for a restore that has to open a draft first", async () => {
+    let restored = false;
+    const result = await takeBackQueuedMessage({
+      attachments: [],
+      download: async () => image,
+      cancel: async () => true,
+      restore: async () => {
+        await Promise.resolve();
+        restored = true;
+      },
+    });
+
+    expect(result).toEqual({ outcome: "restored" });
+    expect(restored).toBe(true);
+  });
 
   it("restores only after the server confirms the cancel", async () => {
     const order: string[] = [];

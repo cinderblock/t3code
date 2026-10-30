@@ -169,6 +169,13 @@ abandon stays in the composer. A message that has failed offers **Edit message**
 dismisses it without restoring it. A message that an agent cancelled, or that you cancelled on another
 device, doesn't appear in this composer.
 
+You can queue the first message of a new thread the same way. The thread appears in **Scheduled**
+right away, and it starts when the message sends, with the project, model and worktree or branch
+choice you made. A new worktree is created at that moment, not when you queue, so it starts from the
+base branch as it is then. **Cancel** or **Edit message** returns you to a new-thread draft with
+everything still set, and the empty thread goes away. To change the worktree or branch, use **Edit
+message**. A message queued with several models selected isn't supported: pick one first.
+
 The composer's send-later button is on web and desktop only. From a phone, ask the agent in a thread
 instead, such as "send 'run the release check' here at 3 AM" or "send this when my 5-hour limit
 resets". You can ask it what's waiting or to cancel one the same way. It sends once, and the sent

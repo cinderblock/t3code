@@ -41,7 +41,7 @@ a rate-limit-rejected turn into a queued message.
 - Auto-enqueue is conservative: requires the thread's latest user message's
   `turnId` to equal the failed turn's id, and the rate-limit activity's
   `turnId` to be null or match; otherwise skips.
-- Queue affordance is hidden for local draft threads (no server thread id yet).
+- Queue affordance on local drafts: added by item 5 of `plans/queued-message-followups.md`.
 
 ## To-do / open
 

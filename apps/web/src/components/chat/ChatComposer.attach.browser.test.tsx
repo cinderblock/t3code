@@ -38,7 +38,6 @@ function composerProps(): ChatComposerProps {
     activeThread: undefined,
     activeThreadShell: null,
     promptHistoryMessages: [],
-    isServerThread: false,
     isLocalDraftThread: true,
     // An existing thread: only a brand-new one keeps the phone composer expanded.
     forceExpandedOnMobile: false,
