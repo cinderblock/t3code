@@ -85,6 +85,8 @@ regressions and costs each agent time re-proving they are pre-existing.
 
 ## A send-later "when the window resets" fires at once if that window is nearly unused
 
+In progress — entry B thread, `master`.
+
 `isTriggerDue` (`apps/server/src/queue/QueuedMessageService.ts`) treats `usedPercent <= 5` as "freshly
 reset", with no memory of the usage when the message was queued. So picking "when the 5-hour window
 resets" in the web composer while that window is at 5% or less sends on the next 15-second tick, not
