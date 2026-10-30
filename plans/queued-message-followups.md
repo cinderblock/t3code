@@ -149,12 +149,62 @@ this order. Scope is what the follow-ups left open, not the older `ISSUES.md` en
 - [x] C. Queued messages skip the Claude effort prefix: not a bug; mode bug found and fixed, `72edfecd24`, `e2ccdb5c3a`
 - [x] D. Pending message outlives its deleted thread: `2d3e603d9c`; dispatch on a deleted thread was worse than logged
 - [x] E. Cancel gaps: `bb4ffe01fe` (server, migration 9), `78d8c8dbaf` (web, docs); a cancel now keeps the message restorable for 7 days
-- [ ] F. Imported thread that never ran reads Waiting in Working
+- [x] F. Imported thread that never ran reads Waiting in Working: `32e9035d29`; runtime stays non-null because it locks the provider
 - [ ] I. Local composer commands are sent to the provider when queued (found by entry C)
 - [ ] J. Queued messages skip idle compaction (found by entry C)
 - [ ] K. `message.dispatch` starts a run on a deleted or archived thread (found by entry D)
 - [ ] G. Real-client verification, including the first real firings
 - [ ] H. `t3_send_later` evals
+
+## Entry F result (2026-10-30 11:12 AM PDT, 18:12Z)
+
+Done: `32e9035d29`, two status lines in `packages/client-runtime`, plus one test. Claimed in `582a14ebcf`.
+
+**The fix.** A thread with a provider thread and no run now presents runtime `completed`, not `idle`, in
+`shellRuntime` (shell list) and `deriveThreadStructureRuntime` (open thread). The row reads the same as
+any other never-run thread (no Waiting), and it leaves Working; with a queued message it lands in
+Scheduled. Parking is decided first, so a thread with no run that really is parked on awaited
+background work stays `idle` and in Working. The new test covers both.
+
+**Why not `runtime: null`, which would be the literal same status as a new thread.** Non-null runtime is
+what marks a native-imported thread as started: such a thread has no run, no items and no user message,
+so `threadHasStarted` and `threadShellHasStarted` on web would unlock its provider, and it would be
+switchable away from the native conversation it is bound to. Null also turns `derivePhase` from `ready`
+to `disconnected`, and changes "Restart agent session" and delete, which call `stopThreadSession` only
+when runtime is non-null. Provider-native subagent threads are also runless with a provider thread and
+would take the same changes.
+
+**The server's shell status stays `idle`.** That is correct there: every never-run thread has it, and
+`shellRuntime` was the place that gave it a second meaning. No contract change.
+
+**Who reads the status.** `idle` is singled out only by `isThreadWorking` and by
+`resolveSidebarThreadStatus` plus its mobile copy, all three fixed by this. Everything else that reads
+it treats `idle` and `completed` alike: `derivePhase`, `threadRuntimeCanArchive`, the archive and
+delete checks, `threadSettled`, `isLatestRunSettled` (false with no run). No reader checks runtime
+`completed` by name. `resolveThreadWorkingStartedAt` and the local dispatch only compare or read
+activity fields. Mobile `threadListV2` follows from the shared code. The `thread.runtime !== null`
+sites are unchanged.
+
+**Other threads this reaches.** Provider-native subagent threads and a thread whose only run is held also
+present `completed` now. Neither is a regression: subagents have no sidebar row and their working state
+comes from `deriveRunlessWorkStartedAt`, and the held case is the same wrong `idle` as this bug.
+
+**Surfaces.** Applied: web and desktop sidebar, shelf and open thread, mobile (shared code, reaches only a
+fork client). Not applicable: providers (presentation only, no adapter sets this), MCP and agents (server
+status unchanged), contracts, connection modes, docs (the row just stops being wrong), reverse states.
+Item 5's brand new threads are untouched: their runtime is still null, as asserted by the existing test.
+
+**Checks.** The new test failed before the fix (`"status": "idle"`). `vp fmt` and `vp lint` clean on the
+touched files. `tsc --noEmit` clean in client-runtime, web, mobile. `vp test run`: client-runtime
+`src/state` 708 in 62 files; web `Sidebar.logic`, `ChatView.logic`, `session-logic` 163; mobile
+`threadListV2`, `thread-provider-switching` 68. Not seen in a running client, and no such thread exists in
+the live database, so it is proven through `presentThreadShell` and `deriveThreadRuntime` only.
+
+**Left open.** Mobile's `threadDetailToShell` does not pass `pendingBackgroundTasks`, so in that fallback (a
+thread not yet in the shell index) a run-less thread with a provider thread, parked on background work,
+reads `completed` until the shell arrives; it read `idle` before this. That is a small regression in the
+rarest of combinations, and the same fallback already loses the parked state with no provider thread,
+and the fork's mobile code does not reach the user's phone, so it is left alone.
 
 ## Entry E result (2026-10-30 11:05 AM PDT, 18:05Z)
 
