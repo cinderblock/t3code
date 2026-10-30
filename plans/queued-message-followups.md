@@ -87,7 +87,7 @@ Relaunch thread: `t3-thread://v1/mcp:2cf06899-8261-49a9-bb43-530157899ff1`
 ## Progress
 
 - [x] Item 1: `3c5f230f83`, plus four lines of its drag test that landed in `d94f7ab701`
-- [ ] Item 2
+- [x] Item 2: `t3_send_later` built; evals not run (no API key)
 - [ ] Item 3
 - [ ] Item 4
 - [ ] Item 5
@@ -133,6 +133,117 @@ Relaunch thread: `t3-thread://v1/mcp:2cf06899-8261-49a9-bb43-530157899ff1`
   `Sidebar.logic` + `Sidebar.drag` 120, `threadListV2` 64, contracts `settings` 24, all passing.
   Not seen in a running client: browsers are out of scope here.
 - **Open.** Whether the section should work with the Working section off (it does not today).
+
+## Item 2 result (2026-10-30 3:32 AM PDT, 10:32Z)
+
+Compared against `upstream/main` `570d4b03ee` (2026-10-27), which is `master`'s merge base. The
+store build may lag that commit; nothing here reads the store binary itself.
+
+**The brief's premise is off: `t3_queue` is not the send-later queue.** It manages orchestration
+queued runs (follow-ups behind an active run: `queued-run.edit`, `.cancel`, `.reorder`,
+`queued-message.promote-to-steer`). Send-later rows live in `fork_queued_messages` behind
+`QueuedMessageService`, reachable only through the `queue.*` WS methods, which the official app
+does not know. So before this item no agent could touch send-later messages.
+
+**Built: `t3_send_later`**, the one idea that cleared the bar (see "What was built" below).
+
+What the official app already has, with no fork involvement:
+
+- **Resume at reset.** `UsageLimitRecoveryCard` on a usage-limited thread: "Resume at reset" and
+  "Snooze until reset", backed by upstream's `UsageLimitRecoveryWorker`, which sends "Continue where
+  you left off." at the reset. `autoResumeLimitedThreads` and `snoozeLimitedThreads` are both already
+  on in this user's settings. This covers the capped case, the one an agent cannot help with
+  because a capped agent cannot take a turn.
+- **Settings → Scheduled tasks.** Lists, pauses, runs and deletes every task, and creates tasks.
+  But created tasks always have `threadId: null` (a new thread per run), and schedules are only
+  `interval`, `fixed_time` (repeats daily or on weekdays) and `webhook`. No one-shot, no existing
+  thread, no usage trigger.
+- **`schedule_task` through an agent** can bind to the current thread (default) and appears in that
+  same list, so see and delete work without a turn. It repeats until deleted, and it has no usage
+  trigger. Bound runs use `sendToThread` with `mode: "queue"` (self-test in Findings below).
+
+Ideas rejected, with the reason:
+
+| Idea                                                                     | Why not                                                                                                                                                                                                                                                                                                                                                |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Server-side `/later` via `ServerProvider.slashCommands`                  | The menu is data-driven, so it would appear. But the app keeps an acknowledged message on screen until the projection echoes that message id (`selectPendingAcknowledgedMessages`, a keep-alive atom), so a swallowed message is a ghost bubble until the app restarts. Rejecting it instead restores the draft with an error, which reads as failure. |
+| Hold it as a real queued run so `ThreadQueueControl` shows it            | A queued run on an idle thread starts at once. Holding one is the fake run state the brief forbids, and `t3-busy.mjs` counts runs.                                                                                                                                                                                                                     |
+| List rows as synthetic `ScheduledTask`s                                  | The one-shot and usage triggers don't fit the schedule schema, `runNow`, pause and edit would all need faking, and web would list them twice.                                                                                                                                                                                                          |
+| Surface it through snooze, title, `limitRecovery` or provider advisories | Each is fake state on a field that means something else.                                                                                                                                                                                                                                                                                               |
+| MCP App widget (`McpAppWebView`)                                         | Needs an agent turn to appear and a confirmation dialog on each write. Not small.                                                                                                                                                                                                                                                                      |
+| Mobile UI in `apps/mobile`                                               | Unreachable by the official app; out of scope.                                                                                                                                                                                                                                                                                                         |
+
+**Mobile code that never reaches the official app** (fork native/JS code ships only in a fork build,
+and the app's OTA channel is upstream's):
+
+- `c7d2e59252`: `apps/mobile/src/state/usage.ts`, and the snooze-until-reset presets in
+  `threadListV2.ts` and `thread-list-v2-items.tsx`.
+- `3c20161349`: `state/scheduled-messages.ts`, `useThreadListV2.ts`, `thread-list-v2-items.tsx`, the
+  "Send-later messages count as working" switch (`ThreadSettingsSections.tsx`, `settings-search.ts`)
+  and the `scheduledMessagesWorking` preference in `mobile-preferences.ts`.
+- `3c5f230f83`: the `useThreadListV2.ts` mapping of the Scheduled shelf to Working.
+
+**Compatibility with the official app: no break found.**
+
+- `ORCHESTRATION_PROTOCOL_VERSION` and the compatibility check are unchanged.
+- `packages/contracts` diff against upstream is additive only: optional fields (`priority`,
+  `threadPriority` capability), new settings with decoding defaults, new RPC methods in
+  `ForkWsRpcGroup`, new error-reason literals. `ServerProvider` is unchanged.
+- The one enum addition that travels to clients is the `thread.priority-set` event. The shell stream
+  sends shells, not events. The thread stream has `OrchestrationV2UnknownThreadStreamEvent`, so an
+  older client decodes it as `unknown-event` and advances its cursor. Shells carry `priority` as an
+  optional field, which older decoders drop.
+- `3c20161349`: client-only plus a settings field. `934ba3953c`: a server-side skip, so the app only
+  sees a thread that doesn't settle. `3c5f230f83`: client-only plus a settings field.
+
+**What was built.** A fork-only MCP tool, `t3_send_later`, with `schedule`, `list` and `cancel`
+(`apps/server/src/mcp/toolkits/sendLater/`, plus `enqueueForThread` and `cancelForThread` on
+`QueuedMessageService`). Someone on the official app types "send this at 3 AM" or "send this when my
+5-hour limit resets" in a thread, and the agent queues a real send-later message. It sends once, and
+shows in the desktop panel and Scheduled section like any other.
+
+- Why it cleared the bar over `schedule_task`: one-shot instead of repeating until deleted, usage
+  triggers, and it lands in the same queue the desktop uses. About 230 lines of server code.
+- **Agent-authored, so `origin: "agent"` and `createdBy: "agent"`.** Sending as `user` would put the
+  agent's words in the user's mouth.
+- `windowReset` takes `session` or `weekly`, resolved to the provider's real window id when queued.
+  Refused with a reason: a time in the past, a window the provider doesn't report (it would never
+  fire), and a window at 5% or less (`isTriggerDue` would fire it on the next tick). That last bug
+  also affects the web picker: logged in `ISSUES.md`.
+- `modelSelection` is left out of the send context, so the send follows the thread's model at that
+  time. No attachments, and no headroom trigger (desktop only). Editing belongs to item 3.
+- Limits, stated in `docs/user/thread-sidebar.md`: each request costs a turn, and it can't help once
+  the provider is capped. Resume at reset covers that case.
+- A new top-level toolkit rather than an addition to `ThreadToolkit`, so upstream merges stay clean
+  and the upstream toolkit tests need no new mock.
+- `agentContextBudget.json`: `mcpToolListJsonBytes` 42328 → 43393. Upstream's CI would want the
+  `agent-context-increase` label; this fork opens no PR.
+
+**Surfaces.** Applied: agents (the point of this), contracts (`origin` literal, additive), user docs,
+tool presentation (`t3McpToolPresentation`, so web and desktop label it), handoff analytics
+(`INPUT_TARGET_ACTIONS`). Providers: every provider that gets T3's MCP tools; a provider with no
+usage limits gets the "no window" refusal. Reverse states: cancel. Connection modes: unchanged,
+because it is a server tool. Not applicable: entry points (nothing new in the UI), mobile UI.
+
+**Checks.**
+
+- `vp fmt` and `vp lint` clean on the new files. The three lint errors on touched files are existing
+  long comment headers (`queuedMessage.ts`, `QueuedMessageService.ts`), already in `ISSUES.md`.
+- `tsc --noEmit` clean in contracts, shared, server, web.
+- `vp test run`: 68 passing across `sendLater.test.ts`, `src/queue`, `AgentContextBudget`,
+  `toolkits/core`; 4 in `t3McpToolPresentation`; 13 in the eval grader.
+- Mutation check: with `createdBy` forced to `user`, the send-as-agent test fails on `createdBy`.
+
+**Not done.**
+
+- **The evals did not run.** There is no `.env` or `ANTHROPIC_API_KEY` here. Both new cases build with
+  `--dry-run`, but no model has seen the new description, so whether an agent picks this tool over
+  `schedule_task` or `t3_queue` is unmeasured. `--context` shows the tool list is built with it.
+- **Not run on a real server or from the official app.** Layers typecheck and the tool test drives the
+  real service, but the relaunch thread's boot check is the first real start. No phone was used.
+
+**Open.** Nothing in the official app shows a pending send-later message without asking the agent, and
+every way to change that fails the bar. That remains a real gap.
 
 ## Findings / gotchas
 
