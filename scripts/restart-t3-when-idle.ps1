@@ -19,6 +19,12 @@ the WMI service instead:
 
 An elevated caller gives an elevated watcher, so the launch needs no UAC click.
 Progress goes to C:\temp\t3runs\restart-when-idle.log.
+
+An elevated watcher then stays until the launch has an outcome, because a start
+that fails leaves no app to report it. With no app running it launches once
+more, and if that fails too it writes relaunch-failed.txt beside the log and
+opens it. A launcher that fails with the old app still up (a failed build) is
+only logged: nothing was lost, and the next look at the log finds it.
 #>
 [CmdletBinding()]
 param(
@@ -28,13 +34,16 @@ param(
   [int]$PollSeconds = 20,
   # Give up, without restarting, after this long. 0 waits as long as it takes:
   # with agents busy all day, an idle window can be many hours away.
-  [double]$MaxHours = 0
+  [double]$MaxHours = 0,
+  # Claude-only: lets a test keep its log and run markers away from the real ones.
+  [string]$RunsRoot = 'C:\temp\t3runs'
 )
 
 $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $Database = Join-Path $env:USERPROFILE '.t3\userdata\statev2.sqlite'
-$LogPath = 'C:\temp\t3runs\restart-when-idle.log'
+$LogPath = Join-Path $RunsRoot 'restart-when-idle.log'
+$LatestRun = Join-Path $RunsRoot 'latest.txt'
 New-Item -ItemType Directory -Force -Path (Split-Path $LogPath) | Out-Null
 
 function Write-Log {
@@ -86,19 +95,95 @@ while ($true) {
   Start-Sleep -Seconds $PollSeconds
 }
 
-Write-Log 'idle - starting start-t3.ps1'
-$shell = (Get-Process -Id $PID).Path
-foreach ($attempt in 1..3) {
-  try {
-    Start-Process -FilePath $shell -WindowStyle Hidden -ArgumentList @(
-      '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot 'start-t3.ps1'), '-KeepOpen', '-WaitForIdle'
-    ) | Out-Null
-    Write-Log 'launcher started; see C:\temp\t3runs\latest.txt for its run'
-    exit 0
-  } catch {
-    Write-Log "WARN launcher did not start (attempt $attempt): $($_.Exception.Message)"
-    Start-Sleep -Seconds 10
+function Get-LatestRun {
+  if (Test-Path $LatestRun) { (Get-Content $LatestRun -Raw).Trim() }
+}
+
+# Same identity as Get-T3Processes in start-t3.ps1.
+function Test-T3Running {
+  $electronRoot = (Join-Path $RepoRoot 'node_modules') + '\'
+  @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue -Filter "Name = 'electron.exe' OR Name LIKE 'T3 Code%'" |
+      Where-Object { $_.Name -like 'T3 Code*' -or ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($electronRoot, [StringComparison]::OrdinalIgnoreCase)) }
+  ).Count -gt 0
+}
+
+# No -KeepOpen: this console is hidden, so a failure would wait for an Enter
+# nobody can press, holding the launch mutex against any later launch.
+function Start-Launcher {
+  foreach ($attempt in 1..3) {
+    try {
+      $launcher = Start-Process -PassThru -FilePath $shell -WindowStyle Hidden -ArgumentList @(
+        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $PSScriptRoot 'start-t3.ps1'), '-WaitForIdle'
+      )
+      Write-Log "launcher started, pid $($launcher.Id); see $LatestRun for its run"
+      return $launcher
+    } catch {
+      Write-Log "WARN launcher did not start (attempt $attempt): $($_.Exception.Message)"
+      Start-Sleep -Seconds 10
+    }
   }
 }
-Write-Log 'gave up: the launcher would not start; nothing restarted'
+
+# ready, slow (it printed its 5-minute warning) or failed. The launcher records
+# its run directory in latest.txt and every line it prints in that run's log.
+function Wait-LaunchOutcome {
+  param($Launcher, [string]$PreviousRun)
+  while ($true) {
+    # Read before the log, so a last line written just before exiting is seen.
+    $exited = $Launcher.HasExited
+    $run = Get-LatestRun
+    if ($run -and $run -ne $PreviousRun) {
+      $log = Get-Content (Join-Path $run 'launcher.log') -Raw -ErrorAction SilentlyContinue
+      if ($log -match '(?m)^\s*ready\s+:') { return 'ready' }
+      if ($log -match '(?m)^\s*SLOW\s+:') { return 'slow' }
+    }
+    if ($exited) { return 'failed' }
+    Start-Sleep -Seconds $PollSeconds
+  }
+}
+
+function Show-Failure {
+  param([string]$Message)
+  $path = Join-Path $RunsRoot 'relaunch-failed.txt'
+  $run = Get-LatestRun
+  $tail = if ($run) { Get-Content (Join-Path $run 'launcher.log') -Tail 40 -ErrorAction SilentlyContinue }
+  @("$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) $Message", "run: $run", '') + $tail | Set-Content -Path $path -Encoding utf8
+  $window = Start-Process -PassThru -FilePath 'notepad.exe' -ArgumentList "`"$path`""
+  Write-Log "ALERT $Message; opened $path, pid $($window.Id)"
+}
+
+Write-Log 'idle - starting start-t3.ps1'
+$shell = (Get-Process -Id $PID).Path
+$elevated = (New-Object Security.Principal.WindowsPrincipal ([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole(
+  [Security.Principal.WindowsBuiltInRole]::Administrator)
+foreach ($try in 1..2) {
+  $previousRun = Get-LatestRun
+  $launcher = Start-Launcher
+  if (-not $launcher) {
+    Write-Log 'gave up: the launcher would not start; nothing restarted'
+    exit 1
+  }
+  if (-not $elevated) {
+    # It re-launches itself through UAC and exits, so this process says nothing.
+    Write-Log 'not elevated: the launcher asks for elevation, and its outcome is not followed'
+    exit 0
+  }
+
+  $outcome = Wait-LaunchOutcome $launcher $previousRun
+  if ($outcome -eq 'ready') {
+    Write-Log "relaunched: backend answered, run $(Get-LatestRun)"
+    exit 0
+  }
+  if ($outcome -eq 'slow') {
+    Show-Failure 'the backend has not answered after 5 minutes; the app may still come up'
+    exit 1
+  }
+  Write-Log "launcher failed (exit $($launcher.ExitCode)), run $(Get-LatestRun)"
+  if (Test-T3Running) {
+    Write-Log 'the running app is still up; not launching again'
+    exit 1
+  }
+  if ($try -eq 1) { Write-Log 'no app is running; launching once more' }
+}
+Show-Failure 'T3 Code is down: the launcher failed twice'
 exit 1
