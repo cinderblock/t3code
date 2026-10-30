@@ -130,6 +130,29 @@ Confirmed at 5:02 AM PDT (12:02Z) by the first wake-up firing, running on the ne
 - [x] Item 5: `befbb8ce81` (server), `dce4536401` (web and docs)
 - [x] Relaunch, confirmed on `dc5788d30a`
 
+## Outstanding work (user asked 2026-10-30 9:00 AM PDT, 16:00Z)
+
+"Make a thread to work on each outstanding issue serially." One thread per entry, one at a time, in
+this order. Scope is what the follow-ups left open, not the older `ISSUES.md` entries.
+
+- **Order reasons.** `migrate-dev-db` goes first because a seeded dev server can send the user's real
+  pending messages, and client verification needs that seed. Verification follows the fixes so it
+  covers them. Evals go last because they need an API key and must not stall the chain.
+- **No thread:** the three placement calls from item 4 (ready plan, Limited label, Scheduled section
+  with Working off). Those are the user's to change; the current behavior stands until then.
+- **Build rule.** The running app serves `apps/web/dist` from this checkout, so nothing may build here.
+  Dev servers and builds belong in a sibling worktree.
+- The running app stays on `dc5788d30a`; these fixes need another relaunch to go live.
+
+- [ ] A. `migrate-dev-db` keeps pending send-later messages
+- [ ] B. Window-reset message fires at once on a nearly unused window
+- [ ] C. Queued messages skip the Claude effort prefix
+- [ ] D. Pending message outlives its deleted thread
+- [ ] E. Cancel gaps: lost cancel response, agent cancels, dismissed failed messages
+- [ ] F. Imported thread that never ran reads Waiting in Working
+- [ ] G. Real-client verification, including the first real firings
+- [ ] H. `t3_send_later` evals
+
 ## Item 1 result (2026-10-30 3:25 AM PDT, 10:25Z)
 
 - **Section name: Scheduled**, not "Waiting". "Waiting" is already the row status for a thread
