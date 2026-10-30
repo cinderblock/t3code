@@ -100,6 +100,8 @@ doubled backslashes. Matters because a focused run of this file is red on the ma
 
 ## An imported thread that never ran reads Waiting in Working
 
+In progress: entry F, `plans/queued-message-followups.md`, on `master`.
+
 A thread created with `importedNativeThread` has an active provider thread and no run, so the shell
 status is `idle` (`latestRun?.status ?? "idle"` in `ProjectionStore.ts`) and `shellRuntime` passes it
 through. `isThreadWorking` takes any `idle` runtime to mean parked on background work, so the thread
