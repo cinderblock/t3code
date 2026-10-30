@@ -100,3 +100,13 @@ reason as the entry above: a red run hides real regressions.
 `question answer paths`: the "extracts notebook cells", "preserves corrupt documents" and "keeps
 selected values intact" tests fail on Windows. They expect a raw path and the answer holds it with
 doubled backslashes. Matters because a focused run of this file is red on the maintainer's machine.
+
+## Stray typed text lands in a hidden preview tab's composer
+
+Seen 2026-10-30 12:52 to 1:06 PM PDT (19:52 to 20:06Z), driving a hidden preview tab (`preview_open` with `open` unset,
+reported `visible: false`) of a dev server through `preview_act`. Text nobody asked for appeared in the tab's focused
+composer: "l", "do thi", ".", "com", " ", "get", " so ". It came both before and after text sent with `preview_act type`,
+and once with no typing at all, just after a pointer click focused the editor. It looks like live keyboard typing reaching
+that tab. Not diagnosed. If it is the user's typing in the app, those keys go missing for them and land in a composer they
+can't see. Setting text from the page and blurring the editor stopped it. Also seen in the same session: `preview_act`
+clicks timing out on some controls, and "No preview automation host" for about a minute afterwards.

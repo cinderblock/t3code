@@ -153,8 +153,78 @@ this order. Scope is what the follow-ups left open, not the older `ISSUES.md` en
 - [x] I. Local composer commands are sent to the provider when queued: `49ec00c703`; refused at queue time, and `/usage-limits` turned out to be a fourth one
 - [x] J. Queued messages skip idle compaction: `772238e3b3`; judged at fire time with the composer's rule, `/compact` then the message
 - [x] K. `message.dispatch` starts a run on a deleted or archived thread: `08ab19b8e9`; refused in `dispatchMessage`, no caller needed it
-- [ ] G. Real-client verification, including the first real firings
+- [x] G. Real-client verification, including the first real firings: no product defect found, nothing fixed; see the result below
 - [ ] H. `t3_send_later` evals
+
+## Entry G result (2026-10-30 1:18 PM PDT, 20:18Z)
+
+Walked in the web client through the Browser panel, against a dev server from a worktree at `d253f192c8`, in a scratch
+git repo at `C:\temp\entry-g-scratch`. Claude only, mostly Haiku. **Every numbered check passed or passed with a stated
+limit. No product defect was found, so there are no fixes.** Two gaps are named under "Not reached".
+
+**Setup.** `.t3` was missing and setup had never run here, so setup ran first. The live database is 8.9 GB, over the 500
+MiB limit, so `vp run dev` would have started empty and `vp run migrate-dev-db` made the seed. Entry A holds: before any
+server started, the seed had 0 queue rows, 0 scheduled tasks, 0 outbox rows and 0 active runs across 77 threads. No turn ran
+on a seeded thread.
+
+**The three real messages on the running build: all good.** Read-only from `statev2.sqlite`. Each started a real run
+within 2 to 7 seconds of its time, and the run and its provider turn completed.
+
+| Due               | Thread             | Run started     | Completed       | Replies |
+| ----------------- | ------------------ | --------------- | --------------- | ------- |
+| 8:01 AM (15:01Z)  | `559ffa3b`, run 25 | 8:01:01 AM PDT  | 8:08:09 AM PDT  | 9       |
+| 8:04 AM (15:04Z)  | `e3ac304d`, run 2  | 8:04:01 AM PDT  | 8:17:10 AM PDT  | 11      |
+| 12:21 PM (19:21Z) | `5c6a065e`, run 4  | 12:21:06 PM PDT | 12:34:37 PM PDT | 13      |
+
+**Checks.**
+
+| #   | Check                   | Result               | Seen                                                                                                                                                                                                                                                                                                                 |
+| --- | ----------------------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Scheduled section       | Pass                 | Recorded every 200 ms: Scheduled at queue, Working at 12:55:12 PM, Done, then Scheduled again at 12:55:17 PM with a message still queued, after the 2s grace. Cancelling the last one left the section. The setting removes and restores it. Off, the row has no Scheduled label; the panel still shows the message. |
+| 2   | Composer take-back      | Pass                 | Cancel and Edit message both restored text, attachment and Sonnet after the composer had moved to Haiku. A draft already there came first, then a blank line, then the message, for both. The clock reopened at the same trigger and time. The picker doesn't open by itself; it takes the clock click, as designed. |
+| 2   | Plan-mode fix (entry C) | Pass                 | Queued from Plan with the thread in default. The thread saved `plan` at queue time, and the fired turn's Claude transcript has `permissionMode: plan`.                                                                                                                                                               |
+| 3   | Restorable cancel       | Pass                 | The dev server's own agent listed and cancelled two rows through `t3_send_later`. Both read **Cancelled by an agent** with Restore. Restore filled the draft, the X removed the other. `cancelled_by` is `agent`, and `restorable_until` clears on both.                                                             |
+| 4   | New threads             | Pass                 | In Scheduled at once. Cancel reopened a draft with text and attachment, and the empty thread was deleted. Fired twice: run on Haiku (default is gpt-6-astra), attachment delivered byte-identical, worktree `t3/e766886a` made at fire. Title and branch: below.                                                     |
+| 5   | Refusals                | Pass, one limit      | `/plan`, `/default` and `/usage-limits`: toast "This command can't be queued", draft kept, no row. Due on an archived thread: `failed`, no run, and after unarchiving **Failed to send: The thread was archived when this message came due**. Limit: see "Not reached".                                              |
+| 6   | Delete                  | Pass                 | Deleting a thread with a pending row set it `cancelled`, and the Scheduled section went with it. The confirm dialog is the normal one.                                                                                                                                                                               |
+| 7   | Real firing             | Pass                 | Four `at` messages on existing threads and two first messages, each first message in a real worktree of the scratch git repo. Six `sent` rows, all with a completed run.                                                                                                                                             |
+| 8   | Compaction              | Pass, with a fixture | See below.                                                                                                                                                                                                                                                                                                           |
+| 9   | Desktop and remote      | Not tested           | Web only. No Electron shell (`window.desktopBridge` absent, so the DOM context menu, not the native one), no `--share`, no second client, no mobile.                                                                                                                                                                 |
+
+**Also confirmed.**
+
+- **Title and branch at fire.** The first firing kept the seed title because text generation defaults to Codex, whose app server won't start here (`Cannot find module ...\@openai\codex\bin\codex.js`). A plain send did the same, so that isn't the queue. With text generation on Haiku, the second firing got the title "Pretend Lighthouse Repair Schedule" and branch `t3/lighthouse-repair-schedule`.
+- **A pending row survives a real restart.** The row sat through a stop and start of the dev server and fired on time. `startFromOrigin: true` in a repo with no remote also worked.
+- **Send path from entry I.** `/plan` and `/default` flip the mode with no run. `/usage-limits` opens the panel with no run. With an attachment it goes to the provider as a prompt, as designed; that cost one accidental turn.
+- **Agent send to an archived thread.** `thread_not_sendable`, "Thread d90f3753-... is archived and cannot receive messages." No run.
+- **Plan mode is off by default and off for this user.** It lives in Labs as "Plan mode (legacy)". While off, `/plan` queues as text, which is what a send does. The toast needs Plan mode on.
+
+**Compaction.** A session over 200K was not built. I stopped the server and edited my own scratch thread's two provider turns
+to `usedTokens` 250000 and last use two hours back, then restarted with a row due. So the trigger was faked; everything after
+it was real. At 1:14:01 PM PDT (20:14:01Z) the row fired `/compact` as T3 Code, then the message 42 ms later in order behind
+it. Real Claude compacted a real 51.4K session to 10.2K, and the thread shows "Context compacted after being idle 51.4K, 10.2K
+tokens". Limit: the message's own turn then reported 51.6K, the same as before, because the system prompt and tools are most of a session this small. So this shows the order and that Claude compacted, not a saving, and not that a 200K session compacts cleanly.
+
+**Not reached.**
+
+- **A client sending to an archived thread.** The UI can't do it: an archived thread's URL redirects to a new draft and there is no composer. A stale client would need a race I couldn't produce, so the client half of entry K, the error in the composer, remains unseen. The agent half is above.
+- **The X on a failed row, and the file cleanup it does.** Edit message on a failed row passed. Getting a second failed row needed an archive, and the menu stopped responding to the preview tool, so I cancelled that row.
+- **Also not tested:** a `window-reset` or `headroom` firing (entry B), Codex `/feedback` and any provider but Claude (Codex won't start here), the lost-response Cancelled row, the Keep history chip (it sits in the context meter, off here), a held message behind a failed compaction, and a valid image reaching the model.
+
+**Test artifacts, not product bugs.**
+
+- My test PNG was bad: its IDAT chunk fails CRC. So Claude said "an image ... could not be processed". The stored file matches the source byte for byte, and the model saw the name.
+- Stray text kept appearing in the composer of the hidden preview tab: "l", "do thi", ".", "com", " ", "get", " so ". One landed in a thread's first message, so a scratch thread is titled "l reply OK", and one spoiled a `/default` attempt, which I redid. It reads like someone's live typing. It stopped mattering once I set text from the page. Logged in `ISSUES.md`, undiagnosed.
+- Preview clicks timed out on "More composer controls", "Thread actions" and a menu item, and the host dropped once. Pointer coordinates also stopped matching after a reload.
+
+**Real turns spent:** 11 Claude runs, all on threads I created, plus title generation. `/compact` and the message count as two. Two were accidental: a row fired before my archive landed, and the `/usage-limits` send above.
+
+**Open.**
+
+- Whether the row should still read Scheduled with the section off. It doesn't today, and the panel covers it. Left alone, in the same family as item 4's note about Working off.
+- Live thread `e3ac304d` is titled "Untitled thread". Not looked into; its message was a normal one.
+
+**Leftovers.** `C:\temp\entry-g-*`: `scratch\` (the repo), `setup.log`, `seed.log`, `dev.log`, `dev2.log`, `pair.txt`, `dot.png`. `~/.claude/projects/C--temp-entry-g-scratch/`, plus folders for the two worktrees (real Claude sessions). `~/.t3/userdata/browser-artifacts/browser-screenshot-localhost-mvve4ben-962c4c63.png`, written by the preview tool's `save` before I saw where it goes; it shows only scratch data.
 
 ## Entry K result (2026-10-30 12:34 PM PDT, 19:34Z)
 
