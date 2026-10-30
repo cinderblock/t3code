@@ -152,9 +152,82 @@ this order. Scope is what the follow-ups left open, not the older `ISSUES.md` en
 - [x] F. Imported thread that never ran reads Waiting in Working: `32e9035d29`; runtime stays non-null because it locks the provider
 - [x] I. Local composer commands are sent to the provider when queued: `49ec00c703`; refused at queue time, and `/usage-limits` turned out to be a fourth one
 - [x] J. Queued messages skip idle compaction: `772238e3b3`; judged at fire time with the composer's rule, `/compact` then the message
-- [ ] K. `message.dispatch` starts a run on a deleted or archived thread (found by entry D)
+- [x] K. `message.dispatch` starts a run on a deleted or archived thread: `08ab19b8e9`; refused in `dispatchMessage`, no caller needed it
 - [ ] G. Real-client verification, including the first real firings
 - [ ] H. `t3_send_later` evals
+
+## Entry K result (2026-10-30 12:34 PM PDT, 19:34Z)
+
+Fixed in `08ab19b8e9`, claimed in `9384bb0f6e`. `Orchestrator.dispatchMessage` now refuses a message on an archived
+or deleted thread, under the thread lock, so the race entry D left open is closed. **Archived is refused for every
+caller too:** none depends on sending there, so the callers did not need a carve-out.
+
+**Who gets what.**
+
+| Caller                                                  | Before                               | Now                                                                                                                               |
+| ------------------------------------------------------- | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| Client RPC (web, desktop, mobile)                       | Run on an invisible thread           | Refused. The composer's normal send failure shows the message, claimed files are released.                                        |
+| `sendToThread` (`t3_thread_send`, schedules, worktrees) | Own archived/not-found check first   | Unchanged. A race now hits the refusal; the MCP error carries the message.                                                        |
+| Queue                                                   | `sendIfThreadIsLive` first           | Unchanged check. A race fails the row with the same `ARCHIVED_WHEN_DUE`; a deleted thread's row is cancelled by entry D's effect. |
+| Launch, `create_threads`, delegate children             | New or validated thread              | Unaffected.                                                                                                                       |
+| Guest shares                                            | Service checks; archive clears share | Unchanged. A race reaches the guest as "rejected", and the whole send rolls back.                                                 |
+| Restart and usage-limit continuations                   | Quiet accept when stale              | Unchanged: the refusal sits after those checks on purpose. Tested by the existing recovery cases.                                 |
+| Manual continuation                                     | Refused                              | Unchanged.                                                                                                                        |
+| PR watch wake                                           | Refused when inactive                | Unchanged.                                                                                                                        |
+| Provider continuation, delegated completion             | Check first                          | Unchanged. A race logs through its existing failure path; the next pass reads the state and clears.                               |
+| Delegated task question                                 | Check first                          | Unchanged. A race logs a warning.                                                                                                 |
+| Idle compaction timer                                   | **No check: would compact**          | Refused, logged as "idle compaction skipped". A real bug this closes.                                                             |
+| Steer follow-up after a completed turn                  | **Started a run**                    | Refused, logged, effect succeeds: the turn's result stands, as for a disabled instance. No retries.                               |
+| Answer to an async question (`message` capability)      | **Started a run**                    | Refused atomically: the question stays pending and is answerable after unarchive.                                                 |
+
+"First message that unarchives" does not exist: nothing but `thread.unarchive` clears `archivedAt`, and no follow-up runs
+on an archived thread. Archive itself cancels queued and preparing runs and detaches sessions.
+
+**Measured, read-only, on the live database at 12:34 PM PDT (19:34Z).** 396 archived and 9 deleted threads, latest
+August. Zero runs and zero active runs after their archive or delete time. Two user messages after it, April and May,
+both V1-era with no run. One `message.dispatch` rejection is on record, an MCP command whose receipt holds only the generic text, so its reason is unknown. Limit: no `thread.archived` events remain
+in `orchestration_events` (it holds 991,491 of 2.4M, compacted), so a thread archived and later unarchived can't be
+seen. `orchestration_v2_events` is empty here; the events live in `orchestration_events`.
+
+**Decisions.**
+
+- **A new error, `OrchestratorThreadNotActiveError`,** shaped like `OrchestratorSubagentThreadReadOnlyError`. The generic
+  `OrchestratorDispatchError` fails twice: its receipt stores "Failed to dispatch...", so a retry can't say why, and
+  `ThreadMessageIntake` reads it as possibly accepted and keeps the claimed files. This one states the reason in the
+  receipt and is listed as not accepted.
+- **Inside `dispatchMessage`, not the `message.dispatch` case,** so the answer path and every other internal call are
+  covered. The events it had already planned are dropped with the rejected command.
+- **Receipts.** A refusal commits a rejected receipt, as every failed command does. A retry with the same id gets
+  `OrchestratorCommandPreviouslyRejectedError` carrying the same sentence, even after an unarchive. A new id sends.
+- **`sendIfThreadIsLive` stays.** It is not redundant: it leaves the row unclaimed, and cancels rather than fails a row
+  on a gone thread. Only its comment changed, plus the row's reason on a race. `sendToThread`'s check stays too, for
+  its typed MCP error.
+
+**Surfaces.** Applied: server, every caller above, attachments, MCP errors. Clients take it from the error message
+with no change. Not applicable: contracts (the wire error already carries the message), docs (behavior a user could
+rely on is unchanged, and an archived thread has no composer), evals (no model-facing text), providers (adapter-free).
+
+**Checks.**
+
+- Test first: 6 failed before the fix. Two of them first failed for a wrong reason, `worktreePath: null` in my fixture;
+  fixed, then all three runtime tests failed by the dispatch committing 8 events. The steer test was added after, and
+  shown to fail with the catch removed.
+- `vp test run` on `src/orchestration-v2 src/queue src/mcp src/scheduledTasks src/guest src/ws.test.ts`: 2240 passed,
+  **26 failed**, in 8 files. Rerun with the refusal disabled, the same 26 fail, by a line-for-line diff, and the run never
+  mentions the refusal. So they are not from this change. Not confirmed on a clean `master`; logged in `ISSUES.md`.
+- After formatting: `168 of 168 across `runtimeLayer`, `EffectWorker`, `QueuedMessageAttachments`, `QueuedMessageFirstSend`, `ThreadManagementService`, `GuestShare`, and the new `ThreadMessageIntake` case`. `tsc --noEmit` clean in `apps/server`, the only package changed. `vp fmt` clean.
+  `vp lint`: only the old long header on `QueuedMessageService.ts:1`.
+
+**Not verified.** No real client saw the refusal, and no real provider reached the steer path; that test mocks the
+provider error. The race paths are tested at the orchestrator and with mocks, not by a real interleaving.
+
+**Open.**
+
+- An unarchive doesn't revive a refused message or an answer's command id. By design.
+- A launch row that loses the race fails with the launch's wrapped text, not `ARCHIVED_WHEN_DUE`. The read before the
+  claim covers almost all of this, and the row can be edited.
+- Temp files left, per the brief: `C:\temp\entry-k-*`, `C:\temp\Orchestrator.ts.fixed`, `C:\temp\EffectWorker.ts.orig`,
+  `C:\temp\k-a.txt`, `C:\temp\k-b.txt`.
 
 ## Entry J result (2026-10-30 11:47 AM PDT, 18:47Z)
 
