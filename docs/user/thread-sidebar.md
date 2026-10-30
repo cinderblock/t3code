@@ -179,6 +179,8 @@ find it marked failed, with **Edit message** to take it back.
 
 Queueing a message applies the composer's plan and access modes to the thread, as sending does. The
 message uses the thread's modes when it sends, so a mode you change after queueing applies to it too.
+Commands the composer runs itself, such as `/plan` or `/usage-limits`, can't be queued: send them now.
+Commands that go to the provider, such as `/compact`, queue like any other message.
 
 **When the window resets** means the window's next reset after you queue, however little of it you
 have used. A window that is idle may have no reset coming: its clock starts with your next message

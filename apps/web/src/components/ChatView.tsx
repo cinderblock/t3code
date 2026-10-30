@@ -2745,6 +2745,7 @@ export default function ChatView(props: ChatViewProps) {
     currentRouteThreadKeyRef,
     canQueue: !activeEnvironmentUnavailable,
     awaitingMachine: needsLoadBalancing,
+    usageLimitsOffered: usageLimitsOffered && usageLimitsKey !== null,
     composerRef,
     composerDraftTarget,
     threadDraftTarget: baseComposerDraftTarget,

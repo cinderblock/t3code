@@ -14,7 +14,6 @@ import {
   withMessageContext,
   makeThreadErrorSetter,
 } from "../ChatView.logic";
-import { isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
 import {
   AuthOrchestrationOperateScope,
   DEFAULT_MODEL,
@@ -32,7 +31,6 @@ import {
   sendApprovalFeedback,
 } from "@t3tools/client-runtime/state/thread-requests";
 import {
-  parseCodexFeedbackCommand,
   submitCodexFeedback,
   type CodexFeedbackSubmission,
 } from "@t3tools/client-runtime/state/threads";
@@ -54,7 +52,6 @@ import {
 import {
   type ComposerSubmissionIntent,
   collapseExpandedComposerCursor,
-  parseStandaloneComposerSlashCommand,
 } from "../../composer-logic";
 import { resolvePlanFollowUpSubmission } from "../../proposedPlan";
 import { type ChatMessage } from "../../types";
@@ -88,6 +85,7 @@ import { useClientSettingsHydrated, useEnvironmentSettings } from "../../hooks/u
 import { environmentPresentations } from "../../state/presentation";
 import {
   approvalRedirectNotice,
+  composerLocalCommand,
   loadBalancingSendWarning,
   multipleModelSendBlock,
   referencedThreadContexts,
@@ -143,11 +141,6 @@ const selectPlanModeEnabled = (settings: UnifiedSettings) => settings.planModeEn
 
 function readEnvironmentPresentation(environmentId: EnvironmentId) {
   return appAtomRegistry.get(environmentPresentations.presentationsAtom).get(environmentId);
-}
-
-function draftHasNonPromptContent(target: ComposerThreadTarget) {
-  const draft = useComposerDraftStore.getState().getComposerDraft(target);
-  return draft ? composerDraftHasUserContent({ ...draft, prompt: "" }) : false;
 }
 
 type PendingThreadRequests = ReturnType<typeof usePendingThreadRequests>;
@@ -399,13 +392,15 @@ export function useComposerSend(input: ComposerSendInput) {
     // What the user pressed send on; uploads below can take a while, and a redirect must not
     // decline approvals for a draft that changed meanwhile.
     const promptAtSend = promptRef.current;
-    if (
-      usageLimitsOffered &&
-      usageLimitsKey !== null &&
-      !directAnnotation &&
-      !draftHasNonPromptContent(composerDraftTarget) &&
-      isUsageLimitsCommand(promptRef.current)
-    ) {
+    const sendCtx = composerRef.current?.getSendContext();
+    const localCommand =
+      sendCtx && !directAnnotation
+        ? composerLocalCommand({
+            ...sendCtx,
+            usageLimitsOffered: usageLimitsOffered && usageLimitsKey !== null,
+          })
+        : null;
+    if (localCommand?.kind === "usage-limits") {
       if (openUsageLimits()) {
         promptRef.current = "";
         setComposerDraftPrompt(composerDraftTarget, "");
@@ -467,7 +462,6 @@ export function useComposerSend(input: ComposerSendInput) {
       });
       return;
     }
-    const sendCtx = composerRef.current?.getSendContext();
     if (activePendingProgress && sendCtx?.answeringPendingUserInput !== false) {
       if (directAnnotation) {
         notifyDirectAnnotationAttached();
@@ -581,16 +575,7 @@ export function useComposerSend(input: ComposerSendInput) {
         composerReviewComments.length +
         composerThreadContexts.length,
     });
-    const feedbackCommand =
-      ctxSelectedProvider === "codex" &&
-      composerImages.length === 0 &&
-      composerFiles.length === 0 &&
-      sendableComposerTerminalContexts.length === 0 &&
-      composerPreviewAnnotations.length === 0 &&
-      composerReviewComments.length === 0 &&
-      composerThreadContexts.length === 0
-        ? parseCodexFeedbackCommand(trimmed)
-        : null;
+    const feedbackCommand = localCommand?.kind === "codex-feedback" ? localCommand.feedback : null;
     if (feedbackCommand && multipleModelSelections === null) {
       if (!isServerThread || activeThread.activeProviderThreadId === null) {
         toastManager.add(
@@ -708,15 +693,7 @@ export function useComposerSend(input: ComposerSendInput) {
       return;
     }
     const standaloneSlashCommand =
-      sendInteractionModeEnabled &&
-      composerImages.length === 0 &&
-      composerFiles.length === 0 &&
-      sendableComposerTerminalContexts.length === 0 &&
-      composerPreviewAnnotations.length === 0 &&
-      composerReviewComments.length === 0 &&
-      composerThreadContexts.length === 0
-        ? parseStandaloneComposerSlashCommand(trimmed)
-        : null;
+      localCommand?.kind === "interaction-mode" ? localCommand.mode : null;
     if (standaloneSlashCommand && multipleModelSelections === null) {
       handleInteractionModeChange(standaloneSlashCommand);
       promptRef.current = "";

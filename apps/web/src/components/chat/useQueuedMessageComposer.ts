@@ -62,6 +62,7 @@ import {
 import { toastManager, stackedThreadToast } from "../ui/toast";
 import { strandedThreadContextWarning } from "./chatViewSend";
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
+import { composerLocalCommand } from "./composerSend.logic";
 import { pendingDraftWork } from "./pendingDraftWork";
 import {
   draftStillHoldsSnapshot,
@@ -95,6 +96,7 @@ export function useQueuedMessageComposer(input: {
   readonly currentRouteThreadKeyRef: { readonly current: string | null };
   readonly canQueue: boolean;
   readonly awaitingMachine: boolean;
+  readonly usageLimitsOffered: boolean;
   readonly composerRef: ComposerHandleRef;
   /** The draft on screen, which is not the thread's own during a queued-run edit. */
   readonly composerDraftTarget: ComposerThreadTarget;
@@ -126,6 +128,7 @@ export function useQueuedMessageComposer(input: {
     currentRouteThreadKeyRef,
     canQueue,
     awaitingMachine,
+    usageLimitsOffered,
     composerRef,
     composerDraftTarget,
     threadDraftTarget,
@@ -195,6 +198,13 @@ export function useQueuedMessageComposer(input: {
     };
     if (!hasSendableContent) {
       warnExpiredContexts("empty");
+      return;
+    }
+    if (composerLocalCommand({ ...sendContext, usageLimitsOffered }) !== null) {
+      warn(
+        "This command can't be queued",
+        "It takes effect here instead of going to the agent. Send it now.",
+      );
       return;
     }
     const stranded = strandedThreadContextWarning({

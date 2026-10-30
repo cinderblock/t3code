@@ -105,12 +105,3 @@ doubled backslashes. Matters because a focused run of this file is red on the ma
 keep-history choice exist only in the client, so a fired message dispatches straight onto the stale
 session. Matters because a message that waited for a window reset is the likeliest to find its session
 stale, so it re-reads the whole history and spends the fresh window on that.
-
-## Local composer commands are sent to the provider when queued
-
-In progress: entry I, `plans/queued-message-followups.md`, on `master`.
-
-`useComposerSend` handles `/plan`, `/default` and Codex `/feedback` itself and sends no turn. `queueDraft`
-has no such check, so queueing one stores it as a prompt and the provider receives the literal text at
-fire time. Matters because the composer offers the clock for it and the outcome reads as a sent message
-that did nothing useful. Needs a decision: refuse it, or run the command at fire time.
