@@ -110,3 +110,12 @@ and once with no typing at all, just after a pointer click focused the editor. I
 that tab. Not diagnosed. If it is the user's typing in the app, those keys go missing for them and land in a composer they
 can't see. Setting text from the page and blurring the editor stopped it. Also seen in the same session: `preview_act`
 clicks timing out on some controls, and "No preview automation host" for about a minute afterwards.
+
+## mcp-tool-use eval's toolkit list is kept by hand
+
+`t3SourceTools` in `evals/mcp-tool-use/run.ts` repeats `McpHttpServer.layerTools` by hand. A new toolkit
+that is missed there is silently absent from the model's tool list, and `--dry-run` and `--context`
+still look fine. `SendLaterToolkit` was missed this way until `7c2d4c8d7e`, so its eval cases could not
+have passed. Why it matters: a guard fails for a reason unrelated to the text, and a control passes
+without testing anything, at the cost of a paid run. Nothing checks that a tool named in a case's
+`expect` exists.

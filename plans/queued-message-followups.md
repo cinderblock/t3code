@@ -124,7 +124,7 @@ Confirmed at 5:02 AM PDT (12:02Z) by the first wake-up firing, running on the ne
 ## Progress
 
 - [x] Item 1: `3c5f230f83`, plus four lines of its drag test that landed in `d94f7ab701`
-- [x] Item 2: `t3_send_later` built; evals not run (no API key)
+- [x] Item 2: `t3_send_later` built; evals not run then (no API key), done in entry H
 - [x] Item 3: `1fe8d05411` (server), `6617e3db3b` (web and user docs)
 - [x] Item 4: verified, one fix in `eea3dab9a1`
 - [x] Item 5: `befbb8ce81` (server), `dce4536401` (web and docs)
@@ -154,7 +154,66 @@ this order. Scope is what the follow-ups left open, not the older `ISSUES.md` en
 - [x] J. Queued messages skip idle compaction: `772238e3b3`; judged at fire time with the composer's rule, `/compact` then the message
 - [x] K. `message.dispatch` starts a run on a deleted or archived thread: `08ab19b8e9`; refused in `dispatchMessage`, no caller needed it
 - [x] G. Real-client verification, including the first real firings: no product defect found, nothing fixed; see the result below
-- [ ] H. `t3_send_later` evals
+- [x] H. `t3_send_later` evals: both cases pass 2 of 2 on Sonnet, no text change; the eval had never offered the tool, fixed in `7c2d4c8d7e`
+
+## Entry H result (2026-10-30 1:36 PM PDT, 20:36Z)
+
+**Both cases pass, and the tool's text needs no change.** The first runnable version of these cases
+needed an eval fix, because the eval had never shown the model this tool.
+
+| Case                                          | Kind    | Result | Samples |
+| --------------------------------------------- | ------- | ------ | ------- |
+| `send-later-once-at-usage-reset`              | guard   | pass   | 2 of 2  |
+| `control-repeating-work-stays-scheduled-task` | control | pass   | 2 of 2  |
+
+- **Run:** `claude-sonnet-5-5` at high effort, default samples, commit `7c2d4c8d7e`, no `--dirty`. Results
+  are in `evals/runs/entry-h/` (gitignored).
+- **Cost:** about $0.27 ($0.068 a sample). Agent tokens only: neither case made a shell call, so the
+  Haiku simulator cost nothing.
+- **Key:** none on this machine, and no free path. `~/.codex/config.toml` has no `vibeproxy` provider and
+  `run.ts` requires `ANTHROPIC_API_KEY` for Claude models. The first `request_secret` timed out; the user
+  then said they had been about to answer, so a second one with a 1-hour window was made and saved.
+  The key was set only in the eval process's environment and is not in the results.
+
+**Bug found: the eval never offered `t3_send_later`.** `run.ts` lists its toolkits by hand and
+`SendLaterToolkit` was not added with item 2. The cases still built, because `--dry-run` does not check
+that a tool named in `expect` exists. The tool was simply missing from the deferred list. Item 2's note
+that `--context` showed the tool was wrong, too: that report reads the same list. So a paid run before
+`7c2d4c8d7e` would have failed the guard whatever the text said, and the control would have passed
+without testing anything. The list now matches `McpHttpServer.layerTools`, 12 of 12. `ISSUES.md` has an
+entry for the hand-kept list.
+
+**What the samples did.**
+
+- Guard: both found the tool from its name alone, loaded it with `ToolSearch`, and called
+  `{action: "schedule", text: "Run the release check.", windowReset: "session"}`, with no retries and no
+  call to `schedule_task` or `t3_queue`. One loaded `t3_queue` to compare, then did not use it.
+- Control: both called `schedule_task` with `fixed_time` 09:00, Monday to Friday, bound to this thread.
+  Neither loaded `t3_send_later`.
+
+**What this proves.** The README's fail-on-old, pass-on-new rule cannot apply to a new tool: with no tool
+the guard fails by construction, which says nothing about the text.
+
+- The guard proves that on Sonnet the name and description win a one-shot usage-reset request over the
+  two neighbours they name, and that "session is the 5-hour window" maps the user's wording to the right
+  enum. It would catch a later text change that loses this.
+- The control proves the new tool does not take repeating work from `schedule_task`, an overcorrection
+  that only became testable once the tool was offered.
+
+**What it does not prove.**
+
+- Only one model. Opus, Fable, Haiku and Codex are unmeasured, and Codex has no proxy here.
+- Two samples each, so a rare wrong pick would not show.
+- Only `schedule` with `windowReset`. `at`, `weekly`, `list`, `cancel` and the refusal paths have no case.
+- The tool result is a mock, so nothing touched `QueuedMessageService`. That is covered by
+  `sendLater.test.ts`, and by entry G for the queue itself.
+
+**Text change: none,** so `agentContextBudget.json` and `AgentContextBudget.test.ts` are untouched.
+
+**Checks.** `vp fmt` and `vp lint` on `run.ts`, `tsc --noEmit` in `evals`, and 13 of 13 in `run.test.ts`.
+
+**Left behind.** The secret file `C:\Users\camer\.t3\userdata\secrets\files\f86937cde3afa86d82013ae78f9859f4`
+still holds the key. It was not deleted, by the brief's rule.
 
 ## Entry G result (2026-10-30 1:18 PM PDT, 20:18Z)
 
@@ -1081,7 +1140,8 @@ because it is a server tool. Not applicable: entry points (nothing new in the UI
 
 - **The evals did not run.** There is no `.env` or `ANTHROPIC_API_KEY` here. Both new cases build with
   `--dry-run`, but no model has seen the new description, so whether an agent picks this tool over
-  `schedule_task` or `t3_queue` is unmeasured. `--context` shows the tool list is built with it.
+  `schedule_task` or `t3_queue` is unmeasured. Corrected in entry H: the eval's tool list did not
+  include it either.
 - **Not run on a real server or from the official app.** Layers typecheck and the tool test drives the
   real service, but the relaunch thread's boot check is the first real start. No phone was used.
 
