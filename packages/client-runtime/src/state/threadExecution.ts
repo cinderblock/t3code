@@ -256,7 +256,7 @@ export function deriveThreadStructureRuntime(
       ? "failed"
       : backgroundWorkHoldsRun && latestRunProjection?.status !== "failed"
         ? "idle"
-        : (activityRun?.status ?? "idle"),
+        : (activityRun?.status ?? "completed"),
     activeRunId,
     activityStartedAt:
       liveActivityRun === null

@@ -226,7 +226,11 @@ function shellRuntime(thread: OrchestrationV2ThreadShell): ThreadRuntimeSummary 
   if (thread.latestRunId === null && thread.activeProviderThreadId === null && !parkAtIdle) {
     return null;
   }
-  const status = parkAtIdle ? "idle" : (thread.activityRunStatus ?? thread.status);
+  // Runtime `idle` means parked. Imported history has no run yet, and its runtime stays non-null
+  // because that is what locks the thread to its provider.
+  const status = parkAtIdle
+    ? "idle"
+    : (thread.activityRunStatus ?? (thread.latestRunId === null ? "completed" : thread.status));
   return {
     status,
     activeRunId: thread.activeRunId,

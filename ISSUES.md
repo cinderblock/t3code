@@ -98,16 +98,6 @@ don't.
 selected values intact" tests fail on Windows. They expect a raw path and the answer holds it with
 doubled backslashes. Matters because a focused run of this file is red on the maintainer's machine.
 
-## An imported thread that never ran reads Waiting in Working
-
-In progress: entry F, `plans/queued-message-followups.md`, on `master`.
-
-A thread created with `importedNativeThread` has an active provider thread and no run, so the shell
-status is `idle` (`latestRun?.status ?? "idle"` in `ProjectionStore.ts`) and `shellRuntime` passes it
-through. `isThreadWorking` takes any `idle` runtime to mean parked on background work, so the thread
-sits in Working until its first message, and a queued message leaves it there instead of in Scheduled.
-Confirmed against `presentThreadShell`; no such thread exists in this install's database today.
-
 ## Queued messages skip idle compaction
 
 `useComposerSend` compacts a stale Claude session before the message (`compactBeforeSend` from

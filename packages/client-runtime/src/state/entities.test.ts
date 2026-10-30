@@ -15,7 +15,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { presentThreadShell, resolveThreadWorkingStartedAt } from "./models.ts";
 import { v2Projection, v2ThreadShell } from "./orchestrationV2TestFixtures.ts";
 import { deriveLatestThreadRun, deriveThreadRuntime } from "./threadExecution.ts";
-import { isThreadWorking } from "./threadInbox.ts";
+import { isThreadWorking, resolveThreadShelf } from "./threadInbox.ts";
 import { derivePendingThreadRequests } from "./threadRequests.ts";
 import { canSnooze, effectiveSnoozed } from "./threadSettled.ts";
 
@@ -96,6 +96,38 @@ describe("V2 client presentation", () => {
         pendingBackgroundTasks: [],
       }).runtime,
     ).toBeNull();
+  });
+
+  it("keeps a thread with a provider thread and no run out of Working", () => {
+    const activeProviderThreadId = ProviderThreadId.make("imported-native-thread");
+    const imported = {
+      ...v2ThreadShell,
+      latestRunId: null,
+      activeProviderThreadId,
+      activeRunId: null,
+      status: "idle" as const,
+      pendingBackgroundTasks: [],
+    };
+    const shell = presentThreadShell(environmentId, imported);
+    const detail = deriveThreadRuntime({
+      ...v2Projection,
+      thread: { ...v2Projection.thread, activeProviderThreadId },
+    });
+
+    expect(shell.runtime).toMatchObject({ status: "completed", activeRunId: null });
+    expect(detail).toMatchObject({ status: "completed", activeRunId: null });
+    expect(isThreadWorking(shell)).toBe(false);
+    expect(resolveThreadShelf(shell, true)).toBe("scheduled");
+    expect(resolveThreadShelf(shell, false)).toBeNull();
+
+    const parked = presentThreadShell(environmentId, {
+      ...imported,
+      pendingBackgroundTasks: [
+        { taskId: "bg-1", description: "Watch build", kind: "monitor", awaited: true },
+      ],
+    });
+    expect(parked.runtime).toMatchObject({ status: "idle", activeRunId: null });
+    expect(resolveThreadShelf(parked, true)).toBe("working");
   });
 
   it.each([
