@@ -100,6 +100,8 @@ doubled backslashes. Matters because a focused run of this file is red on the ma
 
 ## Queued messages skip idle compaction
 
+In progress: entry J, `plans/queued-message-followups.md`, on `master`.
+
 `useComposerSend` compacts a stale Claude session before the message (`compactBeforeSend` from
 `planComposerTurn`, then a `/compact` turn with `idleCompaction: "onReturn"`). The token count and the
 keep-history choice exist only in the client, so a fired message dispatches straight onto the stale
