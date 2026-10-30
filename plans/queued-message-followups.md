@@ -171,8 +171,9 @@ this order. Scope is what the follow-ups left open, not the older `ISSUES.md` en
 - **Order reasons.** `migrate-dev-db` goes first because a seeded dev server can send the user's real
   pending messages, and client verification needs that seed. Verification follows the fixes so it
   covers them. Evals go last because they need an API key and must not stall the chain.
-- **No thread:** the three placement calls from item 4 (ready plan, Limited label, Scheduled section
-  with Working off). Those are the user's to change; the current behavior stands until then.
+- **No thread:** the two open placement calls from item 4 (Limited label, Scheduled section with
+  Working off). Those are the user's to change; the current behavior stands until then. The third,
+  the ready plan, is settled in the item 4 result: it stays in Scheduled.
 - **Build rule.** The running app serves `apps/web/dist` from this checkout, so nothing may build here.
   Dev servers and builds belong in a sibling worktree.
 - The running app stays on `dc5788d30a`; these fixes need another relaunch to go live.
@@ -1316,9 +1317,13 @@ hidden. Left alone: it is one click of no consequence.
 
 **Left open, not defects.**
 
-- A ready plan with a queued message sits in Scheduled, though `resolveThreadShelf`'s comment says a
-  request for the user does not stay. The brief names only approvals and questions, and the queued
-  message is often the answer to that plan. Moving it is one line if the user wants it surfaced.
+- A ready plan with a queued message sits in Scheduled. **Settled 2026-10-30:** the user said to keep
+  it active only if the plan is asking and the message waits for the answer. It doesn't wait: Claude's
+  `ExitPlanMode` is denied so the turn ends (`ClaudeAdapterV2.ts:9385`), the run settles, and
+  `queue_after_active` only queues behind a live run (`Orchestrator.ts:5484`). So the message goes at
+  its trigger and the thread stays in Scheduled. If the plan is still ready when that run ends, the
+  thread comes back to the active list then. A real question or approval does hold the run, and those
+  threads already leave Scheduled (`threadInbox.ts:47`).
 - A usage-limited thread with a queued message reads Scheduled, not Limited (`SidebarThreadRow.tsx:743`).
   Failed still shows. Item 1's note that a Limited row "must stay visible" and the docs' "unless it has
   a failure" read wider than the code, but this is the case the row status exists for.
