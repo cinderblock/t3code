@@ -203,6 +203,8 @@ import { resolveComposerMenuActiveItemId } from "./composerMenuHighlight";
 import { buildPullRequestReferenceContext } from "../pullRequest/pullRequestDetail.logic";
 import { getComposerPromptInjectionState, getComposerReasoningStep } from "./composerProviderState";
 import { readPromptUltrathink } from "./TraitsPicker";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import { rememberedQueueTrigger } from "./queuedMessageRestore";
 import { QueuedMessageTriggerForm } from "./QueuedMessageTriggerPicker";
 import {
   providerSupportsManualCompaction,
@@ -359,6 +361,11 @@ export interface ChatComposerHandle {
   setMultipleModelSelections: (selections: ReadonlyArray<ModelSelection>) => void;
 }
 
+function queueTriggerProps(threadKey: string) {
+  const initialTrigger = rememberedQueueTrigger(threadKey, Date.now());
+  return initialTrigger === undefined ? {} : { initialTrigger };
+}
+
 export interface ChatComposerProps {
   composerDraftTarget: ScopedThreadRef | DraftId;
   environmentId: EnvironmentId;
@@ -486,7 +493,7 @@ export interface ChatComposerProps {
   ) => void;
   onResume: () => void;
   /** Queue the current draft to send later when `trigger` fires. */
-  onQueueDraft: (trigger: QueuedMessageTrigger) => void;
+  onQueueDraft: (trigger: QueuedMessageTrigger) => void | Promise<void>;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
   onRespondToApproval: (
@@ -1278,10 +1285,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const usageAccounts = useAtomValue(usageAccountsAtom(environmentId));
   const showQueueDraftButton =
     isServerThread &&
+    !isEditingQueuedMessage &&
     pendingPrimaryAction === null &&
     !(pendingUserInputs.length === 0 && showPlanFollowUpPrompt);
   const queueDraftDisabled =
-    isSendBusy || isConnecting || environmentUnavailable !== null || prompt.trim().length === 0;
+    isSendBusy ||
+    isConnecting ||
+    environmentUnavailable !== null ||
+    !composerSendState.hasSendableContent;
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
 
@@ -3789,10 +3800,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         <QueuedMessageTriggerForm
                           accounts={usageAccounts}
                           preferredInstanceId={selectedInstanceId}
+                          {...queueTriggerProps(scopedThreadKey(routeThreadRef))}
                           confirmLabel="Queue message"
                           onConfirm={(trigger) => {
                             setIsQueueTriggerPickerOpen(false);
-                            onQueueDraft(trigger);
+                            void onQueueDraft(trigger);
                           }}
                         />
                       </PopoverPopup>

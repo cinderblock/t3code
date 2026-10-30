@@ -154,12 +154,20 @@ below Working, even after a failed or usage-limited run. It leaves when the mess
 returns to the active list if you cancel the message or the thread needs an approval or answer. A
 thread that is still working stays in Working until it finishes. Its row reads **Scheduled** unless
 it has a failure or new reply to show. To keep these threads in the active list instead, turn off
-**Scheduled section**, shown under the Working section setting. Cancel a message from the thread. A
-queued message is not running work, so it never holds off a restart or update that waits for
-agents to go idle.
+**Scheduled section**, shown under the Working section setting. A queued message is not running
+work, so it never holds off a restart or update that waits for agents to go idle.
 
 On mobile there is no Scheduled section: these threads stay in Working, controlled by **Send-later
 messages count as working**.
+
+A send-later message keeps everything the composer held: text, images, files, and attached context.
+It sends with all of them, however long it waits. **Cancel** or **Edit message** on the message
+above the composer puts it all back in the composer, with the same model, as if you had never queued
+it. Anything you had started typing stays, with the message after it. Queue it again and the
+send-later picker opens on the same trigger. Until then it won't send on its own, so a change you
+abandon stays in the composer. A message that has failed offers **Edit message** too; its **X**
+dismisses it without restoring it. A message that an agent cancelled, or that you cancelled on another
+device, doesn't appear in this composer.
 
 The composer's send-later button is on web and desktop only. From a phone, ask the agent in a thread
 instead, such as "send 'run the release check' here at 3 AM" or "send this when my 5-hour limit

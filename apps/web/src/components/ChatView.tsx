@@ -69,8 +69,6 @@ import {
   type ThreadId,
   ProviderInteractionMode,
   resolveIdleCompaction,
-  QueuedMessageId,
-  type QueuedMessageTrigger,
   RuntimeMode,
 } from "@t3tools/contracts";
 import {
@@ -178,7 +176,7 @@ import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import { isEditableFocused } from "../lib/editableFocus";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { shortcutLabelForCommand } from "../keybindings";
-import { cn, randomUUID } from "~/lib/utils";
+import { cn } from "~/lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "~/workspaceTitlebar";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { projectScriptIdFromCommand } from "~/projectScripts";
@@ -230,7 +228,6 @@ import {
 } from "../state/server";
 import { threadEnvironment, useThreadFamily } from "../state/threads";
 import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
-import { usageEnvironment } from "../state/quota";
 import { vcsEnvironment } from "../state/vcs";
 import {
   type EnvironmentPresentation,
@@ -298,6 +295,7 @@ import {
   shouldShowProviderStatusBanner,
 } from "./chat/ProviderStatusBanner";
 import { QueuedMessagesPanel } from "./chat/QueuedMessagesPanel";
+import { useQueuedMessageComposer } from "./chat/useQueuedMessageComposer";
 import { UsageStatusBar } from "./quota/UsageStatusBar";
 import {
   getThreadErrorBannerKey,
@@ -2728,39 +2726,21 @@ export default function ChatView(props: ChatViewProps) {
     activeEnvironmentUnavailable,
     defaultRuntimeMode,
   });
-  const clearComposerDraftContent = useComposerDraftStore((store) => store.clearComposerContent);
-  const enqueueQueuedMessage = useAtomCommand(
-    usageEnvironment.enqueueMessage,
-    "queued message enqueue",
-  );
-  const onQueueDraft = (trigger: QueuedMessageTrigger) => {
-    if (!activeThread || !isServerThread || activeEnvironmentUnavailable) return;
-    const sendCtx = composerRef.current?.getSendContext();
-    if (!sendCtx) return;
-    const text = promptRef.current.trim();
-    if (text.length === 0) return;
-    const threadIdForQueue = activeThread.id;
-    promptRef.current = "";
-    clearComposerDraftContent(composerDraftTarget);
-    composerRef.current?.resetCursorState();
-    void enqueueQueuedMessage({
-      environmentId,
-      input: {
-        id: QueuedMessageId.make(randomUUID()),
-        threadId: threadIdForQueue,
-        messageId: newMessageId(),
-        text,
-        trigger,
-        sendContext: {
-          modelSelection: sendCtx.selectedModelSelection,
-          runtimeMode,
-          interactionMode,
-        },
-        origin: "user",
-      },
-    });
-  };
-  const onQueueDraftStable = useStableCallback(onQueueDraft);
+  const { queueDraft, takeBack } = useQueuedMessageComposer({
+    environmentId,
+    threadRef: activeThread ? scopeThreadRef(environmentId, activeThread.id) : null,
+    threadKey: routeThreadKey,
+    currentRouteThreadKeyRef,
+    canQueue: isServerThread && !activeEnvironmentUnavailable,
+    composerRef,
+    composerDraftTarget,
+    threadDraftTarget: baseComposerDraftTarget,
+    promptRef,
+    runtimeMode,
+    setThreadError,
+  });
+  const onQueueDraftStable = useStableCallback(queueDraft);
+  const onTakeBackQueuedMessage = useStableCallback(takeBack);
   const { onSend } = useComposerSend({
     environmentId,
     routeThreadKey,
@@ -3396,6 +3376,7 @@ export default function ChatView(props: ChatViewProps) {
                     <QueuedMessagesPanel
                       environmentId={environmentId}
                       threadId={activeThread.id}
+                      onTakeBack={onTakeBackQueuedMessage}
                       className="relative z-0"
                     />
                   ) : null}
