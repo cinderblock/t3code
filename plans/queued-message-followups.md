@@ -150,6 +150,9 @@ this order. Scope is what the follow-ups left open, not the older `ISSUES.md` en
 - [x] D. Pending message outlives its deleted thread: `2d3e603d9c`; dispatch on a deleted thread was worse than logged
 - [x] E. Cancel gaps: `bb4ffe01fe` (server, migration 9), `78d8c8dbaf` (web, docs); a cancel now keeps the message restorable for 7 days
 - [ ] F. Imported thread that never ran reads Waiting in Working
+- [ ] I. Local composer commands are sent to the provider when queued (found by entry C)
+- [ ] J. Queued messages skip idle compaction (found by entry C)
+- [ ] K. `message.dispatch` starts a run on a deleted or archived thread (found by entry D)
 - [ ] G. Real-client verification, including the first real firings
 - [ ] H. `t3_send_later` evals
 
