@@ -62,7 +62,7 @@ import * as DocumentText from "../provider/DocumentText.ts";
 import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
 
 const REACTOR_TICK = Duration.seconds(15);
-/** A window read as ≤ this percent counts as freshly reset. */
+/** A window that falls to this percent from above it has reset. */
 const RESET_EPSILON_PERCENT = 5;
 
 const TriggerJson = Schema.fromJsonString(QueuedMessageTrigger);
@@ -148,13 +148,13 @@ export function isTriggerDue(
       if (window === null) {
         return false;
       }
-      // Fresh window after the reset: utilization collapsed back to ~zero.
-      if (window.usedPercent <= RESET_EPSILON_PERCENT) {
+      // A row with no baseline outlived a build that fired at this line, so it was above it.
+      const peakPercent = trigger.peakPercent ?? 100;
+      if (peakPercent > RESET_EPSILON_PERCENT && window.usedPercent <= RESET_EPSILON_PERCENT) {
         return true;
       }
-      // The advertised reset moment has passed but no read has seen the new
-      // window yet.
-      const resetMs = window.resetsAt === undefined ? Number.NaN : Date.parse(window.resetsAt);
+      const resetsAt = trigger.resetsAt === undefined ? window.resetsAt : trigger.resetsAt;
+      const resetMs = resetsAt == null ? Number.NaN : Date.parse(resetsAt);
       return Number.isFinite(resetMs) && nowMs >= resetMs;
     }
     case "headroom": {
@@ -175,6 +175,43 @@ export function isTriggerDue(
   }
 }
 
+/**
+ * Folds a read of the window into a stamped trigger, returning the same trigger when nothing
+ * changed. A stored reset is kept: providers jitter it by a second on every read. An idle window
+ * advertises none until its clock starts, so the first one ahead is the one to wait for.
+ */
+export function observeTriggerWindow(
+  trigger: QueuedMessageTrigger,
+  nowMs: number,
+  limitsByInstance: UsageLimitsByInstance,
+): QueuedMessageTrigger {
+  if (trigger.type !== "window-reset" || trigger.peakPercent === undefined) return trigger;
+  const window = findTriggerWindow(limitsByInstance.get(trigger.accountKey), trigger.windowId);
+  if (window === null) return trigger;
+  const upcoming =
+    window.resetsAt !== undefined && Date.parse(window.resetsAt) > nowMs ? window.resetsAt : null;
+  const resetsAt = trigger.resetsAt ?? upcoming;
+  const peakPercent = Math.max(trigger.peakPercent, window.usedPercent);
+  return resetsAt === trigger.resetsAt && peakPercent === trigger.peakPercent
+    ? trigger
+    : { ...trigger, resetsAt, peakPercent };
+}
+
+/** The baseline a new or re-chosen window trigger starts from. Never one a client supplied. */
+export function stampTriggerBaseline(
+  trigger: QueuedMessageTrigger,
+  nowMs: number,
+  limitsByInstance: UsageLimitsByInstance,
+): QueuedMessageTrigger {
+  if (trigger.type !== "window-reset") return trigger;
+  const { type, accountKey, windowId } = trigger;
+  return observeTriggerWindow(
+    { type, accountKey, windowId, resetsAt: null, peakPercent: 0 },
+    nowMs,
+    limitsByInstance,
+  );
+}
+
 /** When an agent's message sends. Windows are named by kind; the provider's ids vary. */
 export type QueuedMessageWhen =
   | { readonly at: string }
@@ -182,7 +219,6 @@ export type QueuedMessageWhen =
 
 /**
  * Refuses what would send at once or never, since an agent cannot see the sidebar to notice.
- * A window this empty already reads as freshly reset, so `isTriggerDue` would send it now.
  */
 export function resolveScheduledTrigger(
   when: QueuedMessageWhen,
@@ -198,13 +234,6 @@ export function resolveScheduledTrigger(
   const window = findTriggerWindow(limitsByInstance.get(accountKey), `${when.windowReset}:all`);
   if (window === null) {
     return { error: `This thread's provider reports no ${when.windowReset} usage window` };
-  }
-  if (window.usedPercent <= RESET_EPSILON_PERCENT) {
-    const useAt =
-      window.resetsAt === undefined ? "`at`" : `\`at\` with its reset time, ${window.resetsAt}`;
-    return {
-      error: `The ${when.windowReset} window is nearly unused and would send now. Use ${useAt}.`,
-    };
   }
   return { trigger: { type: "window-reset", accountKey, windowId: window.id } };
 }
@@ -321,6 +350,17 @@ export const make = Effect.gen(function* () {
   const attachmentServices = yield* Effect.context<
     FileSystem.FileSystem | ServerConfig.ServerConfig | DocumentText.DocumentText
   >();
+
+  const withBaseline = Effect.fn("QueuedMessageService.withBaseline")(function* (
+    trigger: QueuedMessageTrigger,
+  ) {
+    if (trigger.type !== "window-reset") return trigger;
+    return stampTriggerBaseline(
+      trigger,
+      yield* Clock.currentTimeMillis,
+      usageLimitsByInstance(yield* providerRegistry.getProviders),
+    );
+  });
 
   const eventsPubSub = yield* Effect.acquireRelease(
     PubSub.unbounded<QueuedMessageStreamEvent>(),
@@ -474,6 +514,7 @@ export const make = Effect.gen(function* () {
         : yield* createLaunchThread(input, input.sendContext.launch).pipe(
             Effect.tapError(() => releaseClaims),
           );
+    const trigger = yield* withBaseline(input.trigger);
     const now = yield* nowIso;
     yield* sql`
       INSERT INTO fork_queued_messages (
@@ -483,7 +524,7 @@ export const make = Effect.gen(function* () {
         ${input.id}, ${input.threadId}, ${input.messageId}, ${input.text},
         ${claimed.attachments.length === 0 ? null : encodeAttachments(claimed.attachments)},
         ${context === undefined ? null : encodeContext(context)},
-        ${encodeTrigger(input.trigger)}, ${encodeSendContext(sendContext)},
+        ${encodeTrigger(trigger)}, ${encodeSendContext(sendContext)},
         ${"pending"}, ${input.origin}, ${now}, ${now}, ${null}, ${null}
       )
     `.pipe(
@@ -541,7 +582,8 @@ export const make = Effect.gen(function* () {
       });
     }
     const now = yield* nowIso;
-    const nextTrigger = input.trigger ?? existing.trigger;
+    const nextTrigger =
+      input.trigger === undefined ? existing.trigger : yield* withBaseline(input.trigger);
     const nextText = input.text ?? existing.text;
     yield* sql`
       UPDATE fork_queued_messages
@@ -749,6 +791,18 @@ export const make = Effect.gen(function* () {
     }
   });
 
+  /** Silent: clients have no use for it, and a busy window would write to every stream. */
+  const saveObservedTrigger = Effect.fn("QueuedMessageService.saveObservedTrigger")(function* (
+    row: QueuedMessageRow,
+    trigger: QueuedMessageTrigger,
+  ) {
+    yield* sql`
+      UPDATE fork_queued_messages
+      SET trigger_json = ${encodeTrigger(trigger)}
+      WHERE id = ${row.id} AND status = 'pending' AND trigger_json = ${row.triggerJson}
+    `.pipe(Effect.mapError(toQueuedError("Failed to save queued message trigger")));
+  });
+
   const reactorTick = Effect.gen(function* () {
     const rows = yield* selectRows(undefined, "pending");
     if (rows.length === 0) {
@@ -763,7 +817,11 @@ export const make = Effect.gen(function* () {
         yield* markFailed(row.id, decoded.error);
         continue;
       }
-      if (!isTriggerDue(decoded.message.trigger, nowMs, limitsByInstance)) {
+      const trigger = observeTriggerWindow(decoded.message.trigger, nowMs, limitsByInstance);
+      if (trigger !== decoded.message.trigger) {
+        yield* saveObservedTrigger(row, trigger);
+      }
+      if (!isTriggerDue(trigger, nowMs, limitsByInstance)) {
         continue;
       }
       const claimed = yield* claim(row.id);

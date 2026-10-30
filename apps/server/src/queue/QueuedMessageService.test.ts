@@ -10,7 +10,9 @@ import {
   decodeQueuedMessageRow,
   findTriggerWindow,
   isTriggerDue,
+  observeTriggerWindow,
   resolveScheduledTrigger,
+  stampTriggerBaseline,
   type UsageLimitsByInstance,
 } from "./QueuedMessageService.ts";
 
@@ -135,6 +137,58 @@ describe("isTriggerDue", () => {
       ]);
       expect(isTriggerDue(legacy, NOW_MS, limits)).toBe(true);
     });
+
+    describe("with a baseline", () => {
+      const baseline = (resetsAt: string | null, peakPercent: number): QueuedMessageTrigger => ({
+        type: "window-reset",
+        accountKey: "claude-main",
+        windowId: "seven_day",
+        resetsAt,
+        peakPercent,
+      });
+
+      it("waits for the reset when the window was nearly unused from the start", () => {
+        const limits = makeLimits("claude-main", [
+          makeWindow({ usedPercent: 3, resetsAt: minutesFromNow(60) }),
+        ]);
+        expect(isTriggerDue(baseline(minutesFromNow(60), 3), NOW_MS, limits)).toBe(false);
+      });
+
+      it("fires when its reset passes, whatever the window reads by then", () => {
+        const limits = makeLimits("claude-main", [makeWindow({ usedPercent: 0 })]);
+        expect(isTriggerDue(baseline(minutesFromNow(-1), 3), NOW_MS, limits)).toBe(true);
+      });
+
+      it("ignores the second of jitter in a provider's advertised reset", () => {
+        const limits = makeLimits("claude-main", [
+          makeWindow({ usedPercent: 4, resetsAt: minutesFromNow(60.01) }),
+        ]);
+        expect(isTriggerDue(baseline(minutesFromNow(60), 4), NOW_MS, limits)).toBe(false);
+      });
+
+      it("fires on a reset that came early, once usage had been above the line", () => {
+        const limits = makeLimits("claude-main", [
+          makeWindow({ usedPercent: 1, resetsAt: minutesFromNow(300) }),
+        ]);
+        expect(isTriggerDue(baseline(minutesFromNow(60), 73), NOW_MS, limits)).toBe(true);
+      });
+
+      it("reads a window with no reset time as reset once it falls from its peak", () => {
+        const limits = makeLimits("claude-main", [makeWindow({ usedPercent: 2 })]);
+        expect(isTriggerDue(baseline(null, 60), NOW_MS, limits)).toBe(true);
+        const stillBusy = makeLimits("claude-main", [makeWindow({ usedPercent: 40 })]);
+        expect(isTriggerDue(baseline(null, 60), NOW_MS, stillBusy)).toBe(false);
+      });
+
+      it("waits while an idle window has no clock running", () => {
+        const limits = makeLimits("claude-main", [makeWindow({ usedPercent: 0 })]);
+        expect(isTriggerDue(baseline(null, 0), NOW_MS, limits)).toBe(false);
+      });
+
+      it("does not fire when the instance publishes no limits", () => {
+        expect(isTriggerDue(baseline(minutesFromNow(-1), 40), NOW_MS, noLimits)).toBe(false);
+      });
+    });
   });
 
   describe("headroom triggers", () => {
@@ -181,6 +235,89 @@ describe("isTriggerDue", () => {
   });
 });
 
+describe("window baselines", () => {
+  const bare: QueuedMessageTrigger = {
+    type: "window-reset",
+    accountKey: "claude-main",
+    windowId: "five_hour",
+  };
+  const fiveHour = (overrides: Partial<ServerProviderUsageWindow>) =>
+    makeLimits("claude-main", [makeWindow({ id: "five_hour", kind: "session", ...overrides })]);
+
+  it("stamps the window's upcoming reset and usage at queue time", () => {
+    const limits = fiveHour({ usedPercent: 3, resetsAt: minutesFromNow(60) });
+    expect(stampTriggerBaseline(bare, NOW_MS, limits)).toEqual({
+      ...bare,
+      resetsAt: minutesFromNow(60),
+      peakPercent: 3,
+    });
+  });
+
+  it("stamps what the server sees, not what a client sent", () => {
+    const stale = { ...bare, resetsAt: minutesFromNow(-90), peakPercent: 99 };
+    const limits = fiveHour({ usedPercent: 3, resetsAt: minutesFromNow(60) });
+    expect(stampTriggerBaseline(stale, NOW_MS, limits)).toEqual({
+      ...bare,
+      resetsAt: minutesFromNow(60),
+      peakPercent: 3,
+    });
+  });
+
+  it("stamps no reset when the window advertises none, or no limits are known", () => {
+    expect(stampTriggerBaseline(bare, NOW_MS, fiveHour({ usedPercent: 0 }))).toEqual({
+      ...bare,
+      resetsAt: null,
+      peakPercent: 0,
+    });
+    expect(stampTriggerBaseline(bare, NOW_MS, noLimits)).toEqual({
+      ...bare,
+      resetsAt: null,
+      peakPercent: 0,
+    });
+  });
+
+  it("does not wait for a reset that a stale read shows as already past", () => {
+    const limits = fiveHour({ usedPercent: 3, resetsAt: minutesFromNow(-2) });
+    const stamped = stampTriggerBaseline(bare, NOW_MS, limits);
+    expect(stamped).toEqual({ ...bare, resetsAt: null, peakPercent: 3 });
+    expect(isTriggerDue(stamped, NOW_MS, limits)).toBe(false);
+  });
+
+  it("still sends after the reset a capped window was about to take", () => {
+    const stale = fiveHour({ usedPercent: 99, resetsAt: minutesFromNow(-2) });
+    const stamped = stampTriggerBaseline(bare, NOW_MS, stale);
+    expect(isTriggerDue(stamped, NOW_MS, fiveHour({ usedPercent: 0 }))).toBe(true);
+  });
+
+  it("leaves other triggers alone", () => {
+    const at: QueuedMessageTrigger = { type: "at", at: minutesFromNow(5) };
+    expect(stampTriggerBaseline(at, NOW_MS, noLimits)).toBe(at);
+  });
+
+  it("learns the reset once an idle window's clock starts", () => {
+    const stamped = stampTriggerBaseline(bare, NOW_MS, fiveHour({ usedPercent: 0 }));
+    const started = fiveHour({ usedPercent: 1, resetsAt: minutesFromNow(300) });
+    expect(observeTriggerWindow(stamped, NOW_MS, started)).toEqual({
+      ...bare,
+      resetsAt: minutesFromNow(300),
+      peakPercent: 1,
+    });
+  });
+
+  it("keeps the reset it already has and the highest usage it has seen", () => {
+    const seen = { ...bare, resetsAt: minutesFromNow(60), peakPercent: 40 };
+    const limits = fiveHour({ usedPercent: 20, resetsAt: minutesFromNow(60.01) });
+    expect(observeTriggerWindow(seen, NOW_MS, limits)).toBe(seen);
+    const risen = fiveHour({ usedPercent: 55, resetsAt: minutesFromNow(60.01) });
+    expect(observeTriggerWindow(seen, NOW_MS, risen)).toEqual({ ...seen, peakPercent: 55 });
+  });
+
+  it("leaves a message queued before baselines on the rule it was queued under", () => {
+    const limits = fiveHour({ usedPercent: 40, resetsAt: minutesFromNow(60) });
+    expect(observeTriggerWindow(bare, NOW_MS, limits)).toBe(bare);
+  });
+});
+
 describe("resolveScheduledTrigger", () => {
   const limits = (usedPercent: number) =>
     makeLimits("claude", [
@@ -205,16 +342,10 @@ describe("resolveScheduledTrigger", () => {
     ).toEqual({ error: "This thread's provider reports no weekly usage window" });
   });
 
-  it("refuses a nearly empty window, which would fire on the next tick", () => {
-    const resolved = resolveScheduledTrigger(
-      { windowReset: "session" },
-      "claude",
-      NOW_MS,
-      limits(3),
-    );
-    expect(resolved).toEqual({
-      error: `The session window is nearly unused and would send now. Use \`at\` with its reset time, ${minutesFromNow(30)}.`,
-    });
+  it("accepts a nearly empty window, which waits for its reset", () => {
+    expect(
+      resolveScheduledTrigger({ windowReset: "session" }, "claude", NOW_MS, limits(3)),
+    ).toEqual({ trigger: { type: "window-reset", accountKey: "claude", windowId: "five_hour" } });
   });
 
   it("accepts a future time and refuses a past one", () => {

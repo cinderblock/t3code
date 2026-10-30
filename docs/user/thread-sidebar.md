@@ -169,6 +169,11 @@ abandon stays in the composer. A message that has failed offers **Edit message**
 dismisses it without restoring it. A message that an agent cancelled, or that you cancelled on another
 device, doesn't appear in this composer.
 
+**When the window resets** means the window's next reset after you queue, however little of it you
+have used. A window that is idle may have no reset coming: its clock starts with your next message
+on that provider, and the send-later message goes out when that window resets. If you redeem a reset
+or the window otherwise resets early, the message sends then.
+
 You can queue the first message of a new thread the same way. The thread appears in **Scheduled**
 right away, and it starts when the message sends, with the project, model and worktree or branch
 choice you made. A new worktree is created at that moment, not when you queue, so it starts from the

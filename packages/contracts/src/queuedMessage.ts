@@ -33,8 +33,9 @@ export const QueuedMessageTrigger = Schema.Union([
     at: IsoDateTime,
   }),
   /**
-   * Send when a usage window resets (its `resetsAt` passes, or the provider
-   * reports utilization back near zero for that window).
+   * Send after a usage window's next reset. The server stamps the two baseline
+   * fields; anything a client sends in them is replaced. Rows queued before
+   * they existed have neither and fire on what the window reads now.
    */
   Schema.Struct({
     type: Schema.Literal("window-reset"),
@@ -46,6 +47,10 @@ export const QueuedMessageTrigger = Schema.Union([
      * window kind, so messages queued before the switch keep firing.
      */
     windowId: TrimmedNonEmptyString,
+    /** The reset this message waits for. Null until the window advertises one ahead of it. */
+    resetsAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+    /** Highest usage seen since queueing. A fall from it to near zero is a reset. */
+    peakPercent: Schema.optional(Schema.Number),
   }),
   /**
    * Opportunistic headroom burn: send when the window is within `lead`

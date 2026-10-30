@@ -9,11 +9,13 @@ import {
   ThreadId,
   type OrchestrationV2ServerCommand,
   type ServerProvider,
+  type ServerProviderUsageWindow,
 } from "@t3tools/contracts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import { McpSchema, McpServer } from "effect/ai";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -58,14 +60,17 @@ const client = McpSchema.McpServerClient.of({
   getClient: Effect.die("unused"),
 });
 
-const layerFor = (onDispatch: (command: OrchestrationV2ServerCommand) => Effect.Effect<void>) => {
+const layerFor = (
+  onDispatch: (command: OrchestrationV2ServerCommand) => Effect.Effect<void>,
+  getProviders: Effect.Effect<ReadonlyArray<ServerProvider>> = Effect.succeed([]),
+) => {
   const threads = Layer.mock(ThreadManagement.ThreadManagementService)({
     getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
     getProjectThreadRecords: () => Effect.succeed(McpToolAccessTestkit.idleThreadProjection(shell)),
     dispatch: (command) => onDispatch(command).pipe(Effect.as({ sequence: 1, storedEvents: [] })),
   });
   const providers = Layer.mock(ProviderRegistry.ProviderRegistry)({
-    getProviders: Effect.succeed<ReadonlyArray<ServerProvider>>([]),
+    getProviders,
   });
   const queued = QueuedMessageService.layer.pipe(
     Layer.provideMerge(
@@ -98,6 +103,123 @@ const callTool = (args: Record<string, unknown>) =>
     const text = result.content[0];
     return JSON.parse(text?.type === "text" ? text.text : "null");
   });
+
+const withSessionWindow = (
+  overrides: Pick<ServerProviderUsageWindow, "usedPercent"> & Partial<ServerProviderUsageWindow>,
+) =>
+  [
+    {
+      instanceId: ProviderInstanceId.make("codex"),
+      usageLimits: {
+        checkedAt: "1970-01-01T00:00:00.000Z",
+        windows: [{ id: "five_hour", kind: "session", label: "5-hour", ...overrides }],
+      },
+    },
+  ] as unknown as ReadonlyArray<ServerProvider>;
+
+it.effect("a window-reset message on a nearly unused window waits for the reset", () =>
+  Effect.gen(function* () {
+    const dispatched = yield* Deferred.make<OrchestrationV2ServerCommand>();
+    yield* Effect.gen(function* () {
+      const scheduled = yield* callTool({
+        action: "schedule",
+        text: "After the reset",
+        windowReset: "session",
+      });
+      assert.strictEqual(scheduled.status, "pending");
+
+      yield* TestClock.adjust("29 minutes");
+      assert.strictEqual(yield* Deferred.isDone(dispatched), false);
+
+      yield* TestClock.adjust("2 minutes");
+      const command = yield* Deferred.await(dispatched);
+      assert.deepInclude(command, { type: "message.dispatch", text: "After the reset" });
+    }).pipe(
+      Effect.provide(
+        layerFor(
+          (command) => Deferred.succeed(dispatched, command).pipe(Effect.asVoid),
+          Effect.succeed(
+            withSessionWindow({ usedPercent: 3, resetsAt: "1970-01-01T00:30:00.000Z" }),
+          ),
+        ),
+      ),
+    );
+  }),
+);
+
+it.effect("a message queued on an idle window sends at the reset of the clock it then starts", () =>
+  Effect.gen(function* () {
+    const dispatched = yield* Deferred.make<OrchestrationV2ServerCommand>();
+    const providers = yield* Ref.make(withSessionWindow({ usedPercent: 0 }));
+    yield* Effect.gen(function* () {
+      yield* callTool({ action: "schedule", text: "Idle", windowReset: "session" });
+      yield* TestClock.adjust("1 minute");
+      assert.strictEqual(yield* Deferred.isDone(dispatched), false);
+
+      yield* Ref.set(
+        providers,
+        withSessionWindow({ usedPercent: 1, resetsAt: "1970-01-01T01:00:00.000Z" }),
+      );
+      yield* TestClock.adjust("1 minute");
+      // The read after the reset shows an idle window again, so only the stored reset can fire it.
+      yield* Ref.set(providers, withSessionWindow({ usedPercent: 0 }));
+      yield* TestClock.adjust("57 minutes");
+      assert.strictEqual(yield* Deferred.isDone(dispatched), false);
+
+      yield* TestClock.adjust("2 minutes");
+      const command = yield* Deferred.await(dispatched);
+      assert.deepInclude(command, { type: "message.dispatch", text: "Idle" });
+    }).pipe(
+      Effect.provide(
+        layerFor(
+          (command) => Deferred.succeed(dispatched, command).pipe(Effect.asVoid),
+          Ref.get(providers),
+        ),
+      ),
+    );
+  }),
+);
+
+it.effect("choosing a window trigger again waits for the window's reset as it is now", () =>
+  Effect.gen(function* () {
+    const queued = yield* QueuedMessageService.QueuedMessageService;
+    const trigger = {
+      type: "window-reset",
+      accountKey: "codex",
+      windowId: "five_hour",
+      resetsAt: "1970-01-01T00:01:00.000Z",
+      peakPercent: 99,
+    } as const;
+    const message = yield* queued.enqueue({
+      id: QueuedMessageId.make("re-picked"),
+      threadId,
+      messageId: MessageId.make("re-picked-message"),
+      text: "Hello",
+      trigger,
+      sendContext: { runtimeMode: "full-access", interactionMode: "default" },
+      origin: "user",
+    });
+    const stamped = {
+      ...trigger,
+      resetsAt: "1970-01-01T00:30:00.000Z",
+      peakPercent: 3,
+    };
+    assert.deepStrictEqual(message.trigger, stamped);
+
+    const retexted = yield* queued.update({ id: message.id, text: "Hello again" });
+    assert.deepStrictEqual(retexted.trigger, stamped);
+
+    const repicked = yield* queued.update({ id: message.id, trigger });
+    assert.deepStrictEqual(repicked.trigger, stamped);
+  }).pipe(
+    Effect.provide(
+      layerFor(
+        () => Effect.void,
+        Effect.succeed(withSessionWindow({ usedPercent: 3, resetsAt: "1970-01-01T00:30:00.000Z" })),
+      ),
+    ),
+  ),
+);
 
 it.effect("a scheduled message sends as the agent once its time comes", () =>
   Effect.gen(function* () {
