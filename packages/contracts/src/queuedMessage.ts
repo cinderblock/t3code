@@ -1,9 +1,16 @@
 import * as Schema from "effect/Schema";
 
-import { IsoDateTime, MessageId, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  IsoDateTime,
+  MessageId,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { ModelSelection } from "./modelSelection.ts";
+import { OrchestrationV2ThreadLaunchWorkspaceStrategy } from "./orchestrationV2.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 
 /**
@@ -85,6 +92,14 @@ export const QueuedMessageSendContext = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
+  /** Set when this may be the thread's first message, which starts it the way a first send does. */
+  launch: Schema.optional(
+    Schema.Struct({
+      projectId: ProjectId,
+      title: TrimmedNonEmptyString,
+      workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,
+    }),
+  ),
 });
 export type QueuedMessageSendContext = typeof QueuedMessageSendContext.Type;
 

@@ -18,6 +18,7 @@ import { McpSchema, McpServer } from "effect/ai";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../../../config.ts";
+import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import createQueuedMessages from "../../../persistence/Migrations/fork/002_QueuedMessages.ts";
 import addQueuedMessageContent from "../../../persistence/Migrations/fork/008_QueuedMessageContent.ts";
@@ -71,6 +72,7 @@ const layerFor = (onDispatch: (command: OrchestrationV2ServerCommand) => Effect.
       Layer.effectDiscard(Effect.andThen(createQueuedMessages, addQueuedMessageContent)),
     ),
     Layer.provide(providers),
+    Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
     Layer.provide(Layer.mock(DocumentText.DocumentText)({})),
     Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-send-later-" })),
     Layer.provide(NodeServices.layer),

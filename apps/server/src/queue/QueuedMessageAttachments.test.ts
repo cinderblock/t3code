@@ -25,6 +25,7 @@ import * as TestClock from "effect/testing/TestClock";
 
 import { createPendingAttachmentId, sweepStalePendingAttachments } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
+import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import createQueuedMessages from "../persistence/Migrations/fork/002_QueuedMessages.ts";
 import addQueuedMessageContent from "../persistence/Migrations/fork/008_QueuedMessageContent.ts";
@@ -51,6 +52,7 @@ const layerFor = (onDispatch: (command: OrchestrationV2ServerCommand) => Effect.
     ),
     Layer.provide(providers),
     Layer.provide(threads),
+    Layer.provide(Layer.mock(ThreadLaunch.ThreadLaunchService)({})),
     Layer.provide(documents),
     Layer.provide(NodeSqliteClient.layer({ filename: ":memory:" })),
     Layer.provideMerge(

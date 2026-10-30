@@ -841,6 +841,50 @@ it.effect("does not update a reused thread title when the initial message is rej
   }),
 );
 
+it.effect("starts an empty thread created earlier in any workspace, as a queued message does", () =>
+  Effect.gen(function* () {
+    const harness = makeHarness();
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const strategies: ReadonlyArray<ThreadLaunch.ThreadLaunchWorkspaceStrategy> = [
+        { type: "root", branch: "main" },
+        { type: "existing_worktree", worktreePath: "/worktrees/feature", branch: "feature" },
+        { type: "worktree", baseRef: "main" },
+      ];
+      for (const [index, workspace] of strategies.entries()) {
+        const threadId = ThreadId.make(`thread:launch:queued-first-send-${index}`);
+        yield* threads.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`command:launch:queued-first-send-${index}:create`),
+          threadId,
+          projectId,
+          title: "Queued",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: "main",
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const launched = yield* launches.launch({
+          ...launchInput({
+            command: `command:launch:queued-first-send-${index}`,
+            thread: threadId,
+            message: `First message ${index}`,
+            workspace,
+          }),
+          reuseExistingThread: true,
+        });
+        assert.equal(launched.threadId, threadId);
+        assert.equal(launched.projection.messages.length, 1);
+        assert.equal(launched.projection.runs.length, 1);
+      }
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
+
 // Stands `projectId` in for the Scratch project: a plain folder, not a Git
 // repository, so Git fails there with the error a real one raises.
 function scratchHarness() {

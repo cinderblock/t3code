@@ -56,6 +56,7 @@ import {
 import { resolveAttachmentPath } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
 import * as AttachmentClaims from "../orchestration-v2/AttachmentClaims.ts";
+import * as ThreadLaunch from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as DocumentText from "../provider/DocumentText.ts";
 import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
@@ -314,6 +315,7 @@ const toQueuedError = (message: string) => (cause: unknown) =>
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const threads = yield* ThreadManagement.ThreadManagementService;
+  const launches = yield* ThreadLaunch.ThreadLaunchService;
   const providerRegistry = yield* ProviderRegistry;
   const config = yield* ServerConfig.ServerConfig;
   const attachmentServices = yield* Effect.context<
@@ -388,9 +390,67 @@ export const make = Effect.gen(function* () {
   const publishUpsert = (message: QueuedMessage) =>
     PubSub.publish(eventsPubSub, { _tag: "upserted", message }).pipe(Effect.asVoid);
 
+  /** A message queued behind a first message may turn out to be the first one. */
+  const pendingLaunchFor = Effect.fn("QueuedMessageService.pendingLaunchFor")(function* (
+    threadId: ThreadId,
+  ) {
+    for (const row of yield* selectRows(threadId, "pending")) {
+      const decoded = decodeQueuedMessageRow(row);
+      if ("message" in decoded && decoded.message.sendContext.launch !== undefined) {
+        return decoded.message.sendContext.launch;
+      }
+    }
+    return undefined;
+  });
+
+  /** The thread exists from here on, so the Scheduled section and the queue need nothing special. */
+  const createLaunchThread = Effect.fn("QueuedMessageService.createLaunchThread")(function* (
+    input: QueuedMessageEnqueueInput,
+    launch: NonNullable<QueuedMessageSendContext["launch"]>,
+  ) {
+    const { modelSelection, runtimeMode, interactionMode } = input.sendContext;
+    if (modelSelection === undefined) {
+      return yield* new QueuedMessageError({ message: "A first message needs a model" });
+    }
+    const refused = (cause: { readonly message: string }) =>
+      new QueuedMessageError({ message: cause.message, cause });
+    yield* launches
+      .checkWorktreeBase({
+        projectId: launch.projectId,
+        workspaceStrategy: launch.workspaceStrategy,
+      })
+      .pipe(Effect.mapError(refused));
+    const existing = yield* threads.getThreadShell(input.threadId).pipe(Effect.mapError(refused));
+    if (existing !== null) return false;
+    const { workspaceStrategy } = launch;
+    yield* threads
+      .dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`server:queued-message:${input.id}:thread`),
+        threadId: input.threadId,
+        projectId: launch.projectId,
+        title: launch.title,
+        modelSelection,
+        runtimeMode,
+        interactionMode,
+        // The base stands in for the branch until the launch makes the worktree.
+        branch:
+          workspaceStrategy.branch ??
+          (workspaceStrategy.type === "worktree" ? workspaceStrategy.baseRef : null),
+        worktreePath:
+          workspaceStrategy.type === "existing_worktree" ? workspaceStrategy.worktreePath : null,
+        createdBy: "user",
+        creationSource: "web",
+      })
+      .pipe(Effect.mapError(refused));
+    return true;
+  });
+
   const enqueue: QueuedMessageService["Service"]["enqueue"] = Effect.fn(
     "QueuedMessageService.enqueue",
   )(function* (input) {
+    const launch = input.sendContext.launch ?? (yield* pendingLaunchFor(input.threadId));
+    const sendContext = launch === undefined ? input.sendContext : { ...input.sendContext, launch };
     const uploads = input.attachments ?? [];
     // `cancel` deletes these files, so a row may only hold copies made for it.
     if (!uploads.every(AttachmentClaims.attachmentIsPendingUpload)) {
@@ -404,7 +464,16 @@ export const make = Effect.gen(function* () {
       Effect.provide(attachmentServices),
       Effect.mapError((cause) => new QueuedMessageError({ message: cause.message, cause })),
     );
+    const releaseClaims = AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths).pipe(
+      Effect.provide(attachmentServices),
+    );
     const context = remapComposerContextAttachments(input.context, uploads, claimed.attachments);
+    const createdThread =
+      input.sendContext.launch === undefined
+        ? false
+        : yield* createLaunchThread(input, input.sendContext.launch).pipe(
+            Effect.tapError(() => releaseClaims),
+          );
     const now = yield* nowIso;
     yield* sql`
       INSERT INTO fork_queued_messages (
@@ -414,14 +483,23 @@ export const make = Effect.gen(function* () {
         ${input.id}, ${input.threadId}, ${input.messageId}, ${input.text},
         ${claimed.attachments.length === 0 ? null : encodeAttachments(claimed.attachments)},
         ${context === undefined ? null : encodeContext(context)},
-        ${encodeTrigger(input.trigger)}, ${encodeSendContext(input.sendContext)},
+        ${encodeTrigger(input.trigger)}, ${encodeSendContext(sendContext)},
         ${"pending"}, ${input.origin}, ${now}, ${now}, ${null}, ${null}
       )
     `.pipe(
       Effect.mapError(toQueuedError("Failed to enqueue message")),
       Effect.tapError(() =>
-        AttachmentClaims.releaseClaimedAttachments(claimed.claimedPaths).pipe(
-          Effect.provide(attachmentServices),
+        Effect.andThen(
+          releaseClaims,
+          createdThread
+            ? threads
+                .dispatch({
+                  type: "thread.delete",
+                  commandId: CommandId.make(`server:queued-message:${input.id}:thread-delete`),
+                  threadId: input.threadId,
+                })
+                .pipe(Effect.ignore)
+            : Effect.void,
         ),
       ),
     );
@@ -598,34 +676,72 @@ export const make = Effect.gen(function* () {
     yield* publishUpsert(message);
   });
 
-  const dispatchMessage = Effect.fn("QueuedMessageService.dispatchMessage")(function* (
+  /** Null once the thread has started, whoever started it; the message is then a follow-up. */
+  const unstartedThread = Effect.fn("QueuedMessageService.unstartedThread")(function* (
+    threadId: ThreadId,
+  ) {
+    const { thread, runs } = yield* threads.getThreadRecords(threadId, ["runs"]);
+    const messageCount = yield* threads.getMessageCount(threadId);
+    return runs.length === 0 && messageCount === 0 ? thread : null;
+  });
+
+  const sendMessage = Effect.fn("QueuedMessageService.sendMessage")(function* (
     message: QueuedMessage,
   ) {
+    const commandId = CommandId.make(`server:queued-message:${message.id}`);
+    const attachments = message.attachments ?? [];
+    const text =
+      message.text.length === 0 && attachments.length > 0
+        ? ATTACHMENT_ONLY_BOOTSTRAP_PROMPT
+        : message.text;
+    const createdBy = message.origin === "agent" ? "agent" : "user";
+    const { launch, modelSelection } = message.sendContext;
+    const thread = launch === undefined ? null : yield* unstartedThread(message.threadId);
+    if (launch !== undefined && thread !== null) {
+      return yield* launches.launch({
+        commandId,
+        threadId: message.threadId,
+        reuseExistingThread: true,
+        projectId: launch.projectId,
+        title: thread.title,
+        generateTitle: thread.title === launch.title,
+        modelSelection: modelSelection ?? thread.modelSelection,
+        runtimeMode: thread.runtimeMode,
+        interactionMode: thread.interactionMode,
+        workspaceStrategy: launch.workspaceStrategy,
+        initialMessage: {
+          messageId: message.messageId,
+          text,
+          attachments,
+          ...(message.context !== undefined ? { context: message.context } : {}),
+        },
+        createdBy,
+        creationSource: "server",
+      });
+    }
     // Runtime and interaction mode are thread state in orchestration v2, so the
     // send follows the thread's current modes; only the model rides along.
     // `queue_after_active` starts the run when the thread is idle and lines it
     // up behind a run that is still going when the trigger fires.
-    const attachments = message.attachments ?? [];
-    const dispatched = yield* threads
-      .dispatch({
-        type: "message.dispatch",
-        commandId: CommandId.make(`server:queued-message:${message.id}`),
-        threadId: message.threadId,
-        messageId: message.messageId,
-        text:
-          message.text.length === 0 && attachments.length > 0
-            ? ATTACHMENT_ONLY_BOOTSTRAP_PROMPT
-            : message.text,
-        ...(message.context !== undefined ? { context: message.context } : {}),
-        attachments,
-        ...(message.sendContext.modelSelection !== undefined
-          ? { modelSelection: message.sendContext.modelSelection }
-          : {}),
-        dispatchMode: { type: "queue_after_active" },
-        createdBy: message.origin === "agent" ? "agent" : "user",
-        creationSource: "server",
-      })
-      .pipe(Effect.exit);
+    return yield* threads.dispatch({
+      type: "message.dispatch",
+      commandId,
+      threadId: message.threadId,
+      messageId: message.messageId,
+      text,
+      ...(message.context !== undefined ? { context: message.context } : {}),
+      attachments,
+      ...(modelSelection !== undefined ? { modelSelection } : {}),
+      dispatchMode: { type: "queue_after_active" },
+      createdBy,
+      creationSource: "server",
+    });
+  });
+
+  const dispatchMessage = Effect.fn("QueuedMessageService.dispatchMessage")(function* (
+    message: QueuedMessage,
+  ) {
+    const dispatched = yield* sendMessage(message).pipe(Effect.exit);
     if (Exit.isSuccess(dispatched)) {
       yield* markSent(message.id);
     } else {
