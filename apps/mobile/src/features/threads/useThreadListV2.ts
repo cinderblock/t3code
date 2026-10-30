@@ -121,7 +121,8 @@ export function useThreadListV2(input: {
     workingShelfExpanded: input.workingShelfExpanded,
     inboxReturnAt: inbox.returnedAt,
     inboxSortDirections: input.inboxSortDirections,
-    isWorking: inbox.isWorking,
+    // Mobile has no Scheduled section, so a send-later message keeps its thread in Working.
+    isWorking: (thread) => inbox.shelf(thread) !== null,
     snoozedShelfExpanded: input.snoozedShelfExpanded,
     settledShelfExpanded: input.settledShelfExpanded,
     selectedThreadKey: input.selectedThreadKey,

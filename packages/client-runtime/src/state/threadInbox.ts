@@ -31,24 +31,26 @@ export function isThreadWorking(thread: WorkingThreadInput): boolean {
   return !(thread.interactionMode === "plan" && thread.hasActionableProposedPlan && runSettled);
 }
 
+export type InboxShelf = "working" | "scheduled";
+
 /**
- * Working, or holding a message scheduled to send later. A scheduled message starts no run,
- * so idle checks (restarts, updates) never see it; only list placement does. A failed run
- * stays here (a message queued after a usage cap is the common case), but a request for the
- * user does not.
+ * The shelf a thread sits on instead of the inbox. Real work wins over a scheduled message,
+ * which starts no run, so idle checks (restarts, updates) never see it. A failed run stays
+ * scheduled (a message queued after a usage cap is the common case); a request for the user
+ * does not.
  */
-export function isThreadWorkingOrScheduled(
+export function resolveThreadShelf(
   thread: WorkingThreadInput & Partial<Pick<EnvironmentThreadShell, "pendingGuestMessageCount">>,
   scheduled: boolean,
-): boolean {
-  if (isThreadWorking(thread)) return true;
-  return (
-    scheduled &&
+): InboxShelf | null {
+  if (isThreadWorking(thread)) return "working";
+  return scheduled &&
     !thread.hasPendingApprovals &&
     !thread.hasPendingUserInput &&
     thread.pendingSubagentRequest == null &&
     (thread.pendingGuestMessageCount ?? 0) === 0
-  );
+    ? "scheduled"
+    : null;
 }
 
 type InboxThreadInput = Pick<
@@ -177,12 +179,20 @@ export function createInboxReturnTracker() {
   const keyOf = (thread: ThreadKeyInput) => `${thread.environmentId}:${thread.id}`;
   const states = new Map<
     string,
-    { working: boolean; deadline: number | null; placement: string }
+    {
+      shelf: InboxShelf | null;
+      /** Where the thread lands when `deadline` passes. */
+      target: InboxShelf | null;
+      deadline: number | null;
+      placement: string;
+    }
   >();
   const returns = new Map<string, number>();
   const listeners = new Set<() => void>();
   let timer: ReturnType<typeof setTimeout> | undefined;
   let version = 0;
+  const untrackedShelf = (thread: WorkingThreadInput): InboxShelf | null =>
+    isThreadWorking(thread) ? "working" : null;
   const now = () => {
     // @effect-diagnostics-next-line globalDate:off - The grace deadline is wall-clock time shared by web and native clients.
     return Date.now();
@@ -200,9 +210,9 @@ export function createInboxReturnTracker() {
         const at = now();
         for (const [key, state] of states) {
           if (state.deadline !== null && state.deadline <= at) {
-            state.working = false;
+            state.shelf = state.target;
             state.deadline = null;
-            returns.set(key, at);
+            if (state.shelf === null) returns.set(key, at);
           }
         }
         schedule();
@@ -224,6 +234,7 @@ export function createInboxReturnTracker() {
       threads: readonly TrackedInboxThread[] | null,
       isScheduled?: (thread: ThreadKeyInput) => boolean,
     ): {
+      readonly shelf: (thread: WorkingThreadInput & ThreadKeyInput) => InboxShelf | null;
       readonly isWorking: (thread: WorkingThreadInput & ThreadKeyInput) => boolean;
       readonly returnedAt: (thread: ThreadKeyInput) => number | undefined;
     } {
@@ -232,7 +243,11 @@ export function createInboxReturnTracker() {
         timer = undefined;
         states.clear();
         returns.clear();
-        return { isWorking: isThreadWorking, returnedAt: () => undefined };
+        return {
+          shelf: untrackedShelf,
+          isWorking: isThreadWorking,
+          returnedAt: () => undefined,
+        };
       }
       const present = new Set<string>();
       const at = now();
@@ -267,15 +282,23 @@ export function createInboxReturnTracker() {
           thread.pinnedAt != null ||
           thread.settledOverride === "settled" ||
           effectiveSnoozed(thread, { now: observedAt });
-        const actual = isThreadWorkingOrScheduled(thread, isScheduled?.(thread) === true);
+        const actual = resolveThreadShelf(thread, isScheduled?.(thread) === true);
+        const from = previous?.shelf ?? null;
         // Only shelf placement is held: execution state and attention requests stay authoritative.
+        // Leaving Working holds even onto Scheduled, and a sent message holds until its run starts.
         const deadline =
-          !actual && previous?.working && !actionable && !moved && !excluded
-            ? (previous.deadline ?? at + WORKING_EXIT_GRACE_MS)
+          from !== null &&
+          from !== actual &&
+          actual !== "working" &&
+          !actionable &&
+          !moved &&
+          !excluded
+            ? (previous?.deadline ?? at + WORKING_EXIT_GRACE_MS)
             : null;
-        const working = actual || (deadline !== null && deadline > at);
-        if (previous?.working && !working) returns.set(key, at);
-        states.set(key, { working, deadline: working ? deadline : null, placement });
+        const held = deadline !== null && deadline > at;
+        const shelf = held ? from : actual;
+        if (from !== null && shelf === null) returns.set(key, at);
+        states.set(key, { shelf, target: actual, deadline: held ? deadline : null, placement });
       }
       for (const key of states.keys()) {
         if (!present.has(key)) {
@@ -284,15 +307,22 @@ export function createInboxReturnTracker() {
         }
       }
       schedule();
-      const observedWorking = new Map([...states].map(([key, state]) => [key, state.working]));
+      const observedShelves = new Map([...states].map(([key, state]) => [key, state.shelf]));
       const observedReturns = new Map(returns);
+      const shelf = (thread: WorkingThreadInput & ThreadKeyInput) => {
+        const observed = observedShelves.get(keyOf(thread));
+        return observed === undefined ? untrackedShelf(thread) : observed;
+      };
       return {
-        isWorking: (thread) => observedWorking.get(keyOf(thread)) ?? isThreadWorking(thread),
+        shelf,
+        isWorking: (thread) => shelf(thread) === "working",
         returnedAt: (thread) => observedReturns.get(keyOf(thread)),
       };
     },
-    isWorking: (thread: WorkingThreadInput & ThreadKeyInput) =>
-      states.get(keyOf(thread))?.working ?? isThreadWorking(thread),
+    isWorking: (thread: WorkingThreadInput & ThreadKeyInput) => {
+      const state = states.get(keyOf(thread));
+      return state === undefined ? isThreadWorking(thread) : state.shelf === "working";
+    },
     returnedAt: (thread: ThreadKeyInput) => returns.get(keyOf(thread)),
   };
 }

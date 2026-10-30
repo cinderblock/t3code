@@ -534,7 +534,7 @@ type SidebarThreadRowProps = {
   dragOverPinned: boolean;
   sweepAction: SidebarSweepAction | null;
   snoozeWakeLabelText: string | null;
-  /** Holds a send-later message and the user counts those as in progress. */
+  /** Holds a send-later message and the Scheduled section is on. */
   scheduled: boolean;
   wokeAt: string | null;
   isActive: boolean;

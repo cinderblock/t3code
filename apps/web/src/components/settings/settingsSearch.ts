@@ -410,10 +410,10 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["hide fold running monitoring threads inbox sidebar shelf"],
   },
   {
-    id: "scheduled-messages-working",
-    title: "Send-later messages count as working",
+    id: "scheduled-section",
+    title: "Scheduled section",
     to: "/settings/general",
-    searchTerms: ["queued scheduled send later message in progress working section reset"],
+    searchTerms: ["queued scheduled send later message waiting shelf sidebar idle reset"],
   },
   {
     id: "inbox-order-high",

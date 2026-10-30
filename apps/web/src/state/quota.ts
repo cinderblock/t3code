@@ -176,7 +176,7 @@ const NO_SCHEDULED_THREADS: ReadonlySet<string> = new Set();
 
 /**
  * `${environmentId}:${threadId}` of threads holding a send-later message, across the
- * comma-joined environment ids. Read by the sidebar's Working placement only.
+ * comma-joined environment ids. Read by the sidebar's Scheduled placement only.
  */
 export const scheduledThreadKeysAtom = Atom.family((environmentIds: string) =>
   Atom.make((get): ReadonlySet<string> => {

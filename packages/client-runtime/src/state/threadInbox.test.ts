@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   createInboxReturnTracker,
   isThreadWorking,
-  isThreadWorkingOrScheduled,
+  resolveThreadShelf,
   sortInboxThreadsByReturn,
   sortWorkingThreadsBySend,
   stepThreadPriority,
@@ -36,16 +36,25 @@ function thread(id: string, working: boolean) {
   };
 }
 
-describe("isThreadWorkingOrScheduled", () => {
-  it("keeps an idle or failed thread with a scheduled message in progress", () => {
-    expect(isThreadWorkingOrScheduled(thread("a", false), true)).toBe(true);
-    expect(isThreadWorkingOrScheduled(thread("a", false), false)).toBe(false);
+describe("resolveThreadShelf", () => {
+  it("shelves an idle or failed thread holding a scheduled message as scheduled", () => {
+    expect(resolveThreadShelf(thread("a", false), true)).toBe("scheduled");
+    expect(resolveThreadShelf(thread("a", false), false)).toBeNull();
     const failed = {
       ...thread("a", true),
       runtime: { ...thread("a", true).runtime!, status: "failed" as const, lastError: "limit" },
     };
     expect(isThreadWorking(failed)).toBe(false);
-    expect(isThreadWorkingOrScheduled(failed, true)).toBe(true);
+    expect(resolveThreadShelf(failed, true)).toBe("scheduled");
+  });
+
+  it("keeps a working thread in Working even with a scheduled message", () => {
+    expect(resolveThreadShelf(thread("a", true), true)).toBe("working");
+    const parked = {
+      ...thread("a", true),
+      runtime: { ...thread("a", true).runtime!, status: "idle" as const },
+    };
+    expect(resolveThreadShelf(parked, true)).toBe("working");
   });
 
   it.each([
@@ -54,7 +63,7 @@ describe("isThreadWorkingOrScheduled", () => {
     { pendingSubagentRequest: "approval" as const },
     { pendingGuestMessageCount: 1 },
   ])("returns a scheduled thread that needs the user: %j", (change) => {
-    expect(isThreadWorkingOrScheduled({ ...thread("a", false), ...change }, true)).toBe(false);
+    expect(resolveThreadShelf({ ...thread("a", false), ...change }, true)).toBeNull();
   });
 });
 
@@ -84,18 +93,57 @@ describe("createInboxReturnTracker", () => {
     expect(held.returnedAt(thread("a", false))).toBeUndefined();
   });
 
-  it("places a scheduled thread in Working until its message is no longer scheduled", () => {
+  it("shelves a scheduled thread until its message is no longer scheduled, then returns it", () => {
     const tracker = createInboxReturnTracker();
     let scheduled = true;
     const isScheduled = () => scheduled;
-    expect(tracker.observe([thread("a", false)], isScheduled).isWorking(thread("a", false))).toBe(
-      true,
-    );
+    const first = tracker.observe([thread("a", false)], isScheduled);
+    expect(first.shelf(thread("a", false))).toBe("scheduled");
+    expect(first.isWorking(thread("a", false))).toBe(false);
+    scheduled = false;
+    const sending = tracker.observe([thread("a", false)], isScheduled);
+    expect(sending.shelf(thread("a", false))).toBe("scheduled");
+    vi.advanceTimersByTime(2_000);
+    const returned = tracker.observe([thread("a", false)], isScheduled);
+    expect(returned.shelf(thread("a", false))).toBeNull();
+    expect(tracker.returnedAt(thread("a", false))).toBe(12_000);
+  });
+
+  it("moves a finished thread from Working to Scheduled after the grace, without a return", () => {
+    const tracker = createInboxReturnTracker();
+    const notify = vi.fn();
+    tracker.subscribe(notify);
+    const isScheduled = () => true;
+    tracker.observe([thread("a", true)], isScheduled);
+    const held = tracker.observe([thread("a", false)], isScheduled);
+    expect(held.shelf(thread("a", false))).toBe("working");
+    vi.advanceTimersByTime(2_000);
+    expect(notify).toHaveBeenCalledTimes(1);
+    const after = tracker.observe([thread("a", false)], isScheduled);
+    expect(after.shelf(thread("a", false))).toBe("scheduled");
+    expect(after.returnedAt(thread("a", false))).toBeUndefined();
+  });
+
+  it("moves a scheduled thread straight to Working when its run starts", () => {
+    const tracker = createInboxReturnTracker();
+    let scheduled = true;
+    const isScheduled = () => scheduled;
+    tracker.observe([thread("a", false)], isScheduled);
     scheduled = false;
     tracker.observe([thread("a", false)], isScheduled);
+    const running = tracker.observe([thread("a", true)], isScheduled);
+    expect(running.shelf(thread("a", true))).toBe("working");
     vi.advanceTimersByTime(2_000);
-    expect(tracker.isWorking(thread("a", false))).toBe(false);
-    expect(tracker.returnedAt(thread("a", false))).toBe(12_000);
+    expect(tracker.returnedAt(thread("a", true))).toBeUndefined();
+  });
+
+  it("sends a scheduled thread straight back when it needs the user", () => {
+    const tracker = createInboxReturnTracker();
+    const isScheduled = () => true;
+    tracker.observe([thread("a", false)], isScheduled);
+    const asked = { ...thread("a", false), hasPendingApprovals: true };
+    expect(tracker.observe([asked], isScheduled).shelf(asked)).toBeNull();
+    expect(tracker.returnedAt(asked)).toBe(10_000);
   });
 
   it("holds only placement, then expires and notifies without another shell event", () => {

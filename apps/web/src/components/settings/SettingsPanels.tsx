@@ -448,9 +448,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? ["Working section"]
       : []),
-    ...(settings.sidebarScheduledMessagesWorking !==
-    DEFAULT_UNIFIED_SETTINGS.sidebarScheduledMessagesWorking
-      ? ["Send-later messages count as working"]
+    ...(settings.sidebarScheduledShelfEnabled !==
+    DEFAULT_UNIFIED_SETTINGS.sidebarScheduledShelfEnabled
+      ? ["Scheduled section"]
       : []),
     ...INBOX_ORDER_GROUPS.flatMap(({ group, label }) =>
       settings.sidebarInboxSortDirections[group] !==
@@ -628,7 +628,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
-      sidebarScheduledMessagesWorking: DEFAULT_UNIFIED_SETTINGS.sidebarScheduledMessagesWorking,
+      sidebarScheduledShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarScheduledShelfEnabled,
       sidebarInboxSortDirections: DEFAULT_UNIFIED_SETTINGS.sidebarInboxSortDirections,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
@@ -900,17 +900,17 @@ export function GeneralSettingsPanel() {
         />
         {settings.sidebarWorkingShelfEnabled ? (
           <SettingsRow
-            {...searchableSetting("scheduled-messages-working")}
-            description="Threads with a message waiting to send later stay in the Working section. They never hold off a restart or update."
+            {...searchableSetting("scheduled-section")}
+            description="Idle threads with a send-later message move into a Scheduled section. Threads that are working stay in Working. A send-later message never holds off a restart or update."
             resetAction={
-              settings.sidebarScheduledMessagesWorking !==
-              DEFAULT_UNIFIED_SETTINGS.sidebarScheduledMessagesWorking ? (
+              settings.sidebarScheduledShelfEnabled !==
+              DEFAULT_UNIFIED_SETTINGS.sidebarScheduledShelfEnabled ? (
                 <SettingResetButton
-                  label="send-later messages count as working"
+                  label="Scheduled section"
                   onClick={() =>
                     updateSettings({
-                      sidebarScheduledMessagesWorking:
-                        DEFAULT_UNIFIED_SETTINGS.sidebarScheduledMessagesWorking,
+                      sidebarScheduledShelfEnabled:
+                        DEFAULT_UNIFIED_SETTINGS.sidebarScheduledShelfEnabled,
                     })
                   }
                 />
@@ -918,11 +918,11 @@ export function GeneralSettingsPanel() {
             }
             control={
               <Switch
-                checked={settings.sidebarScheduledMessagesWorking}
+                checked={settings.sidebarScheduledShelfEnabled}
                 onCheckedChange={(checked) =>
-                  updateSettings({ sidebarScheduledMessagesWorking: Boolean(checked) })
+                  updateSettings({ sidebarScheduledShelfEnabled: Boolean(checked) })
                 }
-                aria-label="Send-later messages count as working"
+                aria-label="Scheduled section"
               />
             }
           />
