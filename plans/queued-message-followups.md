@@ -145,7 +145,7 @@ this order. Scope is what the follow-ups left open, not the older `ISSUES.md` en
 - The running app stays on `dc5788d30a`; these fixes need another relaunch to go live.
 
 - [x] A. `migrate-dev-db` keeps pending send-later messages: `a8bd3de314`
-- [ ] B. Window-reset message fires at once on a nearly unused window
+- [x] B. Window-reset message fires at once on a nearly unused window: `df77fd47b6`
 - [ ] C. Queued messages skip the Claude effort prefix
 - [ ] D. Pending message outlives its deleted thread
 - [ ] E. Cancel gaps: lost cancel response, agent cancels, dismissed failed messages
@@ -191,6 +191,96 @@ the "already current" line was correct but no fork migration ran; that case is c
 - The real-data seed and check scripts from this entry were left in place for the user to decide about:
   `C:\Users\camer\AppData\Local\Temp\seedcheck.sl2g` (3.4 GB copy of real data), and `src.mjs`,
   `check.mjs`, `seeds.mjs` and `tables.mjs` in `C:\Users\camer\AppData\Local\Temp\`.
+
+## Entry B result (2026-10-30 10:15 AM PDT, 17:15Z)
+
+Done in `df77fd47b6`. "When the window resets" now means the next reset after queueing, from any usage level.
+
+**What the data showed** (read-only, `fork_usage_samples`, Sep 11 to Oct 30).
+
+- **"Reset time changed" can't be the signal.** Claude's `resetsAt` jitters about ±1 second between reads,
+  in thousands of samples. So the trigger stores one reset and compares the clock to it.
+- **Claude's idle `five_hour` has no reset at all.** 1322 of 6038 samples are null, every one at 0%. The
+  clock starts with the first use. `seven_day` and `seven_day_fable` always had one here.
+- **Early resets are real, and the old rule covered them.** Oct 20: 73% to 1% with the reset nearly 3 hours
+  away. This is why the usage rule stays, with memory added, instead of being removed.
+- **Usage falls inside a window** (99 to 98, seen hundreds of times), so "usage dropped" alone is not a reset.
+- **Reset times that moved before passing were account switches** (Oct 19 and 20, including 12-hour swings
+  and straight back). A stored reset rightly ignores them.
+- **Other providers, by reading the code only.** Cursor, Grok, OpenCode and Antigravity report a reset when
+  they have one. It is optional in the schema, so "no reset time" is a real case. `monthly_spend` has none
+  but is not offered as a trigger.
+
+**The fix.** The `window-reset` trigger gains two optional fields, stamped by the server: `resetsAt` (the
+reset this message waits for, null until one is advertised ahead) and `peakPercent` (highest usage seen since
+queueing). It is due when the stored reset passes, or when the window falls to 5% or less from a peak above 5%.
+
+- **Web composer, Edit trigger and `t3_send_later`** all go through `enqueue` or `update`, which stamp the
+  baseline from the server's own read and replace anything a client sent. A text-only edit keeps it.
+- **The reactor folds each read in** (`observeTriggerWindow`) and saves it silently, so an idle window adopts
+  the reset it starts, and a provider with no reset time still has a peak to fall from. The save matches the
+  stored JSON, so it can't overwrite a concurrent edit.
+- **`t3_send_later`'s nearly-unused refusal is gone,** since it existed only for this bug. Its description and
+  parameters did not change, so entry H has no new text to test. The budget test still passes.
+- **Usage-limit auto-queue: nothing to change.** No code produces `cap-hit-auto`; only the panel reads it.
+  `UsageLimitRecoveryWorker` does not use this trigger.
+
+**Replay against real samples** (the same rule rewritten in a script, queue points every 25 samples, since
+Sep 20). The script's "true reset" check counts account switches as resets, so read these as rough.
+
+| Window            | Queue points | At 5% or less | Old rule early | New rule early | Still waiting at end of data |
+| ----------------- | ------------ | ------------- | -------------- | -------------- | ---------------------------- |
+| `five_hour`       | 183          | 65            | 62             | 0              | 1                            |
+| `seven_day`       | 183          | 5             | 1              | 0              | 3                            |
+| `seven_day_fable` | 182          | 14            | 9              | 0              | 3                            |
+
+"Still waiting" was not inspected row by row. The count fits queue points after the last reset in the data.
+
+**Decisions.**
+
+- **No migration.** Both fields live in the existing JSON column and are optional.
+- **Existing pending rows keep the old rule, which is right for them.** A row with no baseline outlived a build
+  that fired at 5%, so its window was above that, and a fall to 5% now really is a reset. That also covers a
+  reset during the relaunch. They are never stamped unless the user re-picks the trigger.
+- **The pending row in the live database is an `at` row** (12:21 PM PDT, 19:21Z today), so this does not touch
+  it. There are no pending window-reset rows right now. Any queued before the relaunch take the case above.
+- **An idle window with no clock waits,** rather than sending now. It sends at the reset of the clock the next
+  use starts. If nothing ever uses that provider it waits indefinitely, visibly, and can be cancelled. Documented
+  in `docs/user/thread-sidebar.md`. An agent calling `t3_send_later` is itself using the window, so no refusal
+  was kept for this case.
+- **A reset that a stale read shows as already past is not waited for** (reads are 5 to 7 minutes apart). A
+  capped window still sends when the next read shows it fell. A nearly unused one waits for the next real reset.
+- **Reactor saves publish nothing.** Clients don't use the fields, and a busy window would otherwise write to
+  every stream.
+
+**Surfaces.** Applied: web composer and Edit trigger (shared server path, no web change), `t3_send_later`,
+contracts (additive, older decoders ignore the fields), user docs. Reverse states: unchanged, cancel and edit
+still work. Connection modes and clients: server-side only. Not applicable: mobile UI, evals.
+
+**Checks.**
+
+- The new reactor tests failed before the fix: 3 failed, 3 passed in `sendLater.test.ts`.
+- `vp test run` after: 66 passed across `src/queue`, `sendLater` and `AgentContextBudget`; 24 in web
+  `queuedMessageRestore`.
+- Mutation: with the reactor's save removed, the idle-window test fails.
+- `tsc --noEmit` clean in contracts, server, web, client-runtime, mobile.
+- `vp fmt` clean. `vp lint`: only the three long-header `no-low-value-comments` errors already in `ISSUES.md`.
+
+**Not verified.**
+
+- **No real firing.** Not run on a real server or in a client; the reactor tests use the test clock and a mocked
+  provider registry. Entry G's first real firings cover this, after a relaunch.
+- **Codex's idle behavior is unmeasured.** There are no Codex samples in the database. If its idle window
+  advertises a reset that keeps sliding forward (a recollection, not confirmed), a message queued there uses the
+  first value it saw. It sends one window length after queueing, which could be early by however long the window
+  sat idle before first use. Bounded, so left.
+
+**Open.**
+
+- With no reset time, a partial reset that stops above 5% does not fire. None seen.
+- A mid-window switch to a nearly unused account reads as a reset. The old rule did the same.
+- Temp files left for the user to decide about: `C:\Users\camer\AppData\Local\Temp\entryB\` (read-only query
+  scripts, edit scripts and a backup of `QueuedMessageService.ts` from the mutation check).
 
 ## Item 1 result (2026-10-30 3:25 AM PDT, 10:25Z)
 
