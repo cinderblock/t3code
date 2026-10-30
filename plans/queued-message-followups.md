@@ -100,6 +100,27 @@ Passed at `1caf826cc9`, in a sibling worktree removed afterwards. The running ap
 - `t3_send_later` is in the server bundle, "Scheduled section" and "Edit message" in the web bundles.
 - **Not covered:** Electron itself, a queue `list` RPC, and any feature used by hand.
 
+### Relaunch result (2026-10-30 4:36 AM PDT, 11:36Z)
+
+Confirmed at 5:02 AM PDT (12:02Z) by the first wake-up firing, running on the new app.
+
+- **Running commit `dc5788d30a`**, which is `master`'s HEAD: `1caf826cc9` plus the preflight notes and
+  `ISSUES.md`, so no code differs from what the preflight built. The stamp says not dirty.
+- **Timeline:** watcher started 4:32:11 AM, idle 4:32:31, launcher 4:34:32, build about a minute,
+  `-WaitForIdle` quiet for 60s, app closed normally, backend answered in 6s, `relaunched:` 4:36:32.
+  It ran no earlier than the coordinator and this thread had both ended their turns.
+- **Live app:** backend PID 36916 runs Electron from this checkout, port 3773, and serves
+  `assets/index-C7QoUlKL.js`, which is in `apps\web\dist`.
+- **Migration 8 on the real database: applied 2026-10-30 4:36:23 AM PDT (11:36:23Z).** All 16 rows
+  kept their statuses (12 sent, 3 pending, 1 cancelled). The 3 pending are due 8:01 AM, 8:04 AM and
+  12:21 PM PDT today.
+- **Features:** `t3_send_later` is exposed by the running server and its `list` answered. The rest are
+  present by bundle strings only: "Scheduled section", "Edit message" and the restore toasts, and the
+  new-thread queue strings plus `sendContext.launch`.
+- **Not done:** no feature was used in a client, and no queued message has fired on this build. The
+  watcher's failure paths are still tested against a stub only; the success path now ran for real.
+- Wake-up task deleted. One firing was needed; it never held up the watcher.
+
 ## Progress
 
 - [x] Item 1: `3c5f230f83`, plus four lines of its drag test that landed in `d94f7ab701`
@@ -107,7 +128,7 @@ Passed at `1caf826cc9`, in a sibling worktree removed afterwards. The running ap
 - [x] Item 3: `1fe8d05411` (server), `6617e3db3b` (web and user docs)
 - [x] Item 4: verified, one fix in `eea3dab9a1`
 - [x] Item 5: `befbb8ce81` (server), `dce4536401` (web and docs)
-- [ ] Relaunch, confirmed on the new commit
+- [x] Relaunch, confirmed on `dc5788d30a`
 
 ## Item 1 result (2026-10-30 3:25 AM PDT, 10:25Z)
 

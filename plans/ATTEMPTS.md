@@ -633,7 +633,11 @@ Read-through, not an observed incident, while preparing the queued-message relau
   later launch was refused. A failed start, with the app already stopped, told nobody.
 - Fix: the watcher drops `-KeepOpen`, stays until the launch is `ready`, `SLOW` or failed, launches
   once more if no app is running, then opens `relaunch-failed.txt` in Notepad. Tested against a stub
-  launcher only; the real path has not been exercised.
+  launcher only; the real path has not been exercised. The real success path then ran on 2026-10-30
+  4:36 AM PDT (11:36Z): closed normally, backend answered in 6s. The failure paths remain stub-only.
+- Preflight that worked before that relaunch: build in a sibling worktree, then boot `dist/bin.mjs`
+  with `--base-dir` on a `migrate-dev-db` copy. `migrate-dev-db` does not run fork migrations, so that
+  boot was the real test of fork migration 8. Answered in 5s with 703,482 events.
 - `start-t3.ps1 -BuildOnly` is not a way to check a build under a running app: it refuses, because
   the rebuild would replace the hashed web chunks and break lazy routes. Build in a sibling worktree.
 
