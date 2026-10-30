@@ -90,3 +90,11 @@ reset", with no memory of the usage when the message was queued. So picking "whe
 resets" in the web composer while that window is at 5% or less sends on the next 15-second tick, not
 at the reset. Matters because the message goes out hours early. `t3_send_later` refuses this case
 (`resolveScheduledTrigger`); the composer's trigger picker does not.
+
+## A pending send-later message outlives its deleted thread
+
+Deleting a thread does not touch its `fork_queued_messages` rows (`apps/server/src/queue/`). The row
+stays pending, then fails at dispatch when its trigger fires. Since queued messages began holding
+claimed attachments, those files stay on disk too, because thread cleanup only knows the ids on
+the thread's own messages. Matters because the thread's Scheduled state and the failure point at a
+thread that no longer exists, and the files leak.

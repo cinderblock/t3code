@@ -88,7 +88,7 @@ Relaunch thread: `t3-thread://v1/mcp:2cf06899-8261-49a9-bb43-530157899ff1`
 
 - [x] Item 1: `3c5f230f83`, plus four lines of its drag test that landed in `d94f7ab701`
 - [x] Item 2: `t3_send_later` built; evals not run (no API key)
-- [ ] Item 3
+- [x] Item 3: `1fe8d05411` (server), `6617e3db3b` (web and user docs)
 - [ ] Item 4
 - [ ] Item 5
 - [ ] Relaunch, confirmed on the new commit
@@ -244,6 +244,100 @@ because it is a server tool. Not applicable: entry points (nothing new in the UI
 
 **Open.** Nothing in the official app shows a pending send-later message without asking the agent, and
 every way to change that fails the bar. That remains a real gap.
+
+## Item 3 result (2026-10-30 3:55 AM PDT, 10:55Z)
+
+**The row never held attachments.** `onQueueDraft` read only `promptRef`, then `clearComposerContent`
+wiped images, files, terminal contexts, review comments, annotations and thread contexts, and
+dispatch hard-coded `attachments: []`. So queueing silently lost them, before cancel was ever
+involved. Restoring needs the row to carry them, which also makes the send correct.
+
+Decisions:
+
+- **The row carries `attachments` and `context`** (fork migration 8), and dispatch sends them. The
+  enqueue claims uploads into the thread's id space, because a pending upload is swept after 24
+  hours and a message can wait a week for a weekly reset.
+- **The draft clears only after the server accepts the message.** It used to clear first and fire
+  and forget, so a failed enqueue lost the text.
+- **The client downloads the bytes before it cancels, and restores only on confirmed success.** A
+  failed download leaves the message queued, a lost race leaves the composer alone, and nothing has
+  to survive the cancel on the server. An attachment that is gone for good does not block the cancel.
+- **The cancel removes a pending row's claimed files**, so a cancel by anyone leaves no orphans. A
+  failed row keeps them: its send may have reached the thread, which then owns those files.
+- **Restore is a function of the thread's draft target, not of the mounted composer.** It works if
+  the user navigates away while the cancel runs, and during a queued-run edit or pending question,
+  without those modes taking the text.
+- **Non-empty composer: append** after a blank line, as stash restore does. Attachments merge up to
+  the limit, and anything left out is named in a toast.
+- **No second editor.** "Edit message" takes the message back into the composer and the clock picker
+  reopens on the same trigger, so a re-queue is two clicks. An in-place editor would need its own
+  attachment UI to do the same thing. Cost: the message is unqueued while being edited, but it sits
+  in the composer as a persisted draft.
+- **Failed rows** get "Edit message" (restores) next to the X (dismisses without restoring). The
+  dismiss stays non-restoring because an interrupted send may in fact have gone out.
+- **Only the clicking client restores**, from the command's result, never from the stream. So
+  another client or an agent cancel touches no draft.
+- **Runtime and interaction mode are not restored.** They are thread state the queue never changed
+  and the send doesn't replay. Model selection is restored; it is draft state.
+
+**What changed beyond the design.** Attachment-only messages can now be queued, since the clock
+button follows the same "has sendable content" rule as send. The clock is hidden during a queued-run
+edit, where it would have queued the edit's draft. A cancel that finds the row already cancelled now
+fails, so two clients can't both restore. Sent and cancelled rows drop their `attachments_json` and
+`context_json`, because `list` returns every status and the snapshot would otherwise grow forever.
+Row previews show context labels instead of raw link markup.
+
+**Cases.**
+
+| Case                                  | Behavior                                                                                                          |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Composer already holds a draft        | Draft text first, a blank line, then the message. Attachments merge; any over the limit are named in a toast.     |
+| Navigated away while the cancel runs  | Restores into the message's own thread draft, not the thread on screen.                                           |
+| Another client, or an agent, cancels  | No draft changes. Restore runs only from the clicking client's command result.                                    |
+| Already `sending` or `sent`           | Buttons are gone at `sending`. A click that loses the race gets a failed cancel, a toast, and an untouched draft. |
+| Download fails first                  | Nothing is cancelled; a toast says it is still queued.                                                            |
+| An attachment is gone for good        | The cancel still goes through and the toast names the file, so a message can't get stuck.                         |
+| Failed row                            | Edit message restores it. The X dismisses without restoring. Files stay in both cases.                            |
+| Queued-run edit or question on screen | Restores into the thread draft, which shows when that mode ends. Cursor reset is skipped.                         |
+| Enqueue fails                         | The draft was never cleared.                                                                                      |
+| Draft edited while queueing           | The message queues and the draft stays, with a toast. Duplicated rather than lost.                                |
+
+**Surfaces.** Applied: entry points (`QueuedMessagesPanel` is the only UI that cancels; `UsageStatusBar`
+only reads a count), web and desktop (shared code), contracts (additive, optional fields), reverse
+states (Edit message and Cancel are the way out of the queue, re-queue is the way back), docs
+(`docs/user/thread-sidebar.md`). Connection modes: uploads and downloads use the same paths as send
+and paste, so remote works the same, but this is unverified on a real remote. Agents: `t3_send_later`
+is unchanged and an agent edits by cancelling and scheduling. Not applicable: providers (dispatch is the
+normal path), mobile UI (`apps/mobile` still compiles), keybindings (none exist for the queue).
+
+**Checks.**
+
+- `vp fmt` clean. `vp lint` clean on web files and docs. Four `no-low-value-comments` errors remain on
+  the long headers of `queuedMessage.ts`, `ForkMigrations.ts` and `QueuedMessageService.ts`; they
+  predate this and are in `ISSUES.md`.
+- `tsc --noEmit` clean in server, web, contracts, client-runtime, mobile, desktop.
+- `vp test run`: server 49 passing (`src/queue`, `sendLater`, fork migrations, `AttachmentClaims`); web 14
+  in `queuedMessageRestore`, plus `queuedMessageEdit` and `composerSend.logic`.
+- The seven server attachment tests failed before the service change. Swapping restore and cancel in
+  `takeBackQueuedMessage` fails the two ordering tests.
+
+**Not verified.**
+
+- **Not seen in a running client.** Browsers are out of scope here, and the app must not be restarted.
+  `useQueuedMessageComposer` and the panel have no test: draft clearing, focus and toasts are checked
+  by reading and typecheck only. The first real use is after the relaunch.
+- **Migration 8 has not run on real data.** The fork migration test covers a fresh database. The
+  relaunch thread's boot check on a copy of `statev2.sqlite` is its first real run.
+
+**Open.**
+
+- A cancel whose response is lost in transit looks like a lost race, though the server did cancel. The
+  message then leaves the panel and the composer stays empty. Text survives in the row; attachments
+  do not. Rare, and left alone.
+- An agent cancel removes the attachments of a message the user queued. An agent has always been
+  able to cancel any message in its thread; the attachments are new. Worth a look if it ever bites.
+- Failed rows keep their claimed files after a dismiss, since nothing can tell whether the thread
+  uses them. A small leak until the thread is deleted, at most.
 
 ## Findings / gotchas
 
