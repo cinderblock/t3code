@@ -98,3 +98,18 @@ status is `idle` (`latestRun?.status ?? "idle"` in `ProjectionStore.ts`) and `sh
 through. `isThreadWorking` takes any `idle` runtime to mean parked on background work, so the thread
 sits in Working until its first message, and a queued message leaves it there instead of in Scheduled.
 Confirmed against `presentThreadShell`; no such thread exists in this install's database today.
+
+## Queued messages skip idle compaction
+
+`useComposerSend` compacts a stale Claude session before the message (`compactBeforeSend` from
+`planComposerTurn`, then a `/compact` turn with `idleCompaction: "onReturn"`). The token count and the
+keep-history choice exist only in the client, so a fired message dispatches straight onto the stale
+session. Matters because a message that waited for a window reset is the likeliest to find its session
+stale, so it re-reads the whole history and spends the fresh window on that.
+
+## Local composer commands are sent to the provider when queued
+
+`useComposerSend` handles `/plan`, `/default` and Codex `/feedback` itself and sends no turn. `queueDraft`
+has no such check, so queueing one stores it as a prompt and the provider receives the literal text at
+fire time. Matters because the composer offers the clock for it and the outcome reads as a sent message
+that did nothing useful. Needs a decision: refuse it, or run the command at fire time.

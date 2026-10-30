@@ -146,7 +146,7 @@ this order. Scope is what the follow-ups left open, not the older `ISSUES.md` en
 
 - [x] A. `migrate-dev-db` keeps pending send-later messages: `a8bd3de314`
 - [x] B. Window-reset message fires at once on a nearly unused window: `df77fd47b6`
-- [ ] C. Queued messages skip the Claude effort prefix
+- [x] C. Queued messages skip the Claude effort prefix: not a bug; mode bug found and fixed, `72edfecd24`, `e2ccdb5c3a`
 - [ ] D. Pending message outlives its deleted thread
 - [ ] E. Cancel gaps: lost cancel response, agent cancels, dismissed failed messages
 - [ ] F. Imported thread that never ran reads Waiting in Working
@@ -281,6 +281,94 @@ still work. Connection modes and clients: server-side only. Not applicable: mobi
 - A mid-window switch to a nearly unused account reads as a reset. The old rule did the same.
 - Temp files left for the user to decide about: `C:\Users\camer\AppData\Local\Temp\entryB\` (read-only query
   scripts, edit scripts and a backup of `QueuedMessageService.ts` from the mutation check).
+
+## Entry C result (2026-10-30 10:30 AM PDT, 17:30Z)
+
+The issue as written is not a bug. Comparing the two paths found one that is, and three smaller ones. Fixed in
+`72edfecd24` (modes, with the issue's removal) and `e2ccdb5c3a` (draft checks).
+
+**Why the effort prefix was never lost.**
+
+- **Ultrathink is draft text, not a setting.** `getTraitSelectChange` writes `Ultrathink:\n` into the prompt and
+  never touches the model options. The row stores that text, so the keyword goes out with it.
+- **The composer can't hold it as a selection.** `resolveDescriptorChoiceValue` maps a prompt-injected value back
+  to the default. Probed against the real catalog: 13 models, 11 with Ultrathink, 85 model and effort
+  combinations, and `promptEffort` was prompt-injected in none. `formatOutgoingPrompt` adds nothing on any of
+  them, and `snapshotComposerSend` already trims. Calling it from the queue would have been a no-op.
+- **The server has its own copy.** `ClaudeAdapterV2` applies the prefix from the turn's model selection, so a
+  selection set some other way (an agent, an older thread) still gets it.
+- **The live rows agree.** All 16 rows carry a model selection with their options, including the pending one.
+
+**Traps from the brief.**
+
+| Trap                                | Result                                                                                                                                                                                             |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Restored draft, doubled prefix      | No change needed. The text is what the user had in the composer, prefix and rainbow frame included. Nothing is added, and `applyClaudePromptEffortPrefix` refuses to double. Both now have a test. |
+| Can the server reach the formatter? | It already calls `applyClaudePromptEffortPrefix`. The row already stores the model and effort options, from before `1fe8d05411`. No fire-time prefix was added.                                    |
+| Rows already pending                | Nothing to do. No migration, and no stored field changes. They send as they would have.                                                                                                            |
+| First messages (`befbb8ce81`)       | Pass. The launch carries the text and `modelSelection`, now tested with `effort` and the prefix together.                                                                                          |
+| `t3_send_later`                     | Nothing added. The agent writes its own text, and it omits the model, so the turn uses the thread's selection, effort included. Prefixing an agent's words would change what it wrote.             |
+
+**The real bug: modes.** On a server thread, the Plan and access toggles write only to the draft, and a send saves
+them (`persistThreadSettingsForNextTurn`). The queue saved nothing, and a row's modes are not replayed. So a
+message queued in Plan fired in the thread's old mode, with the composer showing Plan. This is the issue's
+complaint, in a setting the issue didn't name, and it can fire with broader access than the composer showed.
+Item 5's note that modes "were set on the thread at queue time" held only for a new thread.
+
+**Decision: save at queue time, in the client, through the send's own call.** Rejected:
+
+- Replaying the row at fire time. A stale row could undo a later change, including putting back full access after
+  the user lowered it, and rows already pending hold values nobody saved.
+- Saving inside `QueuedMessageService.enqueue`. `queue.enqueueMessage` is a plain RPC, while mode changes go
+  through the caller's limits (`OrchestratorThreadAboveModeLimitError`). The server doing it would skip them.
+
+A failed save stops the queue and keeps the draft. The cost: the mode changes when you queue, not when it fires, so
+it applies to the thread's other turns too. A send does the same. A cancel doesn't put the old mode back, but the
+composer still shows the saved mode, so the two agree. Two messages queued in different modes both use the later
+one. `docs/user/thread-sidebar.md` states the rule.
+
+**Other differences between the paths.**
+
+| `useComposerSend` does                        | Queue path                   | Outcome                                                                   |
+| --------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------- |
+| Length limit on the prompt                    | Skipped                      | Fixed, same inline error                                                  |
+| Refuses a thread context from another machine | Skipped                      | Fixed, shared `strandedThreadContextWarning`                              |
+| Warns on expired terminal contexts            | Dropped silently             | Fixed, same toasts                                                        |
+| Idle compaction before the message            | Skipped                      | Logged in `ISSUES.md`: needs server-side data, bigger                     |
+| `/plan`, `/default`, Codex `/feedback`        | Sent to the provider as text | Logged in `ISSUES.md`: needs a decision                                   |
+| Plan follow-up                                | Clock hidden in that state   | No gap                                                                    |
+| Saves a local checkout's branch mismatch      | Skipped                      | Left: not prompt-affecting, and the checkout at fire time is what matters |
+
+**Surfaces.** Applied: composer clock (the one entry point), web and desktop (shared), first messages (a local draft
+saves nothing here, its modes go through `thread.create`; an empty server thread does save), contracts (comment
+only), user docs. Providers: all, since modes are thread state. Reverse states: covered above. Not applicable: mobile
+(no composer queue), `t3_send_later` (no composer modes; `enqueueForThread` uses the thread's), evals (no
+model-facing text changed).
+
+**Checks.**
+
+- The two `enqueueAfterSavingModes` tests failed before the fix. The new Ultrathink tests passed before any change
+  to production code, which is the evidence that the issue wasn't a bug.
+- `vp test run` on the final code: 27 in `queuedMessageRestore`; 89 across `queuedMessageRestore`,
+  `composerProviderState` and `ChatView.logic`; server `QueuedMessageFirstSend` 11; shared `model` 11.
+- `tsc --noEmit` clean in web, contracts, server.
+- `vp fmt` clean. `vp lint`: only the long header at `queuedMessage.ts:16`, already in `ISSUES.md`. Shortening the
+  comment at line 89 cleared that one.
+
+**Not verified.**
+
+- **`queueDraft` itself has no test,** as at item 3: the hook needs a browser test, and browsers are out of scope
+  here. The save's order is tested in the extracted helper. That the hook calls it, and all three checks in
+  `e2ccdb5c3a`, are from reading and typecheck only. Entry G should queue from Plan with a thread in default and
+  check the fired turn's mode.
+- No real firing, and no real Claude turn, so that the keyword changes the model's thinking is assumed from the
+  adapter and catalog.
+
+**Open.**
+
+- `formatOutgoingPrompt`'s effort branch is dead for every bundled model, in upstream code too. It still trims. Left.
+- Temp files left for the user to decide about: `C:\Users\camer\AppData\Local\Temp\entryC\` (edit scripts) and
+  an empty `probe-effort.mts` in Git Bash's `/tmp`.
 
 ## Item 1 result (2026-10-30 3:25 AM PDT, 10:25Z)
 
@@ -466,8 +554,8 @@ Decisions:
   dismiss stays non-restoring because an interrupted send may in fact have gone out.
 - **Only the clicking client restores**, from the command's result, never from the stream. So
   another client or an agent cancel touches no draft.
-- **Runtime and interaction mode are not restored.** They are thread state the queue never changed
-  and the send doesn't replay. Model selection is restored; it is draft state.
+- **Runtime and interaction mode are not restored.** They are thread state, which queueing saves
+  (entry C) and the send doesn't replay. Model selection is restored; it is draft state.
 
 **What changed beyond the design.** Attachment-only messages can now be queued, since the clock
 button follows the same "has sendable content" rule as send. The clock is hidden during a queued-run
