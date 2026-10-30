@@ -166,8 +166,12 @@ above the composer puts it all back in the composer, with the same model, as if 
 it. Anything you had started typing stays, with the message after it. Queue it again and the
 send-later picker opens on the same trigger. Until then it won't send on its own, so a change you
 abandon stays in the composer. A message that has failed offers **Edit message** too; its **X**
-dismisses it without restoring it. A message that an agent cancelled, or that you cancelled on another
-device, doesn't appear in this composer.
+dismisses it without restoring it and removes its attachments.
+
+A message that an agent cancelled stays above the composer for 7 days, marked as cancelled, so you can
+**Restore** it into the composer or dismiss it with **X**. The same row appears if a cancel went
+through but the app never heard back. A message you cancelled on another device goes to that device's
+composer.
 
 Deleting a thread cancels the messages waiting on it and removes their attachments. Archiving keeps
 them waiting, but one that comes due while its thread is archived doesn't send: reopen the thread to

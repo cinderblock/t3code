@@ -142,6 +142,9 @@ export function useQueuedMessageComposer(input: {
   const cancelQueuedMessage = useAtomCommand(usageEnvironment.cancelQueuedMessage, {
     reportFailure: false,
   });
+  const discardQueuedMessage = useAtomCommand(usageEnvironment.discardQueuedMessage, {
+    reportFailure: false,
+  });
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, { reportFailure: false });
   const deleteThread = useOrchestrationCommand(threadEnvironment.delete, { reportFailure: false });
   const handleNewThread = useNewThreadHandler();
@@ -387,13 +390,15 @@ export function useQueuedMessageComposer(input: {
   };
 
   /**
-   * Cancels a message and puts it back in the composer. Only this client's own click restores,
-   * never the queue stream, so a cancel elsewhere touches no draft.
+   * Cancels a message and puts it back in the composer, or restores one already cancelled. Only
+   * this client's own click restores, never the queue stream, so a cancel elsewhere touches no draft.
    */
   const takeBack = async (message: QueuedMessage) => {
     if (threadRef === null) return;
+    const alreadyCancelled = message.status === "cancelled";
     const result = await takeBackQueuedMessage({
       attachments: message.attachments ?? [],
+      alreadyCancelled,
       download: downloadAttachment,
       cancel: async () => {
         const cancelled = await cancelQueuedMessage({ environmentId, input: { id: message.id } });
@@ -433,13 +438,19 @@ export function useQueuedMessageComposer(input: {
           window.requestAnimationFrame(() => composerRef.current?.focusAtEnd());
         }
       },
+      discard: () => discardQueuedMessage({ environmentId, input: { id: message.id } }),
     });
     if (result.outcome === "download-failed") {
-      warn(`Couldn't download ${result.name}`, "The message is still queued. Try again.");
+      warn(
+        `Couldn't download ${result.name}`,
+        alreadyCancelled
+          ? "You can still restore this message. Try again."
+          : "The message is still queued. Try again.",
+      );
     } else if (result.outcome === "lost-race") {
       warn(
-        "Couldn't take this message back",
-        "It may already be sending. If so, it will appear in the thread.",
+        "Couldn't confirm this message was taken back",
+        "If it's sending, it will appear in the thread. If it was cancelled, restore it above the composer.",
       );
     }
   };

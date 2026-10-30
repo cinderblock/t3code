@@ -47,16 +47,19 @@ export function draftStillHoldsSnapshot(
 export type AttachmentDownload = File | "missing" | "failed";
 
 /**
- * The order is the point. The bytes come first because the server drops them with the cancel, so
- * a failed download leaves the message queued. The draft is written only after the cancel is
- * confirmed, so one that loses the race with the send leaves the composer alone. A file that is
- * gone for good cannot block the cancel; it is reported by the restore instead.
+ * The order is the point. Bytes first, so a failed download leaves the message queued. The draft
+ * only after a confirmed cancel, so a lost race leaves the composer alone. The discard last, so a
+ * lost response or failed restore leaves the message restorable from the panel. A file gone for
+ * good cannot block the cancel; the restore reports it.
  */
 export async function takeBackQueuedMessage(input: {
   readonly attachments: ReadonlyArray<ChatAttachment>;
+  readonly alreadyCancelled?: boolean;
   readonly download: (attachment: ChatAttachment) => Promise<AttachmentDownload>;
   readonly cancel: () => Promise<boolean>;
   readonly restore: (files: ReadonlyMap<string, File>) => void | Promise<void>;
+  /** A failure here only leaves the row restorable, so nothing depends on its result. */
+  readonly discard: () => Promise<unknown>;
 }): Promise<
   | { readonly outcome: "restored" | "lost-race" }
   | { readonly outcome: "download-failed"; readonly name: string }
@@ -67,9 +70,33 @@ export async function takeBackQueuedMessage(input: {
     if (downloaded === "failed") return { outcome: "download-failed", name: attachment.name };
     if (downloaded !== "missing") files.set(attachment.id, downloaded);
   }
-  if (!(await input.cancel())) return { outcome: "lost-race" };
+  if (input.alreadyCancelled !== true && !(await input.cancel())) {
+    return { outcome: "lost-race" };
+  }
   await input.restore(files);
+  await input.discard();
   return { outcome: "restored" };
+}
+
+export function isRestorable(message: QueuedMessage): boolean {
+  return message.status === "cancelled" && message.restorableUntil !== undefined;
+}
+
+/**
+ * What the panel lists for a thread. A take-back cancels its row on the way through, so that row
+ * stays out of sight rather than flashing as cancelled before the draft fills.
+ */
+export function panelQueuedMessages(
+  messages: ReadonlyArray<QueuedMessage>,
+  threadId: ThreadId,
+  takingBackMessageId: string | null,
+): ReadonlyArray<QueuedMessage> {
+  return messages.filter((message) => {
+    if (message.threadId !== threadId) return false;
+    return isRestorable(message)
+      ? message.id !== takingBackMessageId
+      : message.status === "pending" || message.status === "sending" || message.status === "failed";
+  });
 }
 
 /**

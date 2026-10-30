@@ -19,6 +19,7 @@ import {
   draftWorkspaceForLaunch,
   enqueueAfterSavingModes,
   mergeRestoredPrompt,
+  panelQueuedMessages,
   pendingQueuedLaunch,
   rememberedQueueTrigger,
   rememberQueueTrigger,
@@ -363,13 +364,14 @@ describe("takeBackQueuedMessage", () => {
         await Promise.resolve();
         restored = true;
       },
+      discard: async () => undefined,
     });
 
     expect(result).toEqual({ outcome: "restored" });
     expect(restored).toBe(true);
   });
 
-  it("restores only after the server confirms the cancel", async () => {
+  it("gives up the server's copy only once the draft holds the message", async () => {
     const order: string[] = [];
 
     const result = await takeBackQueuedMessage({
@@ -386,24 +388,68 @@ describe("takeBackQueuedMessage", () => {
         order.push("restore");
         expect(restored.get(imageAttachment.id)).toBe(image);
       },
+      discard: async () => {
+        order.push("discard");
+      },
     });
 
     expect(result).toEqual({ outcome: "restored" });
-    expect(order).toEqual(["download", "cancel", "restore"]);
+    expect(order).toEqual(["download", "cancel", "restore", "discard"]);
   });
 
-  it("leaves the composer alone when the cancel loses the race with the send", async () => {
+  it("leaves everything in place when the cancel can't be confirmed", async () => {
     const restore = vi.fn();
+    const discard = vi.fn();
 
     const result = await takeBackQueuedMessage({
       attachments: [],
       download: async () => image,
       cancel: async () => false,
       restore,
+      discard,
     });
 
     expect(result).toEqual({ outcome: "lost-race" });
     expect(restore).not.toHaveBeenCalled();
+    expect(discard).not.toHaveBeenCalled();
+  });
+
+  it("restores a message that is already cancelled without cancelling it again", async () => {
+    const cancel = vi.fn(async () => false);
+    const restore = vi.fn();
+    const discard = vi.fn();
+
+    const result = await takeBackQueuedMessage({
+      attachments: [imageAttachment],
+      alreadyCancelled: true,
+      download: async () => image,
+      cancel,
+      restore,
+      discard,
+    });
+
+    expect(result).toEqual({ outcome: "restored" });
+    expect(cancel).not.toHaveBeenCalled();
+    expect(restore).toHaveBeenCalledOnce();
+    expect(discard).toHaveBeenCalledOnce();
+  });
+
+  it("keeps the server's copy when the restore itself fails", async () => {
+    const discard = vi.fn();
+
+    await expect(
+      takeBackQueuedMessage({
+        attachments: [],
+        download: async () => image,
+        cancel: async () => true,
+        restore: () => {
+          throw new Error("draft store refused");
+        },
+        discard,
+      }),
+    ).rejects.toThrow("draft store refused");
+
+    expect(discard).not.toHaveBeenCalled();
   });
 
   it("does not cancel a message whose attachment it could not download", async () => {
@@ -415,6 +461,7 @@ describe("takeBackQueuedMessage", () => {
       download: async () => "failed",
       cancel,
       restore,
+      discard: vi.fn(),
     });
 
     expect(result).toEqual({ outcome: "download-failed", name: "screen.png" });
@@ -430,10 +477,49 @@ describe("takeBackQueuedMessage", () => {
       download: async () => "missing",
       cancel: async () => true,
       restore,
+      discard: vi.fn(),
     });
 
     expect(result).toEqual({ outcome: "restored" });
     expect(restore.mock.calls[0]?.[0].size).toBe(0);
+  });
+});
+
+describe("panelQueuedMessages", () => {
+  const restorable = queued({
+    id: QueuedMessageId.make("restorable"),
+    status: "cancelled",
+    restorableUntil: "2026-11-06T12:00:00.000Z",
+  });
+  const ids = (messages: ReadonlyArray<QueuedMessage>) => messages.map((message) => message.id);
+
+  it("shows what can still be acted on, and a cancelled message only while it can be restored", () => {
+    const messages = [
+      queued({ id: QueuedMessageId.make("pending") }),
+      queued({ id: QueuedMessageId.make("failed"), status: "failed" }),
+      queued({ id: QueuedMessageId.make("sent"), status: "sent" }),
+      queued({ id: QueuedMessageId.make("gone"), status: "cancelled" }),
+      restorable,
+    ];
+
+    expect(ids(panelQueuedMessages(messages, threadId, null))).toEqual([
+      "pending",
+      "failed",
+      "restorable",
+    ]);
+  });
+
+  it("leaves out another thread's messages", () => {
+    const other = queued({ threadId: ThreadId.make("thread-other") });
+
+    expect(panelQueuedMessages([other], threadId, null)).toEqual([]);
+  });
+
+  it("hides the cancelled row of a take-back in progress, but not a waiting row", () => {
+    const waiting = queued();
+
+    expect(panelQueuedMessages([restorable], threadId, restorable.id)).toEqual([]);
+    expect(panelQueuedMessages([waiting], threadId, waiting.id)).toEqual([waiting]);
   });
 });
 

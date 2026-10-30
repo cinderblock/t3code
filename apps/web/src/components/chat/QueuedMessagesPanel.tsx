@@ -1,7 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, QueuedMessage, ThreadId } from "@t3tools/contracts";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
-import { CircleAlertIcon, ClockIcon, XIcon } from "lucide-react";
+import { BanIcon, CircleAlertIcon, ClockIcon, XIcon } from "lucide-react";
 import { memo, useState } from "react";
 import { cn } from "~/lib/utils";
 import { useStableCallback } from "../../hooks/useStableCallback";
@@ -13,6 +13,7 @@ import {
   describeQueuedMessageTrigger,
   QueuedMessageTriggerForm,
 } from "./QueuedMessageTriggerPicker";
+import { isRestorable, panelQueuedMessages } from "./queuedMessageRestore";
 
 /** Prompts hold context as link markup; a row shows the label a chip would. */
 function previewText(message: QueuedMessage): string {
@@ -25,10 +26,9 @@ function describeAttachments(message: QueuedMessage): string {
 }
 
 /**
- * Compact rows for the active thread's queued messages, rendered above the
- * composer next to the banner stack. Pending rows can retarget their trigger,
- * or go back to the composer through Edit message or Cancel; failed rows
- * surface the failure and can go back to the composer or be dismissed.
+ * Rows above the composer for the active thread's queued messages. Pending rows can retarget
+ * their trigger or go back to the composer. Failed rows, and cancelled rows nobody took back such
+ * as an agent's cancel, can go back to the composer or be dismissed.
  */
 export const QueuedMessagesPanel = memo(function QueuedMessagesPanel(props: {
   environmentId: EnvironmentId;
@@ -43,9 +43,9 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel(props: {
     usageEnvironment.updateQueuedMessage,
     "queued message update",
   );
-  const cancelQueuedMessage = useAtomCommand(
-    usageEnvironment.cancelQueuedMessage,
-    "queued message cancel",
+  const discardQueuedMessage = useAtomCommand(
+    usageEnvironment.discardQueuedMessage,
+    "queued message dismiss",
   );
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   // Attachments download before the cancel, so a click can take a while to land.
@@ -56,10 +56,10 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel(props: {
     void props.onTakeBack(message).finally(() => setTakingBackMessageId(null));
   });
 
-  const threadQueuedMessages: ReadonlyArray<QueuedMessage> = queuedMessages.filter(
-    (message) =>
-      message.threadId === props.threadId &&
-      (message.status === "pending" || message.status === "sending" || message.status === "failed"),
+  const threadQueuedMessages = panelQueuedMessages(
+    queuedMessages,
+    props.threadId,
+    takingBackMessageId,
   );
 
   if (threadQueuedMessages.length === 0) {
@@ -69,7 +69,42 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel(props: {
   return (
     <div className={cn("mx-auto mb-2 flex max-w-3xl flex-col gap-1.5", props.className)}>
       {threadQueuedMessages.map((message) =>
-        message.status === "failed" ? (
+        isRestorable(message) ? (
+          <div
+            key={message.id}
+            className="flex items-center gap-2 rounded-xl border border-border/65 bg-card/90 px-3 py-2"
+          >
+            <BanIcon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-xs text-foreground/90">{previewText(message)}</div>
+              <div className="truncate text-2xs text-muted-foreground">
+                {message.cancelledBy === "agent" ? "Cancelled by an agent" : "Cancelled"}
+                {describeAttachments(message)}
+              </div>
+            </div>
+            <Button
+              size="xs"
+              variant="ghost-muted"
+              className="shrink-0"
+              disabled={takingBackMessageId !== null}
+              onClick={() => takeBack(message)}
+            >
+              Restore
+            </Button>
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              className="shrink-0"
+              aria-label="Dismiss cancelled queued message"
+              disabled={takingBackMessageId !== null}
+              onClick={() =>
+                void discardQueuedMessage({ environmentId, input: { id: message.id } })
+              }
+            >
+              <XIcon className="size-3.5" />
+            </Button>
+          </div>
+        ) : message.status === "failed" ? (
           <div
             key={message.id}
             className="flex items-center gap-2 rounded-xl border border-destructive/40 bg-destructive/8 px-3 py-2"
@@ -97,7 +132,10 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel(props: {
               variant="ghost"
               className="shrink-0"
               aria-label="Dismiss failed queued message"
-              onClick={() => void cancelQueuedMessage({ environmentId, input: { id: message.id } })}
+              disabled={takingBackMessageId !== null}
+              onClick={() =>
+                void discardQueuedMessage({ environmentId, input: { id: message.id } })
+              }
             >
               <XIcon className="size-3.5" />
             </Button>
