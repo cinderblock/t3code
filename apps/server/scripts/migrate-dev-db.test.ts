@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 
+import { runForkMigrations } from "../src/persistence/ForkMigrations.ts";
 import { runMigrations } from "../src/persistence/Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { runMigrateDevDb } from "./migrate-dev-db.ts";
@@ -16,6 +17,7 @@ const withDatabase = <A, E>(
 
 const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(function* (
   baseDir: string,
+  forkMigrationsThrough?: number,
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -27,6 +29,7 @@ const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(functio
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* runMigrations();
+      yield* runForkMigrations({ toMigrationInclusive: forkMigrationsThrough });
 
       yield* sql`INSERT INTO projection_projects
         (project_id, title, workspace_root, scripts_json, created_at, updated_at, deleted_at)
@@ -95,6 +98,13 @@ const createFixtureSource = Effect.fn("createMigrateDevDbFixtureSource")(functio
         VALUES ('delivery-1', 'task-1', 'key-1', 1900000000000, '{}', '{}', '[]')`;
       yield* sql`INSERT INTO auth_sessions (session_id, subject, scopes, method, issued_at, expires_at)
         VALUES ('session-1', 'user', '[]', 'pairing', '2026-08-01', '2027-08-01')`;
+      for (const status of ["pending", "sending", "sent", "failed", "cancelled"]) {
+        yield* sql`INSERT INTO fork_queued_messages
+          (id, thread_id, message_id, text, trigger_json, send_context_json, status, origin,
+            created_at, updated_at)
+          VALUES (${`queued-${status}`}, 'stopped-thread', ${`message-${status}`}, 'Later', '{}',
+            '{}', ${status}, 'user', '2026-08-01', '2026-08-01')`;
+      }
     }),
   );
   return databasePath;
@@ -130,13 +140,15 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
             tasks: number;
             webhooks: number;
             transfers: number;
+            queued: number;
           }>`
             SELECT
               (SELECT COUNT(*) FROM auth_sessions) AS auth,
               (SELECT COUNT(*) FROM scheduled_tasks) AS tasks,
               (SELECT COUNT(*) FROM scheduled_task_webhook_replay_keys) +
                 (SELECT COUNT(*) FROM scheduled_task_webhook_pending) AS webhooks,
-              (SELECT COUNT(*) FROM orchestration_v2_projection_context_transfers) AS transfers`;
+              (SELECT COUNT(*) FROM orchestration_v2_projection_context_transfers) AS transfers,
+              (SELECT COUNT(*) FROM fork_queued_messages) AS queued`;
           return { threads, events, sessions, leftovers };
         }),
       );
@@ -152,7 +164,13 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
         kept.sessions.map((row) => row.provider_session_id),
         ["session-shared"],
       );
-      assert.deepStrictEqual(kept.leftovers, { auth: 0, tasks: 0, webhooks: 0, transfers: 0 });
+      assert.deepStrictEqual(kept.leftovers, {
+        auth: 0,
+        tasks: 0,
+        webhooks: 0,
+        transfers: 0,
+        queued: 0,
+      });
     }),
   );
 
@@ -238,6 +256,39 @@ it.layer(NodeServices.layer)("migrate-dev-db", (it) => {
         { sharedHome: sourceDir },
       );
       assert.include(result.executedMigrations, "55_OrchestrationV2");
+      assert.include(result.executedMigrations, "fork:2_QueuedMessages");
+    }),
+  );
+
+  it.effect("runs the fork migrations a source is behind on, and only those", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const sourceDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-fork-" });
+      const destDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-fork-dest-" });
+      const source = yield* createFixtureSource(sourceDir, 7);
+
+      const behind = yield* runMigrateDevDb(
+        { baseDir: destDir, source, projects: 5, threadsPerProject: 10 },
+        { sharedHome: sourceDir },
+      );
+      assert.deepStrictEqual(behind.executedMigrations, ["fork:8_QueuedMessageContent"]);
+      const columns = yield* withDatabase(
+        behind.databasePath,
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          return yield* sql<{ name: string }>`
+            SELECT name FROM pragma_table_info('fork_queued_messages')
+            WHERE name = 'attachments_json'`;
+        }),
+      );
+      assert.equal(columns.length, 1);
+
+      const reseedDir = yield* fs.makeTempDirectoryScoped({ prefix: "migrate-dev-db-fork-next-" });
+      const current = yield* runMigrateDevDb(
+        { baseDir: reseedDir, source: behind.databasePath, projects: 5, threadsPerProject: 10 },
+        { sharedHome: sourceDir },
+      );
+      assert.deepStrictEqual(current.executedMigrations, []);
     }),
   );
 

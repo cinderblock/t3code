@@ -17,6 +17,7 @@ import { Command, Flag } from "effect/cli";
 
 import * as ProjectionStore from "../src/orchestration-v2/ProjectionStore.ts";
 import { rebuildMessageSearch } from "../src/orchestration-v2/messageSearchIndex.ts";
+import { runForkMigrations } from "../src/persistence/ForkMigrations.ts";
 import { migrationManifest, runMigrations } from "../src/persistence/Migrations.ts";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
@@ -203,8 +204,11 @@ const RECOVERY_KINDS: ReadonlyArray<ProjectionStore.ProjectionRecoveryKind> = [
   "delegated-completions",
 ];
 
+// Every status of a queued message goes: only pending rows fire, but the rest are inert history
+// whose attachments this tool does not copy, and a future status then fails safe.
 const CLEARED_TABLES: ReadonlyArray<string> = [
   "scheduled_tasks",
+  "fork_queued_messages",
   "orchestration_v2_effect_outbox",
   "orchestration_v2_thread_launch_workflows",
   "orchestration_command_receipts",
@@ -503,7 +507,12 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
     const executed = yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* sql.unsafe("PRAGMA foreign_keys = ON").unprepared;
-      return yield* runMigrations();
+      const upstream = yield* runMigrations();
+      const fork = yield* runForkMigrations();
+      return [
+        ...upstream.map(([id, name]) => `${id}_${name}`),
+        ...fork.map(([id, name]) => `fork:${id}_${name}`),
+      ];
     }).pipe(
       Effect.provide(NodeSqliteClient.layer({ filename: snapshotPath })),
       wrapPhase("migrate", snapshotPath),
@@ -562,7 +571,7 @@ export const runMigrateDevDb = Effect.fn("runMigrateDevDb")(function* (
     sizeBytes: Number(size),
     projects: pruned.projects,
     eventCount: pruned.eventCount,
-    executedMigrations: executedMigrations.map(([id, name]) => `${id}_${name}`),
+    executedMigrations,
   };
 });
 
