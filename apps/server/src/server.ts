@@ -115,7 +115,6 @@ import * as ProviderMaintenanceRunner from "./provider/providerMaintenanceRunner
 import * as EventLoopLagMonitor from "./observability/EventLoopLagMonitor.ts";
 import * as CpuProfiler from "./observability/CpuProfiler.ts";
 import * as PendingQueuedThreads from "./queue/PendingQueuedThreads.ts";
-import * as QueuedMessageService from "./queue/QueuedMessageService.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
@@ -624,9 +623,6 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   ProviderUsageLimitsIngestion.layer,
   layerProviderInstallationRefresh,
   ReplayMarkers.layer,
-  // Fork: queued messages dispatch through thread management and read usage
-  // limits off the provider registry; the recorder samples the same limits.
-  QueuedMessageService.layer,
   UsageHistoryRecorder.layer,
   ProviderAutoUpdater.layer,
   Layer.effectDiscard(ProjectSettingsOverrideSweep.sweep),

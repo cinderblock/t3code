@@ -80,6 +80,7 @@ import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
+import * as QueuedMessageService from "../queue/QueuedMessageService.ts";
 import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
@@ -317,12 +318,19 @@ const layerScheduledTasksTest = ScheduledTaskService.layer.pipe(
     ),
   ),
 );
+const queuedMessageCleanups: Array<ThreadId> = [];
 const layerResourceCleanupTest = ResourceCleanupService.layer.pipe(
   Layer.provideMerge(layerScheduledTasksTest),
   Layer.provide(
     Layer.mergeAll(
       Layer.mock(PreviewManager.PreviewManager)({ close: () => Effect.void }),
       Layer.mock(TerminalManager.TerminalManager)({ close: () => Effect.void }),
+      Layer.mock(QueuedMessageService.QueuedMessageService)({
+        cancelForDeletedThread: (threadId) =>
+          Effect.sync(() => {
+            queuedMessageCleanups.push(threadId);
+          }),
+      }),
     ),
   ),
 );
@@ -447,6 +455,7 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
           (yield* tasks.list()).tasks.map((task) => task.id),
           bound.id,
         );
+        assert.notInclude(queuedMessageCleanups, threadId);
 
         if (deletion === "thread") {
           yield* orchestrator.dispatch({
@@ -462,6 +471,7 @@ it.layer(layerProjectDeletionTest)("project deletion during thread commands", (i
           });
         }
         yield* worker.drain();
+        assert.include(queuedMessageCleanups, threadId);
         const remainingIds = (yield* tasks.list()).tasks.map((task) => task.id);
         assert.notInclude(remainingIds, bound.id);
         assert.notInclude(remainingIds, webhook.id);

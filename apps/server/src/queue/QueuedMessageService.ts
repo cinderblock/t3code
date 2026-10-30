@@ -62,6 +62,7 @@ import * as DocumentText from "../provider/DocumentText.ts";
 import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
 
 const REACTOR_TICK = Duration.seconds(15);
+const ARCHIVED_WHEN_DUE = "The thread was archived when this message came due";
 /** A window that falls to this percent from above it has reset. */
 const RESET_EPSILON_PERCENT = 5;
 
@@ -329,6 +330,13 @@ export class QueuedMessageService extends Context.Service<
       readonly id: QueuedMessageId;
       readonly threadId: ThreadId;
     }) => Effect.Effect<QueuedMessage, QueuedMessageError>;
+    /**
+     * Takes back everything not yet sent on a thread that is gone, files included. A failed row
+     * goes too: its files are the thread's or nobody's, and either way nothing else removes them.
+     */
+    readonly cancelForDeletedThread: (
+      threadId: ThreadId,
+    ) => Effect.Effect<void, QueuedMessageError>;
     readonly list: (
       input: QueuedMessageListInput,
     ) => Effect.Effect<QueuedMessageListResult, QueuedMessageError>;
@@ -429,6 +437,14 @@ export const make = Effect.gen(function* () {
 
   const publishUpsert = (message: QueuedMessage) =>
     PubSub.publish(eventsPubSub, { _tag: "upserted", message }).pipe(Effect.asVoid);
+
+  const releaseAttachments = (attachments: ReadonlyArray<ChatAttachment>) =>
+    AttachmentClaims.releaseClaimedAttachments(
+      attachments.flatMap((attachment) => {
+        const path = resolveAttachmentPath({ attachmentsDir: config.attachmentsDir, attachment });
+        return path === null ? [] : [path];
+      }),
+    ).pipe(Effect.provide(attachmentServices));
 
   /** A message queued behind a first message may turn out to be the first one. */
   const pendingLaunchFor = Effect.fn("QueuedMessageService.pendingLaunchFor")(function* (
@@ -620,15 +636,7 @@ export const make = Effect.gen(function* () {
     }
     // A failed send may still have reached the thread, which then owns these files.
     if (existing.status === "pending") {
-      yield* AttachmentClaims.releaseClaimedAttachments(
-        (existing.attachments ?? []).flatMap((attachment) => {
-          const path = resolveAttachmentPath({
-            attachmentsDir: config.attachmentsDir,
-            attachment,
-          });
-          return path === null ? [] : [path];
-        }),
-      ).pipe(Effect.provide(attachmentServices));
+      yield* releaseAttachments(existing.attachments ?? []);
     }
     const message = yield* loadById(input.id);
     yield* publishUpsert(message);
@@ -644,6 +652,29 @@ export const make = Effect.gen(function* () {
     }
     return yield* cancel({ id });
   });
+
+  const cancelForDeletedThread: QueuedMessageService["Service"]["cancelForDeletedThread"] =
+    Effect.fn("QueuedMessageService.cancelForDeletedThread")(function* (threadId) {
+      const rows = yield* selectRows(threadId, undefined);
+      const now = yield* nowIso;
+      // `sending` too: a send racing the delete has nothing left to settle, so it can't undo this.
+      const cancelled = yield* sql<{ readonly id: string }>`
+        UPDATE fork_queued_messages
+        SET status = 'cancelled', updated_at = ${now}, attachments_json = NULL, context_json = NULL
+        WHERE thread_id = ${threadId} AND status IN ('pending', 'sending', 'failed')
+        RETURNING id
+      `.pipe(Effect.mapError(toQueuedError("Failed to cancel a deleted thread's messages")));
+      const cancelledIds = new Set(cancelled.map((row) => row.id));
+      for (const row of rows.filter((candidate) => cancelledIds.has(candidate.id))) {
+        const attachments =
+          row.attachmentsJson === null ? null : decodeAttachmentsExit(row.attachmentsJson);
+        if (attachments !== null && Exit.isSuccess(attachments)) {
+          yield* releaseAttachments(attachments.value);
+        }
+        // A row this build can't read has no client showing it.
+        yield* loadById(row.id).pipe(Effect.flatMap(publishUpsert), Effect.ignore);
+      }
+    });
 
   const list: QueuedMessageService["Service"]["list"] = Effect.fn("QueuedMessageService.list")(
     function* (input) {
@@ -791,6 +822,25 @@ export const make = Effect.gen(function* () {
     }
   });
 
+  // Dispatch refuses neither state: it would start a turn on a thread nobody can see.
+  const sendIfThreadIsLive = Effect.fn("QueuedMessageService.sendIfThreadIsLive")(function* (
+    message: QueuedMessage,
+  ) {
+    const thread = yield* threads
+      .getThreadShell(message.threadId)
+      .pipe(Effect.mapError(toQueuedError("Failed to read a queued message's thread")));
+    if (thread === null) {
+      return yield* cancelForDeletedThread(message.threadId);
+    }
+    if (thread.archivedAt !== null) {
+      return yield* markFailed(message.id, ARCHIVED_WHEN_DUE);
+    }
+    const claimed = yield* claim(message.id);
+    if (claimed !== null) {
+      yield* dispatchMessage(claimed);
+    }
+  });
+
   /** Silent: clients have no use for it, and a busy window would write to every stream. */
   const saveObservedTrigger = Effect.fn("QueuedMessageService.saveObservedTrigger")(function* (
     row: QueuedMessageRow,
@@ -824,10 +874,7 @@ export const make = Effect.gen(function* () {
       if (!isTriggerDue(trigger, nowMs, limitsByInstance)) {
         continue;
       }
-      const claimed = yield* claim(row.id);
-      if (claimed !== null) {
-        yield* dispatchMessage(claimed);
-      }
+      yield* sendIfThreadIsLive(decoded.message);
     }
   });
 
@@ -841,6 +888,27 @@ export const make = Effect.gen(function* () {
   }).pipe(
     Effect.catchCause((cause) =>
       Effect.logWarning("Failed to retire interrupted queued messages", {
+        detail: String(cause),
+      }),
+    ),
+  );
+
+  // A failed row never comes due again, so this is the only thing that ever finds it.
+  yield* Effect.gen(function* () {
+    const rows = yield* sql<{ readonly threadId: string }>`
+      SELECT DISTINCT thread_id AS "threadId"
+      FROM fork_queued_messages
+      WHERE status IN ('pending', 'failed')
+    `;
+    for (const row of rows) {
+      const threadId = ThreadId.make(row.threadId);
+      if ((yield* threads.getThreadShell(threadId)) === null) {
+        yield* cancelForDeletedThread(threadId);
+      }
+    }
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Failed to clear queued messages on deleted threads", {
         detail: String(cause),
       }),
     ),
@@ -861,6 +929,7 @@ export const make = Effect.gen(function* () {
     update,
     cancel,
     cancelForThread,
+    cancelForDeletedThread,
     list,
     streamMessages,
   });

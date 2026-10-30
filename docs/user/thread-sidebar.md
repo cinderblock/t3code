@@ -169,6 +169,10 @@ abandon stays in the composer. A message that has failed offers **Edit message**
 dismisses it without restoring it. A message that an agent cancelled, or that you cancelled on another
 device, doesn't appear in this composer.
 
+Deleting a thread cancels the messages waiting on it and removes their attachments. Archiving keeps
+them waiting, but one that comes due while its thread is archived doesn't send: reopen the thread to
+find it marked failed, with **Edit message** to take it back.
+
 Queueing a message applies the composer's plan and access modes to the thread, as sending does. The
 message uses the thread's modes when it sends, so a mode you change after queueing applies to it too.
 

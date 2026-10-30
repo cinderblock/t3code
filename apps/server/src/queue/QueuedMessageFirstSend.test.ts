@@ -87,7 +87,9 @@ const layerFor = (
       }),
     getThreadShell: () =>
       Ref.get(harness.thread).pipe(
-        Effect.map((state) => (state.title === null ? null : ({ id: threadId } as never))),
+        Effect.map((state) =>
+          state.title === null ? null : ({ id: threadId, archivedAt: null } as never),
+        ),
       ),
     getThreadRecords: () =>
       Ref.get(harness.thread).pipe(Effect.map((state) => threadRecords(state) as never)),

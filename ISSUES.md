@@ -83,13 +83,20 @@ being changed there.
 Why it matters: every Windows run shows red in suites unrelated to the change, which hides real
 regressions and costs each agent time re-proving they are pre-existing.
 
-## A pending send-later message outlives its deleted thread (in progress — entry D, master)
+## `message.dispatch` starts a run on a deleted or archived thread
 
-Deleting a thread does not touch its `fork_queued_messages` rows (`apps/server/src/queue/`). The row
-stays pending, then fails at dispatch when its trigger fires. Since queued messages began holding
-claimed attachments, those files stay on disk too, because thread cleanup only knows the ids on
-the thread's own messages. Matters because the thread's Scheduled state and the failure point at a
-thread that no longer exists, and the files leak.
+`Orchestrator.dispatchMessage` has no `deletedAt` or `archivedAt` check for a plain message, so
+`orchestrator.dispatch` of `message.dispatch` on a thread that was just deleted or archived succeeds,
+commits the message and leaves a run in `starting` (measured in `runtimeLayer.test.ts`, 2026-10-30).
+Only `sendToThread` refuses, and only for archived. Matters because any caller that goes straight to
+`dispatch` can spend a turn on a thread nobody can see. The queue now checks first, other callers
+don't.
+
+## `userInputAttachments.test.ts` fails three path tests on Windows
+
+`question answer paths`: the "extracts notebook cells", "preserves corrupt documents" and "keeps
+selected values intact" tests fail on Windows. They expect a raw path and the answer holds it with
+doubled backslashes. Matters because a focused run of this file is red on the maintainer's machine.
 
 ## An imported thread that never ran reads Waiting in Working
 

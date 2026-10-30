@@ -1,12 +1,12 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  ChatAttachment,
   ChatAttachmentId,
   ComposerContextId,
   MessageId,
   QueuedMessageId,
   ThreadId,
-  type ChatAttachment,
   type OrchestrationMessageContext,
   type OrchestrationV2ServerCommand,
   type QueuedMessageEnqueueInput,
@@ -18,9 +18,15 @@ import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
+import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import { createPendingAttachmentId, sweepStalePendingAttachments } from "../attachmentStore.ts";
@@ -36,9 +42,31 @@ import * as QueuedMessageService from "./QueuedMessageService.ts";
 const threadId = ThreadId.make("queue-attachments-thread");
 const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
-const layerFor = (onDispatch: (command: OrchestrationV2ServerCommand) => Effect.Effect<void>) => {
+type ThreadState = "active" | "archived" | "deleted";
+
+const shellOf = (state: ThreadState) =>
+  state === "deleted"
+    ? null
+    : ({ id: threadId, archivedAt: state === "archived" ? "archived" : null } as never);
+
+const layerFor = (
+  onDispatch: (command: OrchestrationV2ServerCommand) => Effect.Effect<void>,
+  options: {
+    readonly threadState?: Ref.Ref<ThreadState>;
+    /** Runs before the service starts, for rows an earlier run of the server left behind. */
+    readonly seed?: Effect.Effect<
+      void,
+      never,
+      SqlClient.SqlClient | FileSystem.FileSystem | Path.Path | ServerConfig.ServerConfig
+    >;
+  } = {},
+) => {
   const threads = Layer.mock(ThreadManagement.ThreadManagementService)({
     dispatch: (command) => onDispatch(command).pipe(Effect.as({ sequence: 1, storedEvents: [] })),
+    getThreadShell: () =>
+      options.threadState === undefined
+        ? Effect.succeed(shellOf("active"))
+        : Ref.get(options.threadState).pipe(Effect.map(shellOf)),
   });
   const providers = Layer.mock(ProviderRegistry.ProviderRegistry)({
     getProviders: Effect.succeed<ReadonlyArray<ServerProvider>>([]),
@@ -48,7 +76,12 @@ const layerFor = (onDispatch: (command: OrchestrationV2ServerCommand) => Effect.
   } as unknown as DocumentText.DocumentText["Service"]);
   return QueuedMessageService.layer.pipe(
     Layer.provideMerge(
-      Layer.effectDiscard(Effect.andThen(createQueuedMessages, addQueuedMessageContent)),
+      Layer.effectDiscard(
+        Effect.andThen(createQueuedMessages, addQueuedMessageContent).pipe(
+          Effect.orDie,
+          Effect.andThen(options.seed ?? Effect.void),
+        ),
+      ),
     ),
     Layer.provide(providers),
     Layer.provide(threads),
@@ -271,4 +304,267 @@ it.effect("refuses an attachment the row would not own", () =>
     assert.isTrue(Exit.isFailure(exit));
     assert.deepStrictEqual((yield* service.list({})).messages, []);
   }).pipe(Effect.provide(layerFor(unused))),
+);
+
+const findMessage = (service: QueuedMessageService.QueuedMessageService["Service"], id: string) =>
+  service
+    .list({ threadId })
+    .pipe(Effect.map(({ messages }) => messages.find((message) => message.id === id)));
+
+/** Resolves once subscribed, so nothing published after it can be missed. */
+const watchStatuses = (service: QueuedMessageService.QueuedMessageService["Service"]) =>
+  Effect.gen(function* () {
+    const statuses = yield* Queue.unbounded<string>();
+    const subscribed = yield* Deferred.make<void>();
+    const watcher = yield* service.streamMessages({ threadId }).pipe(
+      Stream.runForEach((event) =>
+        event._tag === "upserted"
+          ? Queue.offer(statuses, event.message.status)
+          : Deferred.succeed(subscribed, undefined),
+      ),
+      Effect.forkChild,
+    );
+    yield* Deferred.await(subscribed);
+    return {
+      next: Queue.take(statuses),
+      stop: Fiber.interrupt(watcher),
+    };
+  });
+
+const countSends = (sends: Ref.Ref<number>) => () => Ref.update(sends, (count) => count + 1);
+
+it.effect(
+  "deleting a thread cancels its waiting message, removes its files, and tells clients",
+  () =>
+    Effect.gen(function* () {
+      const service = yield* QueuedMessageService.QueuedMessageService;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const pending = yield* uploadPending("hello", ".txt");
+      const queued = yield* service.enqueue(
+        enqueueInput({ attachments: [pending], context: contextFor(pending) }),
+      );
+      const statuses = yield* watchStatuses(service);
+
+      yield* service.cancelForDeletedThread(threadId);
+
+      assert.strictEqual(yield* statuses.next, "cancelled");
+      yield* statuses.stop;
+      const stored = yield* findMessage(service, queued.id);
+      assert.strictEqual(stored?.status, "cancelled");
+      assert.isUndefined(stored?.attachments);
+      assert.isUndefined(stored?.context);
+      assert.isFalse(yield* fileSystem.exists(yield* storedPath(queued.attachments![0]!)));
+    }).pipe(Effect.provide(layerFor(unused))),
+);
+
+it.effect("deleting a thread leaves a sent message alone, however many times it runs", () =>
+  Effect.gen(function* () {
+    const service = yield* QueuedMessageService.QueuedMessageService;
+    const queued = yield* service.enqueue(enqueueInput({}));
+    const statuses = yield* watchStatuses(service);
+    yield* fireTrigger;
+    assert.strictEqual(yield* statuses.next, "sent");
+    yield* statuses.stop;
+
+    yield* service.cancelForDeletedThread(threadId);
+    yield* service.cancelForDeletedThread(threadId);
+
+    assert.strictEqual((yield* findMessage(service, queued.id))?.status, "sent");
+  }).pipe(Effect.provide(layerFor(unused))),
+);
+
+it.effect("deleting a thread clears a failed message's files, which nothing else would", () =>
+  Effect.gen(function* () {
+    const service = yield* QueuedMessageService.QueuedMessageService;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const pending = yield* uploadPending("hello", ".txt");
+    const queued = yield* service.enqueue(enqueueInput({ attachments: [pending] }));
+    const statuses = yield* watchStatuses(service);
+    yield* fireTrigger;
+    assert.strictEqual(yield* statuses.next, "failed");
+
+    yield* service.cancelForDeletedThread(threadId);
+
+    assert.strictEqual(yield* statuses.next, "cancelled");
+    yield* statuses.stop;
+    assert.isFalse(yield* fileSystem.exists(yield* storedPath(queued.attachments![0]!)));
+  }).pipe(Effect.provide(layerFor(() => Effect.die("provider exploded")))),
+);
+
+it.effect("a delete that lands during the send wins, and the send cannot report over it", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    yield* Effect.gen(function* () {
+      const service = yield* QueuedMessageService.QueuedMessageService;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const pending = yield* uploadPending("hello", ".txt");
+      const queued = yield* service.enqueue(enqueueInput({ attachments: [pending] }));
+      const statuses = yield* watchStatuses(service);
+      yield* fireTrigger;
+      yield* Deferred.await(started);
+      assert.strictEqual((yield* findMessage(service, queued.id))?.status, "sending");
+
+      yield* service.cancelForDeletedThread(threadId);
+      yield* Deferred.succeed(release, undefined);
+
+      assert.strictEqual(yield* statuses.next, "cancelled");
+      assert.strictEqual(yield* statuses.next, "cancelled");
+      yield* statuses.stop;
+      assert.isFalse(yield* fileSystem.exists(yield* storedPath(queued.attachments![0]!)));
+    }).pipe(
+      Effect.provide(
+        layerFor(() =>
+          Deferred.succeed(started, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.andThen(Effect.die("Thread is deleted")),
+          ),
+        ),
+      ),
+    );
+  }),
+);
+
+it.effect("a message due on a deleted thread is cancelled, neither sent nor failed", () =>
+  Effect.gen(function* () {
+    const threadState = yield* Ref.make<ThreadState>("active");
+    const sends = yield* Ref.make(0);
+    yield* Effect.gen(function* () {
+      const service = yield* QueuedMessageService.QueuedMessageService;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const pending = yield* uploadPending("hello", ".txt");
+      const queued = yield* service.enqueue(enqueueInput({ attachments: [pending] }));
+      const statuses = yield* watchStatuses(service);
+      yield* Ref.set(threadState, "deleted");
+
+      yield* fireTrigger;
+
+      assert.strictEqual(yield* statuses.next, "cancelled");
+      yield* statuses.stop;
+      assert.isNull((yield* findMessage(service, queued.id))?.failureDetail);
+      assert.strictEqual(yield* Ref.get(sends), 0);
+      assert.isFalse(yield* fileSystem.exists(yield* storedPath(queued.attachments![0]!)));
+    }).pipe(Effect.provide(layerFor(countSends(sends), { threadState })));
+  }),
+);
+
+it.effect("a message due on an archived thread fails with the reason and keeps its files", () =>
+  Effect.gen(function* () {
+    const threadState = yield* Ref.make<ThreadState>("active");
+    const sends = yield* Ref.make(0);
+    yield* Effect.gen(function* () {
+      const service = yield* QueuedMessageService.QueuedMessageService;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const pending = yield* uploadPending("hello", ".txt");
+      const queued = yield* service.enqueue(enqueueInput({ attachments: [pending] }));
+      const statuses = yield* watchStatuses(service);
+      yield* Ref.set(threadState, "archived");
+
+      yield* fireTrigger;
+
+      assert.strictEqual(yield* statuses.next, "failed");
+      yield* statuses.stop;
+      assert.match((yield* findMessage(service, queued.id))?.failureDetail ?? "", /archived/);
+      assert.strictEqual(yield* Ref.get(sends), 0);
+      assert.isTrue(yield* fileSystem.exists(yield* storedPath(queued.attachments![0]!)));
+    }).pipe(Effect.provide(layerFor(countSends(sends), { threadState })));
+  }),
+);
+
+it.effect("a message waits out an archive that ends before it comes due", () =>
+  Effect.gen(function* () {
+    const threadState = yield* Ref.make<ThreadState>("active");
+    yield* Effect.gen(function* () {
+      const service = yield* QueuedMessageService.QueuedMessageService;
+      yield* service.enqueue(enqueueInput({}));
+      const statuses = yield* watchStatuses(service);
+      yield* Ref.set(threadState, "archived");
+      yield* TestClock.adjust("1 minute");
+      yield* Ref.set(threadState, "active");
+
+      yield* fireTrigger;
+
+      assert.strictEqual(yield* statuses.next, "sent");
+      yield* statuses.stop;
+    }).pipe(Effect.provide(layerFor(unused, { threadState })));
+  }),
+);
+
+const encodeAttachments = Schema.encodeSync(Schema.fromJsonString(Schema.Array(ChatAttachment)));
+
+const seedRow = (input: {
+  readonly id: string;
+  readonly status: string;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+}) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const now = "1970-01-01T00:00:00.000Z";
+    yield* sql`
+      INSERT INTO fork_queued_messages (
+        id, thread_id, message_id, text, attachments_json, trigger_json, send_context_json,
+        status, origin, created_at, updated_at
+      ) VALUES (
+        ${input.id}, ${threadId}, ${`message-${input.id}`}, ${"Left behind"},
+        ${encodeAttachments(input.attachments)},
+        ${'{"type":"at","at":"2100-01-01T00:00:00.000Z"}'},
+        ${'{"runtimeMode":"full-access","interactionMode":"default"}'},
+        ${input.status}, ${"user"}, ${now}, ${now}
+      )
+    `;
+  });
+
+const leftBehind = (id: string): ChatAttachment => ({
+  type: "file",
+  id: ChatAttachmentId.make(`queue-attachments-thread-${id}`),
+  name: "notes.txt",
+  mimeType: "text/plain",
+  sizeBytes: 5,
+});
+
+it.effect("startup clears what an earlier build left on deleted threads, without failing it", () =>
+  Effect.gen(function* () {
+    const threadState = yield* Ref.make<ThreadState>("deleted");
+    const pendingFile = leftBehind("11111111-1111-4111-8111-111111111111");
+    const failedFile = leftBehind("22222222-2222-4222-8222-222222222222");
+    const seed = Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const config = yield* ServerConfig.ServerConfig;
+      yield* fileSystem.makeDirectory(config.attachmentsDir, { recursive: true });
+      yield* fileSystem.writeFileString(yield* storedPath(pendingFile), "hello");
+      yield* fileSystem.writeFileString(yield* storedPath(failedFile), "hello");
+      yield* seedRow({ id: "orphan-pending", status: "pending", attachments: [pendingFile] });
+      yield* seedRow({ id: "orphan-failed", status: "failed", attachments: [failedFile] });
+    }).pipe(Effect.orDie);
+    yield* Effect.gen(function* () {
+      const service = yield* QueuedMessageService.QueuedMessageService;
+      const fileSystem = yield* FileSystem.FileSystem;
+
+      const { messages } = yield* service.list({ threadId });
+
+      assert.deepStrictEqual(messages.map((message) => message.status).toSorted(), [
+        "cancelled",
+        "cancelled",
+      ]);
+      assert.isFalse(yield* fileSystem.exists(yield* storedPath(pendingFile)));
+      assert.isFalse(yield* fileSystem.exists(yield* storedPath(failedFile)));
+    }).pipe(Effect.provide(layerFor(unused, { threadState, seed })));
+  }),
+);
+
+it.effect("startup leaves rows on threads that still exist", () =>
+  Effect.gen(function* () {
+    const seed = Effect.gen(function* () {
+      yield* seedRow({ id: "live-pending", status: "pending", attachments: [] });
+      yield* seedRow({ id: "live-failed", status: "failed", attachments: [] });
+    }).pipe(Effect.orDie);
+    yield* Effect.gen(function* () {
+      const service = yield* QueuedMessageService.QueuedMessageService;
+      const { messages } = yield* service.list({ threadId });
+      assert.deepStrictEqual(messages.map((message) => message.status).toSorted(), [
+        "failed",
+        "pending",
+      ]);
+    }).pipe(Effect.provide(layerFor(unused, { seed })));
+  }),
 );

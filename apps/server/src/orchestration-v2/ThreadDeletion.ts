@@ -215,6 +215,12 @@ export const planThreadDeletion = Effect.fn("ThreadDeletion.planThreadDeletion")
     request: { type: "scheduled-tasks.cleanup" },
   });
   effects.push({
+    id: `effect:${command.commandId}:queued-messages.cleanup`,
+    commandId: command.commandId,
+    threadId: command.threadId,
+    request: { type: "queued-messages.cleanup" },
+  });
+  effects.push({
     id: `effect:${command.commandId}:terminal.cleanup`,
     commandId: command.commandId,
     threadId: command.threadId,
