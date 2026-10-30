@@ -623,6 +623,20 @@ Every one of these produced a confident wrong answer:
   staged paths explicitly, bypassing `fmt.ignorePatterns`, so it tries to format ~12k vendored
   `.repos` files it is configured to skip. Killing it mid-run destroys the merge.
 
+## Idle relaunch: a failed launcher was silent (2026-10-30)
+
+Read-through, not an observed incident, while preparing the queued-message relaunch.
+
+- `restart-t3-when-idle.ps1` started `start-t3.ps1 -KeepOpen -WaitForIdle` with a hidden console and
+  exited at once. A failure then waited on `Read-Host` in a console that `Set-ConsoleVisible` cannot
+  show (the hidden-start ConPTY case in that script), holding `Local\T3CodeDesktopLauncher`, so any
+  later launch was refused. A failed start, with the app already stopped, told nobody.
+- Fix: the watcher drops `-KeepOpen`, stays until the launch is `ready`, `SLOW` or failed, launches
+  once more if no app is running, then opens `relaunch-failed.txt` in Notepad. Tested against a stub
+  launcher only; the real path has not been exercised.
+- `start-t3.ps1 -BuildOnly` is not a way to check a build under a running app: it refuses, because
+  the rebuild would replace the hashed web chunks and break lazy routes. Build in a sibling worktree.
+
 ## Standing rules for this investigation
 
 1. **Measure before fixing.** Every blind fix here has been reverted or refuted.
