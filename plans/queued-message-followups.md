@@ -209,7 +209,7 @@ this order. Scope is what the follow-ups left open, not the older `ISSUES.md` en
 - **Order reasons.** `migrate-dev-db` goes first because a seeded dev server can send the user's real
   pending messages, and client verification needs that seed. Verification follows the fixes so it
   covers them. Evals go last because they need an API key and must not stall the chain.
-- **No thread:** the two open placement calls from item 4 (Limited label, Scheduled section with
+- **No thread, both settled 2026-10-31 (see the item 1 result):** the two placement calls from item 4 (Limited label, Scheduled section with
   Working off). Those are the user's to change; the current behavior stands until then. The third,
   the ready plan, is settled in the item 4 result: it stays in Scheduled.
 - **Build rule.** The running app serves `apps/web/dist` from this checkout, so nothing may build here.
@@ -352,7 +352,7 @@ tokens". Limit: the message's own turn then reported 51.6K, the same as before, 
 
 **Open.**
 
-- Whether the row should still read Scheduled with the section off. It doesn't today, and the panel covers it. Left alone, in the same family as item 4's note about Working off.
+- Whether the row should still read Scheduled with the section off. Settled 2026-10-31: it doesn't, and the panel covers it (see the item 1 result).
 - Live thread `e3ac304d` is titled "Untitled thread". Not looked into; its message was a normal one.
 
 **Leftovers.** `C:\temp\entry-g-*`: `scratch\` (the repo), `setup.log`, `seed.log`, `dev.log`, `dev2.log`, `pair.txt`, `dot.png`. `~/.claude/projects/C--temp-entry-g-scratch/`, plus folders for the two worktrees (real Claude sessions). `~/.t3/userdata/browser-artifacts/browser-screenshot-localhost-mvve4ben-962c4c63.png`, written by the preview tool's `save` before I saw where it goes; it shows only scratch data.
@@ -1106,7 +1106,7 @@ model-facing text changed).
   `tsc --noEmit` clean in contracts, client-runtime, web, mobile. `vp test run`: `threadInbox` 42,
   `Sidebar.logic` + `Sidebar.drag` 120, `threadListV2` 64, contracts `settings` 24, all passing.
   Not seen in a running client: browsers are out of scope here.
-- **Open.** Whether the section should work with the Working section off (it does not today).
+- **Settled 2026-10-31.** The section stays off with the Working section off: that setting asks for a flat list, the user has Working on, and it would mean running the queue subscription for a mode nobody here uses. A usage-limited thread with a queued message keeps reading Scheduled (user's call): both mean it is waiting, and the row loses only its amber Limited label. With Working off the row has no Scheduled label either; the thread's panel covers it.
 
 ## Item 2 result (2026-10-30 3:32 AM PDT, 10:32Z)
 
