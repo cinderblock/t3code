@@ -639,6 +639,11 @@ Read-through, not an observed incident, while preparing the queued-message relau
   with `--base-dir` on a `migrate-dev-db` copy. `migrate-dev-db` did not run fork migrations then, so that
   boot was the real test of fork migration 8. Answered in 5s with 703,482 events. It runs them since
   `a8bd3de314`, so a boot on a new copy no longer tests a pending fork migration.
+- Second relaunch, 2026-10-30 6:38 PM PDT (2026-10-31 01:38Z): worked, backend answered in 10s. To test
+  fork migration 9 on real rows, in the isolated copy undo the migration and insert the live inert
+  rows, then boot. Passed; the seed alone clears queue rows and leaves the boot nothing to run.
+- A server booted by hand this way creates a project from its working directory, plus an empty thread, so a
+  thread count rises by one. That is not a defect.
 - `start-t3.ps1 -BuildOnly` is not a way to check a build under a running app: it refuses, because
   the rebuild would replace the hashed web chunks and break lazy routes. Build in a sibling worktree.
 
