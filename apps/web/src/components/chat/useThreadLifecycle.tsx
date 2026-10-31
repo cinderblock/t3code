@@ -578,6 +578,14 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
       if (settleAndAdvance(activeThreadRef)) return;
       void settleThread(activeThreadRef).then(toastThreadActionFailure("Failed to settle thread"));
     },
+    // Unlike thread.settle this never toggles, and a held key cannot follow a panel-tab close.
+    "thread.settleAndNext": ({ event }) => {
+      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
+      if (!activeThreadShell || !activeThreadRef || !supportsSettlement) return false;
+      if (event.repeat || activeThreadSettled) return;
+      if (settleAndAdvance(activeThreadRef)) return;
+      void settleThread(activeThreadRef).then(toastThreadActionFailure("Failed to settle thread"));
+    },
     "thread.pin": () => {
       if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
       if (!activeThreadShell || !activeThreadRef || !supportsPinning) return;

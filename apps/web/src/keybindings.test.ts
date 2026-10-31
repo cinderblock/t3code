@@ -600,6 +600,19 @@ describe("resolveChatShortcutCommand", () => {
 });
 
 describe("resolveShortcutCommand", () => {
+  it("settles with mod+w on desktop only once the chat has nothing left to close", () => {
+    const closable = { isDesktop: true, threadClosable: true, terminalFocus: false };
+    const resolve = (context: typeof closable) =>
+      resolveShortcutCommand(event({ key: "w", ctrlKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "Win32",
+        context,
+      });
+    assert.strictEqual(resolve(closable), "thread.settleAndNext");
+    assert.strictEqual(resolve({ ...closable, threadClosable: false }), "rightPanel.close");
+    assert.strictEqual(resolve({ ...closable, isDesktop: false }), "rightPanel.close");
+    assert.strictEqual(resolve({ ...closable, terminalFocus: true }), "terminal.close");
+  });
+
   it("routes mod+w to the terminal while focused and to the right panel otherwise", () => {
     const closeEvent = event({ key: "w", metaKey: true });
     assert.strictEqual(

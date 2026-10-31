@@ -47,9 +47,25 @@ leave" action, but landing on a thread that needs them instead of a draft.
 - [ ] Rebuild and restart the desktop app. `start-t3.ps1 -BuildOnly` refuses while the app runs, since
       swapping web chunks would break its lazy routes, and restarting it would stop the app hosting
       this thread, so that step is the maintainer's.
-- [ ] Try `Alt+Enter` and `Ctrl+Alt+]` in the real app. Not done: no browser verification was requested.
+- [x] `Ctrl+W` settles and moves on, with tests and docs
+- [ ] Try `Alt+Enter`, `Ctrl+Alt+]` and `Ctrl+W` in the real app. Not done: no browser verification
+      was requested.
 
 ## Open questions
 
-1. Should `Ctrl+W` settle the thread when nothing is left to close? Upstream does not do this. It
-   needs a `rightPanelOpen` key in the chat shortcut context plus a new rule.
+None.
+
+## Ctrl+W settles and moves on
+
+The maintainer asked for `Ctrl+W` to act like closing a finished tab.
+
+- New `thread.settleAndNext` command instead of a `thread.settle` rule, because `thread.settle`
+  toggles and would un-settle an already-settled thread. A new command also reaches existing
+  keybindings files through the startup sync, with no migration.
+- The `when` uses a positive `threadClosable` key set only by the chat view. A `!rightPanelOpen`
+  check would be true on every page that does not set the key, and the Pull Requests page resolves
+  `mod+w` for its own panel.
+- `isDesktop` is required. A browser closes the tab on `Ctrl+W` whatever the page does, so the
+  thread would be settled on the way out.
+- Key repeat is ignored so holding `Ctrl+W` to close the last panel tab cannot also settle.
+- Running threads settle the same way `Ctrl+Shift+S` settles them. `Ctrl+Z` undoes it.

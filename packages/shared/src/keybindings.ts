@@ -218,6 +218,12 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+alt+]", command: "thread.nextWaiting" },
   { key: "mod+shift+c", command: "thread.copyReference", when: "!terminalFocus" },
   { key: "mod+shift+s", command: "thread.settle", when: "!terminalFocus" },
+  // Must follow rightPanel.close. Desktop only: a browser tab closes on mod+w regardless.
+  {
+    key: "mod+w",
+    command: "thread.settleAndNext",
+    when: "isDesktop && !terminalFocus && threadClosable",
+  },
   { key: "mod+shift+p", command: "thread.pin", when: "!terminalFocus" },
   { key: "mod+z", command: "thread.undo", when: "!terminalFocus && !editableFocus" },
   ...THREAD_JUMP_KEYBINDING_COMMANDS.map((command, index) => ({

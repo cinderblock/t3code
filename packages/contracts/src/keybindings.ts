@@ -43,6 +43,7 @@ const THREAD_KEYBINDING_COMMANDS = [
   "thread.nextWaiting",
   "thread.copyReference",
   "thread.settle",
+  "thread.settleAndNext",
   "thread.pin",
   "thread.priority.raise",
   "thread.priority.lower",
