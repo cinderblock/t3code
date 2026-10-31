@@ -22,9 +22,9 @@ Progress goes to C:\temp\t3runs\restart-when-idle.log.
 
 An elevated watcher then stays until the launch has an outcome, because a start
 that fails leaves no app to report it. With no app running it launches once
-more, and if that fails too it writes relaunch-failed.txt beside the log and
-opens it. A launcher that fails with the old app still up (a failed build) is
-only logged: nothing was lost, and the next look at the log finds it.
+more, and if that fails too it opens the t3-alert.ps1 window. A launcher that
+fails with the old app still up (a failed build) opens the same alert without
+launching again: nothing was lost, but the update did not land.
 #>
 [CmdletBinding()]
 param(
@@ -142,14 +142,19 @@ function Wait-LaunchOutcome {
   }
 }
 
+# A separate process, so the watcher can exit while the alert stays open. A run
+# no newer than the one before this launch belongs to an earlier launch.
 function Show-Failure {
-  param([string]$Message)
-  $path = Join-Path $RunsRoot 'relaunch-failed.txt'
+  param([string]$Message, [string]$PreviousRun, [switch]$AppDown)
   $run = Get-LatestRun
-  $tail = if ($run) { Get-Content (Join-Path $run 'launcher.log') -Tail 40 -ErrorAction SilentlyContinue }
-  @("$((Get-Date).ToString('yyyy-MM-dd HH:mm:ss')) $Message", "run: $run", '') + $tail | Set-Content -Path $path -Encoding utf8
-  $window = Start-Process -PassThru -FilePath 'notepad.exe' -ArgumentList "`"$path`""
-  Write-Log "ALERT $Message; opened $path, pid $($window.Id)"
+  $arguments = @(
+    '-NoProfile', '-STA', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
+    '-File', "`"$(Join-Path $PSScriptRoot 't3-alert.ps1')`"", '-Message', "`"$Message`""
+  )
+  if ($run -and $run -ne $PreviousRun) { $arguments += @('-RunDir', "`"$run`"") }
+  if ($AppDown) { $arguments += '-AppDown' }
+  $alert = Start-Process -PassThru -FilePath $shell -ArgumentList $arguments
+  Write-Log "ALERT $Message; alert pid $($alert.Id), details in $(Join-Path $RunsRoot 'relaunch-failed.txt')"
 }
 
 Write-Log 'idle - starting start-t3.ps1'
@@ -175,15 +180,16 @@ foreach ($try in 1..2) {
     exit 0
   }
   if ($outcome -eq 'slow') {
-    Show-Failure 'the backend has not answered after 5 minutes; the app may still come up'
+    Show-Failure 'The backend has not answered after 5 minutes. The app may still come up.' $previousRun
     exit 1
   }
   Write-Log "launcher failed (exit $($launcher.ExitCode)), run $(Get-LatestRun)"
   if (Test-T3Running) {
     Write-Log 'the running app is still up; not launching again'
+    Show-Failure 'The relaunch failed, so the update was not applied.' $previousRun
     exit 1
   }
   if ($try -eq 1) { Write-Log 'no app is running; launching once more' }
 }
-Show-Failure 'T3 Code is down: the launcher failed twice'
+Show-Failure 'The launcher failed twice, and no T3 Code is running.' $previousRun -AppDown
 exit 1

@@ -68,8 +68,8 @@ Relaunch thread: `t3-thread://v1/mcp:2cf06899-8261-49a9-bb43-530157899ff1`
   ends straight away. A firing is a run, so it can reset the idle timers, but it lasts about a
   minute against a 30-minute gap. One cut off by the relaunch just fires again.
 - **Failed start.** With the app down no thread can wake, so the watcher now stays until the launch
-  has an outcome: no app running means one more launch, then `relaunch-failed.txt` opened in Notepad
-  on the desktop. A failed build with the old app still up is logged and found by the next firing.
+  has an outcome: no app running means one more launch, then the `t3-alert.ps1` window. A failed build
+  with the old app still up opens the same alert without launching again.
 
 ### Phase 2 steps
 
@@ -186,9 +186,9 @@ Confirmed at 6:39 PM PDT (01:39Z) by a wake-up firing, running on the new app.
 
 - **Not verified:** no entry was exercised on this build by a client, no queued message has fired on it,
   and no thread has been deleted on it. Entry G's client walkthrough ran before this relaunch.
-- **Watcher's Notepad alert stays (user, 2026-10-30).** A real failure may open on the main screen; the
-  user's "Keep Off My Screen" objection is to constant foreground testing. It did not fire here. A test
-  of the alert should stub the window.
+- **The Notepad alert was replaced (user, 2026-10-30).** See "Relaunch alert". A real
+  failure may still open on the main screen; the user's "Keep Off My Screen" objection is to constant
+  foreground testing. It did not fire here.
 - Wake-up task deleted. Files from the second preflight remain as listed above.
 
 ## Progress
@@ -1479,6 +1479,34 @@ evals (no model-facing text changed), keybindings (the queue has none).
 - A new thread may show in the active list until the queue row arrives, because the shell and queue are
   separate streams. Expected to be about a frame; unmeasured.
 
+## Relaunch alert (user asked 2026-10-30)
+
+"A more refined alert when there is a problem that still gives me a copy pasteable thing", replacing
+Notepad. `scripts/t3-alert.ps1`, started by `Show-Failure` in `restart-t3-when-idle.ps1`.
+
+- **Shows:** which stage failed, whether the app is down or the previous build is still up, the end of the
+  launcher log, a selectable fix command. Buttons: Fix with Claude, Copy command, Copy report, Open run
+  folder, Close. Writes `relaunch-failed.txt` and the run's `fix-prompt.md` before opening anything.
+- **A failed build with the old app up now alerts too**, in amber. It used to be logged only.
+- **Not `t3 triage`.** It exists (`apps/server/src/cli/triage.ts`), but its playbook reads upstream's source
+  at a release tag and works toward an upstream issue, and its CLI may be what failed to build. Fix with
+  Claude uses the same idea, a prompt file plus a one-line launch prompt, in this checkout with this
+  fork's rules.
+- **No focus:** `ShowWithoutActivation`, so typing elsewhere can't land in it. Not topmost.
+- **WinForms, because WPF draws nothing in a disconnected session.** Session 1 was `Disc` with `LogonUI`
+  running. `RenderTargetBitmap` left even one red rectangle at 0,0,0,0, in software mode too, and
+  `PrintWindow` of an off-screen WPF window came back black. WinForms `DrawToBitmap` works there, but only
+  once the window has been shown, or the child controls are missing.
+- **Case matters when reading the launcher log.** `-match` let "build : stale ... rebuilding" satisfy the
+  `STALE` marker, so a failed build read as "failed at Wait for idle". Found in the first render.
+- **Tested** (2026-10-30 9:00 PM PDT, 04:00Z): renders of a failed build, a backend that exits and no run at
+  all. The real window started with the watcher's arguments did not take the foreground. Copy command,
+  Copy report and Close clicked through `BM_CLICK`. Fix with Claude against a stub `claude.cmd` got this
+  checkout as its folder and the prompt path as its argument. Neither script has parse errors.
+- **Not tested:** the Notepad fallback; a watcher reaching `Show-Failure` for real; a real Claude session
+  from the prompt; high-DPI layout; the window on a connected display. In a disconnected session nobody sees
+  the alert until they reconnect, and with the app down it is the only signal.
+
 ## Findings / gotchas
 
 - `d94f7ab701` (relaunch thread) swept in four lines of item 1's `Sidebar.drag.test.ts` from the
@@ -1495,8 +1523,8 @@ evals (no model-facing text changed), keybindings (the queue has none).
 - Live self-test, 2026-10-30 3:12 AM PDT (10:12Z): a one-minute interval task bound to the relaunch
   thread fired on time and, with that thread busy, queued its prompt as the next turn. Task deleted
   and queued message cancelled afterwards. Firing after a real restart is from the code only.
-- A process started through WMI lands in session 1, the same as this shell, so its Notepad window
-  is on the user's desktop (tested 2026-10-30).
+- A process started through WMI lands in session 1, the same as this shell, so its window is on the
+  user's desktop (tested 2026-10-30).
 - Watcher outcomes tested against a stub launcher in `C:\temp`: success, slow backend, failed with
   the app up, failed once with the app down, failed twice with the app down. The real launcher's
   `-NoElevate -DryRun -WaitForIdle` exits 0 and lists the right five processes plus launcher 11888.
