@@ -9,6 +9,9 @@ import {
   buildSidebarHostContextMenuItems,
   buildSidebarHostFilterEntries,
   countSidebarThreadsByEnvironment,
+  resolveNextWaitingThreadKey,
+  resolveThreadWaitTier,
+  type ThreadWaitTier,
   resolveSidebarHiddenEnvironmentIds,
   deleteSelectedThreadEntries,
   getFallbackThreadIdAfterDelete,
@@ -1573,5 +1576,104 @@ describe("resolveSidebarRouteReveal", () => {
         findThread,
       }),
     ).toEqual({ pendingKey: hiddenKey, widensScope: false });
+  });
+});
+
+describe("resolveNextWaitingThreadKey", () => {
+  const tiers: Record<string, ThreadWaitTier | null> = {
+    a: "unread",
+    b: null,
+    c: "blocked",
+    d: "unread",
+    e: "blocked",
+  };
+  const resolve = (currentKey: string | null, threadKeys = ["a", "b", "c", "d", "e"]) =>
+    resolveNextWaitingThreadKey({ threadKeys, currentKey, tierOf: (key) => tiers[key] ?? null });
+
+  it("takes a blocked thread over a nearer unread one", () => {
+    expect(resolve("a")).toBe("c");
+    expect(resolve("c")).toBe("e");
+  });
+
+  it("wraps past the end of the list", () => {
+    expect(resolve("e")).toBe("c");
+  });
+
+  it("falls back to unread threads, then to nothing", () => {
+    expect(resolve("b", ["a", "b", "d"])).toBe("d");
+    expect(resolve("d", ["b", "d"])).toBeNull();
+  });
+
+  it("never returns the current thread", () => {
+    expect(resolve("c", ["b", "c"])).toBeNull();
+  });
+
+  it("searches from the top when no thread is open", () => {
+    expect(resolve(null)).toBe("c");
+  });
+});
+
+describe("resolveThreadWaitTier", () => {
+  const thread = {
+    hasActionableProposedPlan: false,
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+    interactionMode: "default" as const,
+    latestRun: null,
+    runtime: null,
+    lastVisitedAt: "2026-03-09T10:00:00.000Z",
+  };
+  const runtime = (status: "running" | "idle") => ({
+    status,
+    activeRunId: null,
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerName: "Codex",
+    lastError: null,
+    updatedAt: "2026-03-09T10:00:00.000Z",
+  });
+  const finishedRun = (status: "completed" | "failed", completedAt: string) => ({
+    ...makeLatestRun({ completedAt }),
+    status,
+  });
+
+  it("treats questions to you as blocked even mid-turn", () => {
+    const running = { ...thread, runtime: runtime("running") };
+    expect(resolveThreadWaitTier({ ...running, hasPendingApprovals: true }, null)).toBe("blocked");
+    expect(resolveThreadWaitTier({ ...running, hasPendingUserInput: true }, null)).toBe("blocked");
+    expect(resolveThreadWaitTier({ ...thread, pendingGuestMessageCount: 1 }, null)).toBe("blocked");
+  });
+
+  it("skips a running thread and one you have read", () => {
+    expect(resolveThreadWaitTier({ ...thread, runtime: runtime("running") }, null)).toBeNull();
+    expect(
+      resolveThreadWaitTier(
+        { ...thread, latestRun: finishedRun("completed", "2026-03-09T09:00:00.000Z") },
+        null,
+      ),
+    ).toBeNull();
+  });
+
+  it("counts an unread finish even when the runtime stays idle", () => {
+    expect(
+      resolveThreadWaitTier(
+        {
+          ...thread,
+          runtime: runtime("idle"),
+          latestRun: finishedRun("completed", "2026-03-09T11:00:00.000Z"),
+        },
+        null,
+      ),
+    ).toBe("unread");
+  });
+
+  it("counts unseen failures and wakes", () => {
+    expect(
+      resolveThreadWaitTier(
+        { ...thread, latestRun: finishedRun("failed", "2026-03-09T11:00:00.000Z") },
+        null,
+      ),
+    ).toBe("unread");
+    expect(resolveThreadWaitTier(thread, "2026-03-09T11:00:00.000Z")).toBe("unread");
+    expect(resolveThreadWaitTier(thread, "2026-03-09T09:00:00.000Z")).toBeNull();
   });
 });

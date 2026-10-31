@@ -224,6 +224,18 @@ describe("composerSubmissionIntentForKey", () => {
     },
   );
 
+  it("sends and leaves for a waiting thread only from an existing thread", () => {
+    const altEnter = { ...enter, altKey: true };
+    const defaults = { ...input, keybindings: DEFAULT_RESOLVED_KEYBINDINGS };
+    expect(composerSubmissionIntentForKey({ ...defaults, event: altEnter })).toBe("next-waiting");
+    expect(composerSubmissionIntentForKey({ ...defaults, isRunning: true, event: altEnter })).toBe(
+      "next-waiting",
+    );
+    expect(
+      composerSubmissionIntentForKey({ ...defaults, isDraftThread: true, event: altEnter }),
+    ).toBeNull();
+  });
+
   it.each([
     { isSoftwareKeyboardOpen: true },
     { event: { ...enter, isComposing: true } },

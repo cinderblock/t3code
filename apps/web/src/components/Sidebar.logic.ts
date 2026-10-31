@@ -719,6 +719,40 @@ function hasUnseenFailure(thread: ThreadStatusInput): boolean {
   return completedAt > lastVisitedAt;
 }
 
+export type ThreadWaitTier = "blocked" | "unread";
+
+/** Blocked threads stall until you answer; unread ones finished and can wait their turn. */
+export function resolveThreadWaitTier(
+  thread: ThreadStatusInput & SidebarThreadStatusInput,
+  wokeAt: string | null,
+): ThreadWaitTier | null {
+  const status = resolveSidebarThreadStatus(thread);
+  if (status === "approval" || status === "input" || status === "request") return "blocked";
+  if (status === "working" || thread.runtime?.status === "running") return null;
+  const woke =
+    wokeAt !== null &&
+    (!thread.lastVisitedAt || Date.parse(thread.lastVisitedAt) < Date.parse(wokeAt));
+  return woke || hasUnseenCompletion(thread) || hasUnseenFailure(thread) ? "unread" : null;
+}
+
+export function resolveNextWaitingThreadKey<T>(input: {
+  threadKeys: readonly T[];
+  currentKey: T | null;
+  tierOf: (key: T) => ThreadWaitTier | null;
+}): T | null {
+  const { currentKey, threadKeys, tierOf } = input;
+  const currentIndex = currentKey === null ? -1 : threadKeys.indexOf(currentKey);
+  const others = [
+    ...threadKeys.slice(currentIndex + 1),
+    ...threadKeys.slice(0, Math.max(currentIndex, 0)),
+  ];
+  return (
+    others.find((key) => tierOf(key) === "blocked") ??
+    others.find((key) => tierOf(key) === "unread") ??
+    null
+  );
+}
+
 export function shouldClearThreadSelectionOnMouseDown(target: HTMLElement | null): boolean {
   if (target === null) return true;
   return !target.closest(THREAD_SELECTION_SAFE_SELECTOR);

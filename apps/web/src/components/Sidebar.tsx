@@ -122,6 +122,7 @@ import { useSidebarProjectGroups } from "../hooks/useSidebarProjectGroups";
 import { useTerminalFocus } from "../hooks/useTerminalFocus";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { registerSettleAndAdvance } from "../settleAndAdvance";
+import { registerGoToNextWaitingThread } from "../goToNextWaitingThread";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
@@ -188,6 +189,9 @@ import {
   planSidebarThreadDrop,
   reduceSidebarProjectScopeMenuState,
   resolveAdjacentThreadId,
+  resolveNextWaitingThreadKey,
+  resolveThreadLastVisitedAt,
+  resolveThreadWaitTier,
   resolveSidebarSweepKeys,
   isCardSection,
   resolveSidebarDropTarget,
@@ -1629,6 +1633,43 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     })();
   };
   useEffect(() => registerSettleAndAdvance(attemptSettle), [attemptSettle]);
+  // Reads every shelf, not the rendered order: a collapsed shelf can hold a pending approval.
+  const goToNextWaiting = useStableCallback(() => {
+    const threadsByKey = new Map(
+      searchableThreads.map((thread) => [threadShellKey(thread), thread] as const),
+    );
+    const { threadLastVisitedAtById } = useUiStateStore.getState();
+    const now = new Date().toISOString();
+    const targetKey = resolveNextWaitingThreadKey({
+      threadKeys: [...threadsByKey.keys()].filter(
+        (key) => !settledThreadKeysRef.current.has(key) && !snoozedThreadKeysRef.current.has(key),
+      ),
+      currentKey: readRouteThreadKey(router),
+      tierOf: (key) => {
+        const thread = threadsByKey.get(key);
+        if (!thread) return null;
+        const lastVisitedAt = resolveThreadLastVisitedAt(
+          thread.lastVisitedAt,
+          threadLastVisitedAtById[key],
+        );
+        return resolveThreadWaitTier({ ...thread, lastVisitedAt }, threadWokeAt(thread, { now }));
+      },
+    });
+    const target = targetKey === null ? undefined : threadsByKey.get(targetKey);
+    if (target) {
+      navigateToThread(scopeThreadRef(target.environmentId, target.id));
+      return;
+    }
+    toastManager.add(
+      stackedThreadToast({
+        type: "info",
+        title: "No other thread is waiting on you",
+        timeout: 3_000,
+      }),
+    );
+  });
+  // oxlint-disable-next-line t3code/react-effect-budget -- publishes the handler to chat code outside this tree
+  useEffect(() => registerGoToNextWaitingThread(goToNextWaiting), [goToNextWaiting]);
   const settleThreads = (threadKeys: readonly string[]) => {
     const coSettlingKeys = new Set(threadKeys);
     for (const threadKey of threadKeys) {
@@ -2878,6 +2919,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         );
         return;
       }
+      if (command === "thread.nextWaiting") {
+        event.preventDefault();
+        event.stopPropagation();
+        goToNextWaiting();
+        return;
+      }
       const jumpIndex = threadJumpIndexFromCommand(command ?? "");
       if (jumpIndex === null) return;
       navigateToThreadKey(orderedThreadKeys[jumpIndex] ?? null);
@@ -2885,6 +2932,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     window.addEventListener("keydown", onWindowKeyDown);
     return () => window.removeEventListener("keydown", onWindowKeyDown);
   }, [
+    goToNextWaiting,
     keybindings,
     navigateToThread,
     orderedThreadKeys,

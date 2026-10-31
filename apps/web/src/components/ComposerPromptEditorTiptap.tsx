@@ -1255,6 +1255,7 @@ function ComposerPromptEditorTiptapInner(
             richText &&
             !event.metaKey &&
             !event.ctrlKey &&
+            !event.altKey &&
             !event.isComposing
           ) {
             if (selectionInOneCodeBlock(view.state)) {

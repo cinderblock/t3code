@@ -18,6 +18,12 @@ does the same. Change these shortcuts in **Settings → Keybindings** under
 or **Composer: Send and Start New Thread**. These bindings take priority over the
 send shortcut. Click the send button to use the configured follow-up behavior.
 
+`Alt+Enter` sends and takes you to the next thread waiting on you. Threads stuck on
+an approval, a question, or a guest come first, then threads with work you have not
+read. Settled and snoozed threads are skipped. If nothing is waiting, you stay where
+you are. `mod+Alt+]` makes the same jump without sending. Change these under
+**Composer: Send and Go to Waiting Thread** and **Thread: Go to Waiting Thread**.
+
 When an active turn has queued messages, `mod+Shift+Enter` sends the first as a
 steer. Change it under **Queue: Send First Queued Message as Steer** in Keybindings.
 

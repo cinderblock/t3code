@@ -34,11 +34,13 @@ function Composer({
   richTextEnabled,
   skills,
   onChange,
+  onCommandKeyDown,
 }: {
   value: string;
   richTextEnabled: boolean;
   skills: ReadonlyArray<ServerProviderSkill>;
   onChange?: ComposerPromptEditorProps["onChange"] | undefined;
+  onCommandKeyDown?: ComposerPromptEditorProps["onCommandKeyDown"] | undefined;
 }) {
   const [prompt, setPrompt] = useState({ value, cursor: value.length });
   return (
@@ -56,6 +58,7 @@ function Composer({
         onChange?.(...args);
       }}
       onPaste={() => {}}
+      {...(onCommandKeyDown ? { onCommandKeyDown } : {})}
     />
   );
 }
@@ -435,5 +438,28 @@ describe("an Arabic line", () => {
     expect(editor.view.coordsAtPos(editor.state.selection.head).left).toBeGreaterThan(
       box.left + box.width / 2,
     );
+  });
+});
+
+describe("a code block", () => {
+  it("leaves Alt+Enter to the send shortcut instead of adding a line", async () => {
+    const onCommandKeyDown = vi.fn(() => true);
+    await using screen = await render(
+      <Composer
+        value={"```\ncode\n```"}
+        richTextEnabled
+        skills={[]}
+        onCommandKeyDown={onCommandKeyDown}
+      />,
+    );
+    const editor = editorIn(screen.container);
+    await act(async () => {
+      editor.commands.focus(2);
+    });
+    expect(editor.isActive("codeBlock")).toBe(true);
+    const textBefore = editor.getText();
+    await userEvent.keyboard("{Alt>}{Enter}{/Alt}");
+    await vi.waitFor(() => expect(onCommandKeyDown).toHaveBeenCalled());
+    expect(editor.getText()).toBe(textBefore);
   });
 });

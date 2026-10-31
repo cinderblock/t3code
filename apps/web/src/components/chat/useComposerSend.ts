@@ -102,6 +102,7 @@ import {
   startAttachmentUpload,
 } from "../../lib/attachmentUploadQueue";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { goToNextWaitingThread } from "../../goToNextWaitingThread";
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
 import { readEnvironmentScope } from "../../state/session";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
@@ -689,6 +690,11 @@ export function useComposerSend(input: ComposerSendInput) {
         currentRouteThreadKeyRef.current === routeThreadKey
       ) {
         handleNewThreadInActiveProject();
+      } else if (
+        submissionIntent === "next-waiting" &&
+        currentRouteThreadKeyRef.current === routeThreadKey
+      ) {
+        goToNextWaitingThread();
       }
       return;
     }
@@ -1043,7 +1049,8 @@ export function useComposerSend(input: ComposerSendInput) {
       beginLocalDispatch({
         preparingWorktree: multipleModelSelections !== null || Boolean(baseBranchForWorktree),
         submissionIntent:
-          submissionIntent === "background" && !isLocalDraftThread
+          submissionIntent === "next-waiting" ||
+          (submissionIntent === "background" && !isLocalDraftThread)
             ? "foreground"
             : submissionIntent,
       });
@@ -1324,6 +1331,11 @@ export function useComposerSend(input: ComposerSendInput) {
           currentRouteThreadKeyRef.current === routeThreadKey
         ) {
           handleNewThreadInActiveProject();
+        } else if (
+          submissionIntent === "next-waiting" &&
+          currentRouteThreadKeyRef.current === routeThreadKey
+        ) {
+          goToNextWaitingThread();
         }
       }
     }
