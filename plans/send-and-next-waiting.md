@@ -44,4 +44,12 @@ leave" action, but landing on a thread that needs them instead of a draft.
 - [x] Bridge, sidebar handler, send path
 - [x] Docs
 - [x] Checks and commit
+- [ ] Rebuild and restart the desktop app. `start-t3.ps1 -BuildOnly` refuses while the app runs, since
+      swapping web chunks would break its lazy routes, and restarting it would stop the app hosting
+      this thread, so that step is the maintainer's.
 - [ ] Try `Alt+Enter` and `Ctrl+Alt+]` in the real app. Not done: no browser verification was requested.
+
+## Open questions
+
+1. Should `Ctrl+W` settle the thread when nothing is left to close? Upstream does not do this. It
+   needs a `rightPanelOpen` key in the chat shortcut context plus a new rule.
