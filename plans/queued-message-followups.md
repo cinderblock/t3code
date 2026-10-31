@@ -186,8 +186,9 @@ Confirmed at 6:39 PM PDT (01:39Z) by a wake-up firing, running on the new app.
 
 - **Not verified:** no entry was exercised on this build by a client, no queued message has fired on it,
   and no thread has been deleted on it. Entry G's client walkthrough ran before this relaunch.
-- **New rule to check:** the user's "Keep Off My Screen" instruction arrived after the watcher was built. Its
-  failure alert opens Notepad on the desktop. It did not fire here.
+- **Watcher's Notepad alert stays (user, 2026-10-30).** A real failure may open on the main screen; the
+  user's "Keep Off My Screen" objection is to constant foreground testing. It did not fire here. A test
+  of the alert should stub the window.
 - Wake-up task deleted. Files from the second preflight remain as listed above.
 
 ## Progress
