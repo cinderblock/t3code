@@ -1532,6 +1532,11 @@ Notepad. `scripts/t3-alert.ps1`, started by `Show-Failure` in `restart-t3-when-i
 - Under vite-plus, `node.exe` is a shim: `Stop-Process` on the PID from `Start-Process` left the real
   server listening under another PID. Stop the port owner as well, after checking its command line.
 
+- Temp leftovers deleted at the user's request, 2026-10-30 (7.1 GB): every `C:	emp` and `%TEMP%` file this
+  plan lists as left in place, so those notes in the entry results are now history. Both real-data copies
+  went with them. Kept: `~/.claude/projects/C--temp-entry-g-scratch/` and its worktree folders,
+  and the one screenshot in `~/.t3/userdata/browser-artifacts/`.
+
 ## Things not to do
 
 - Do not restart or kill the running app, and never write to `~/.t3/userdata`.
