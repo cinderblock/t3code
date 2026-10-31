@@ -1532,10 +1532,17 @@ Notepad. `scripts/t3-alert.ps1`, started by `Show-Failure` in `restart-t3-when-i
 - Under vite-plus, `node.exe` is a shim: `Stop-Process` on the PID from `Start-Process` left the real
   server listening under another PID. Stop the port owner as well, after checking its command line.
 
-- Temp leftovers deleted at the user's request, 2026-10-30 (7.1 GB): every `C:	emp` and `%TEMP%` file this
+- Temp leftovers deleted at the user's request, 2026-10-30 (7.1 GB): every `C:\temp` and `%TEMP%` file this
   plan lists as left in place, so those notes in the entry results are now history. Both real-data copies
-  went with them. Kept: `~/.claude/projects/C--temp-entry-g-scratch/` and its worktree folders,
-  and the one screenshot in `~/.t3/userdata/browser-artifacts/`.
+  went with them.
+- Remaining leftovers deleted at the user's request, 2026-10-30: the eval's API key file, the screenshot in
+  `~/.t3/userdata/browser-artifacts/`, `~/.claude/projects/C--temp-entry-g-scratch/` and its two worktree
+  folders, the alert test fixtures, `t3-pending-check.mjs`, the empty `queued-message-verify` worktree folder
+  and its merged branch. Kept on purpose: the 9 MB `~/.claude/projects/` folder for that worktree, which is
+  the entry G thread's own session, and the 10/19 `provider-env-*ANTHROPIC_API_KEY.bin`, which is the
+  configured provider key and not from this work.
+- `%TEMP%` holds 1014 `t3-orchestration-v2-*` directories from test runs, dated 2026-10-26 to 10-30. Not on
+  the leftovers list and not all from this work, so they were left.
 
 ## Things not to do
 
