@@ -119,3 +119,18 @@ still look fine. `SendLaterToolkit` was missed this way until `7c2d4c8d7e`, so i
 have passed. Why it matters: a guard fails for a reason unrelated to the text, and a control passes
 without testing anything, at the cost of a paid run. Nothing checks that a tool named in a case's
 `expect` exists.
+
+## `vp run check:changed` crashes on this fork with ENAMETOOLONG
+
+`scripts/check-changed.ts:277` throws `spawn ENAMETOOLONG` on Windows. The script diffs against
+`main`, this fork is far enough ahead that the file list overflows the command line. The pre-push
+check cannot run at all here, so its format, lint, knip and test steps have to be run by hand.
+
+## `vp run typecheck` fails on a stale TypeScript shim
+
+`vp run --filter ./packages/contracts typecheck` fails with `Cannot find module
+node_modules\.pnpm	ypescript@7.0.2
+ode_modules	ypescriptin	sc`. Only `typescript@6.0.3` and
+`@tsc-rs/typescript@0.8.0` are installed, so a package `.bin` shim outlived a lockfile change.
+Running `node_modules/.pnpm/@tsc-rs+typescript@0.8.0/node_modules/@tsc-rs/typescript/bin/tsc
+--noEmit` from the package directory works. Typecheck is silently unavailable until this is fixed.
