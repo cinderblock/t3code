@@ -134,3 +134,11 @@ ode_modules	ypescriptin	sc`. Only `typescript@6.0.3` and
 `@tsc-rs/typescript@0.8.0` are installed, so a package `.bin` shim outlived a lockfile change.
 Running `node_modules/.pnpm/@tsc-rs+typescript@0.8.0/node_modules/@tsc-rs/typescript/bin/tsc
 --noEmit` from the package directory works. Typecheck is silently unavailable until this is fixed.
+
+## Settings browser tests flake when run as a folder
+
+`vp test run apps/web/src/components/settings` failed `SecretInput.browser.test.tsx` and
+`TelemetryExportSettings.browser.test.tsx` with a different count on each run (`expected
+'reeppllaacceemmeenntt' to be 'replacement'`, `Test timed out in 15000ms`). Both files pass alone,
+twice in a row. Doubled keystrokes suggest something timing-dependent under load, which can fail
+CI or hide a real regression.
