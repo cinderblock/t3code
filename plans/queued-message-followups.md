@@ -154,6 +154,42 @@ Left in place, not deleted: `C:\temp\t3-preflight-7985\` (3.8 GB copy of real da
 and from the first relaunch `C:\temp\t3-preflight-boot.*`, `-build.log`, `-seed.log`, `C:\temp\t3-live-check.mjs`,
 `C:\temp\t3-watcher-test-031001\`.
 
+### Second relaunch: result (2026-10-30 6:38 PM PDT, 2026-10-31 01:38Z)
+
+Confirmed at 6:39 PM PDT (01:39Z) by a wake-up firing, running on the new app.
+
+- **Running commit `78d196a423`**, `master`'s HEAD, stamp not dirty. **It differs from the preflight commit
+  `7985c148b7` by docs only:** two commits, both touching `plans/queued-message-followups.md` alone. No
+  change in `apps`, `packages` or `scripts`, and the lockfile did not move. So the preflight's boot proof
+  applies to this code.
+- **Timeline:** watcher started 2:08 PM. Busy until 6:31 PM, a wait of about 4 hours 20 minutes. Launcher
+  6:33:14 PM, built by 6:34, then `-WaitForIdle` held about 4 minutes on two threads, app closed normally,
+  backend answered in 10s, `relaunched:` 6:38:54 PM. Nine wake-up firings; none held up the launch.
+- **Live app:** backend PID 4348 from this checkout, port 3773, serves `assets/index-fpg5vU1F.js`, on disk.
+- **Migration 9 on the real database: applied 6:38:35 PM PDT (01:38:35Z).** `restorable_until` and
+  `cancelled_by` exist. 17 rows, 15 sent and 2 cancelled, NULL in both new columns. The row beyond the
+  preflight's 16 is an agent message cancelled at 4:43 PM PDT, on the old build, before the relaunch. No
+  status moved at the relaunch, and nothing is pending. Attachments and restore data were not on any row.
+- **Features.** Every commit below is an ancestor of `78d196a423`. `t3_send_later` `list` was called and
+  answered. Everything else is identifiers in the running bundles, not behavior:
+
+| Entry | Commit                     | Found in the running bundle                                                                         |
+| ----- | -------------------------- | --------------------------------------------------------------------------------------------------- |
+| B     | `df77fd47b6`               | Server: `QueuedMessageService.saveObservedTrigger`, its failure text                                |
+| C     | `72edfecd24`, `e2ccdb5c3a` | Web: "Failed to save the thread's modes.", "Attached thread is on another machine"                  |
+| D     | `2d3e603d9c`               | Server: `cancelForDeletedThread`, `ResourceCleanupService.cleanupQueuedMessages`, the outbox effect |
+| E     | `bb4ffe01fe`, `78d8c8dbaf` | Server: `discardRow`, sweep text. Web: "Cancelled by an agent", "You can still restore..."          |
+| F     | `32e9035d29`               | Ancestry only: a logic change that leaves no string after minifying                                 |
+| I     | `49ec00c703`               | Web: "This command can't be queued"                                                                 |
+| J     | `772238e3b3`               | Server: `QueuedMessageService.compactsFirst`, its warning text                                      |
+| K     | `08ab19b8e9`               | Server: the archived refusal text, `OrchestratorThreadNotActiveError`                               |
+
+- **Not verified:** no entry was exercised on this build by a client, no queued message has fired on it,
+  and no thread has been deleted on it. Entry G's client walkthrough ran before this relaunch.
+- **New rule to check:** the user's "Keep Off My Screen" instruction arrived after the watcher was built. Its
+  failure alert opens Notepad on the desktop. It did not fire here.
+- Wake-up task deleted. Files from the second preflight remain as listed above.
+
 ## Progress
 
 - [x] Item 1: `3c5f230f83`, plus four lines of its drag test that landed in `d94f7ab701`
@@ -162,6 +198,7 @@ and from the first relaunch `C:\temp\t3-preflight-boot.*`, `-build.log`, `-seed.
 - [x] Item 4: verified, one fix in `eea3dab9a1`
 - [x] Item 5: `befbb8ce81` (server), `dce4536401` (web and docs)
 - [x] Relaunch, confirmed on `dc5788d30a`
+- [x] Second relaunch, confirmed on `78d196a423`
 
 ## Outstanding work (user asked 2026-10-30 9:00 AM PDT, 16:00Z)
 
