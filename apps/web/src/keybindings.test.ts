@@ -103,7 +103,10 @@ const DEFAULT_BINDINGS = compile([
   {
     shortcut: modShortcut("w"),
     command: "rightPanel.close",
-    whenAst: whenNot(whenIdentifier("terminalFocus")),
+    whenAst: whenAnd(
+      whenNot(whenIdentifier("terminalFocus")),
+      whenNot(whenIdentifier("threadClosable")),
+    ),
   },
   {
     shortcut: modShortcut("d"),
@@ -602,15 +605,21 @@ describe("resolveChatShortcutCommand", () => {
 describe("resolveShortcutCommand", () => {
   it("settles with mod+w on desktop only once the chat has nothing left to close", () => {
     const closable = { isDesktop: true, threadClosable: true, terminalFocus: false };
-    const resolve = (context: typeof closable) =>
-      resolveShortcutCommand(event({ key: "w", ctrlKey: true }), DEFAULT_RESOLVED_KEYBINDINGS, {
-        platform: "Win32",
-        context,
-      });
-    assert.strictEqual(resolve(closable), "thread.settleAndNext");
-    assert.strictEqual(resolve({ ...closable, threadClosable: false }), "rightPanel.close");
-    assert.strictEqual(resolve({ ...closable, isDesktop: false }), "rightPanel.close");
-    assert.strictEqual(resolve({ ...closable, terminalFocus: true }), "terminal.close");
+    // Startup sync puts a new default ahead of the saved rules, so order must not matter.
+    for (const bindings of [
+      DEFAULT_RESOLVED_KEYBINDINGS,
+      [...DEFAULT_RESOLVED_KEYBINDINGS].reverse(),
+    ]) {
+      const resolve = (context: typeof closable) =>
+        resolveShortcutCommand(event({ key: "w", ctrlKey: true }), bindings, {
+          platform: "Win32",
+          context,
+        });
+      assert.strictEqual(resolve(closable), "thread.settleAndNext");
+      assert.strictEqual(resolve({ ...closable, threadClosable: false }), "rightPanel.close");
+      assert.strictEqual(resolve({ ...closable, isDesktop: false }), null);
+      assert.strictEqual(resolve({ ...closable, terminalFocus: true }), "terminal.close");
+    }
   });
 
   it("routes mod+w to the terminal while focused and to the right panel otherwise", () => {

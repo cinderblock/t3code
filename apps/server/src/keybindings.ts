@@ -115,6 +115,19 @@ const LATE_DEFAULT_KEYBINDINGS: ReadonlyArray<{
   },
 ];
 
+// Rewrites only the untouched old default. Sync puts new rules first, so a saved overlap beats them.
+const REPLACED_DEFAULT_KEYBINDINGS: ReadonlyArray<{
+  readonly id: string;
+  readonly from: KeybindingRule;
+  readonly to: KeybindingRule;
+}> = [
+  {
+    id: "rightPanel.close:mod+w:threadClosable",
+    from: { key: "mod+w", command: "rightPanel.close", when: "!terminalFocus" },
+    to: { key: "mod+w", command: "rightPanel.close", when: "!terminalFocus && !threadClosable" },
+  },
+];
+
 function keybindingShortcutContext(rule: KeybindingRule): string | null {
   const parsed = parseKeybindingShortcut(rule.key);
   if (!parsed) return null;
@@ -464,13 +477,17 @@ const make = Effect.gen(function* () {
       const pendingLateDefaults = LATE_DEFAULT_KEYBINDINGS.filter(
         (late) => !appliedMigrationIds.has(late.id),
       );
+      const pendingReplacements = REPLACED_DEFAULT_KEYBINDINGS.filter(
+        (replaced) => !appliedMigrationIds.has(replaced.id),
+      );
       const configExists = yield* readConfigExists;
       if (!configExists) {
         yield* writeConfigAtomically(DEFAULT_KEYBINDINGS);
-        if (pendingLateDefaults.length > 0) {
+        if (pendingLateDefaults.length > 0 || pendingReplacements.length > 0) {
           yield* recordAppliedMigrations([
             ...appliedMigrationIds,
             ...LATE_DEFAULT_KEYBINDINGS.map((late) => late.id),
+            ...REPLACED_DEFAULT_KEYBINDINGS.map((replaced) => replaced.id),
           ]);
         }
         yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
@@ -489,7 +506,13 @@ const make = Effect.gen(function* () {
         yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);
         return;
       }
-      const customConfig = runtimeConfig.keybindings;
+      const customConfig = runtimeConfig.keybindings.map(
+        (entry) =>
+          pendingReplacements.find(({ from }) => isSameKeybindingRule(entry, from))?.to ?? entry,
+      );
+      const replacedSavedRule = customConfig.some(
+        (entry, index) => entry !== runtimeConfig.keybindings[index],
+      );
       const existingCommands = new Set(customConfig.map((entry) => entry.command));
       const missingDefaults: KeybindingRule[] = [];
       const shortcutConflictWarnings: Array<{
@@ -559,16 +582,17 @@ const make = Effect.gen(function* () {
           commands: skippedDefaults.map((rule) => rule.command),
         });
       }
-      if (defaultsToAppend.length > 0) {
+      if (defaultsToAppend.length > 0 || replacedSavedRule) {
         yield* writeConfigAtomically([...defaultsToAppend, ...customConfig]);
       }
       const settledLateDefaults = pendingLateDefaults.filter(
         (late) => !skippedDefaults.includes(late.rule),
       );
-      if (settledLateDefaults.length > 0) {
+      if (settledLateDefaults.length > 0 || pendingReplacements.length > 0) {
         yield* recordAppliedMigrations([
           ...appliedMigrationIds,
           ...settledLateDefaults.map((late) => late.id),
+          ...pendingReplacements.map((replaced) => replaced.id),
         ]);
       }
       yield* Cache.invalidate(resolvedConfigCache, resolvedConfigCacheKey);

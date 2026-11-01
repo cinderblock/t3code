@@ -156,7 +156,7 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+shift+d", command: "terminal.splitVertical", when: "terminalFocus" },
   { key: "mod+n", command: "terminal.new", when: "terminalFocus" },
   { key: "mod+w", command: "terminal.close", when: "terminalFocus" },
-  { key: "mod+w", command: "rightPanel.close", when: "!terminalFocus" },
+  { key: "mod+w", command: "rightPanel.close", when: "!terminalFocus && !threadClosable" },
   { key: "mod+shift+t", command: "view.reopenClosed" },
   { key: "mod+d", command: "diff.toggle", when: "!terminalFocus" },
   { key: "mod+shift+j", command: "preview.toggle" },
@@ -218,7 +218,7 @@ export const DEFAULT_KEYBINDINGS: ReadonlyArray<KeybindingRule> = [
   { key: "mod+alt+]", command: "thread.nextWaiting" },
   { key: "mod+shift+c", command: "thread.copyReference", when: "!terminalFocus" },
   { key: "mod+shift+s", command: "thread.settle", when: "!terminalFocus" },
-  // Must follow rightPanel.close. Desktop only: a browser tab closes on mod+w regardless.
+  // Desktop only: a browser tab closes on mod+w regardless.
   {
     key: "mod+w",
     command: "thread.settleAndNext",

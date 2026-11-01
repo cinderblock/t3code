@@ -47,6 +47,8 @@ leave" action, but landing on a thread that needs them instead of a draft.
 - [x] Rebuild and restart the desktop app. The idle watcher relaunched it on 2026-10-31 at
       6:27 PM PDT (2026-11-01 01:27Z), run `C:\temp\t3runs\20261031-182535`.
 - [x] `Ctrl+W` settles and moves on, with tests and docs
+- [ ] `Ctrl+W` order fix: committed, not yet in the running app. Needs a rebuild and restart, and
+      the maintainer has not yet approved that restart.
 - [ ] Try `Alt+Enter`, `Ctrl+Alt+]` and `Ctrl+W` in the real app. Not done: no browser verification
       was requested.
 
@@ -68,3 +70,19 @@ The maintainer asked for `Ctrl+W` to act like closing a finished tab.
   thread would be settled on the way out.
 - Key repeat is ignored so holding `Ctrl+W` to close the last panel tab cannot also settle.
 - Running threads settle the same way `Ctrl+Shift+S` settles them. `Ctrl+Z` undoes it.
+
+### Ctrl+W did nothing after the first relaunch
+
+Reported 2026-11-01 PDT. `Alt+Enter` worked, `Ctrl+W` did not.
+
+- The last matching rule wins, and startup sync writes new defaults ahead of the saved rules, so
+  custom shortcuts win overlaps. In an existing `keybindings.json` the new `thread.settleAndNext`
+  rule landed at line 12 and the saved `rightPanel.close` rule stayed at line 269. The panel rule won
+  and did nothing with the panel closed.
+- The first test passed because it resolved against the default order, where settle comes last. A
+  saved file has the opposite order. The test now runs both orders.
+- Fix: the two rules no longer overlap. `rightPanel.close` is now `!terminalFocus && !threadClosable`,
+  and `REPLACED_DEFAULT_KEYBINDINGS` rewrites the exact old default once on startup. A customized
+  rule is left alone.
+- Do not hand-edit `~/.t3/userdata/keybindings.json`. The startup migration handles it.
+- Do not rely on rule order for a new default that overlaps an existing one.

@@ -319,6 +319,43 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     }).pipe(Effect.provide(layerKeybindings())),
   );
 
+  it.effect("narrows the saved mod+w panel rule once so settling can win", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const keybindings = yield* Keybindings.Keybindings;
+      const saved = { key: "mod+w", command: "rightPanel.close", when: "!terminalFocus" } as const;
+      const panelRules = Effect.map(readKeybindingsConfig(keybindingsConfigPath), (rules) =>
+        rules.filter((entry) => entry.command === "rightPanel.close"),
+      );
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [saved]);
+
+      yield* keybindings.syncDefaultKeybindingsOnStartup;
+      assert.deepStrictEqual(yield* panelRules, [
+        { ...saved, when: "!terminalFocus && !threadClosable" },
+      ]);
+
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [saved]);
+      yield* keybindings.syncDefaultKeybindingsOnStartup;
+      assert.deepStrictEqual(yield* panelRules, [saved]);
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
+
+  it.effect("leaves a customized mod+w panel rule alone", () =>
+    Effect.gen(function* () {
+      const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
+      const keybindings = yield* Keybindings.Keybindings;
+      const custom = { key: "mod+w", command: "rightPanel.close", when: "rightPanelOpen" } as const;
+      yield* writeKeybindingsConfig(keybindingsConfigPath, [custom]);
+
+      yield* keybindings.syncDefaultKeybindingsOnStartup;
+      const persisted = yield* readKeybindingsConfig(keybindingsConfigPath);
+      assert.deepStrictEqual(
+        persisted.filter((entry) => entry.command === "rightPanel.close"),
+        [custom],
+      );
+    }).pipe(Effect.provide(layerKeybindings())),
+  );
+
   it.effect("skips conflicting default keybindings on startup and logs a detailed warning", () => {
     const messages: string[] = [];
     const logger = Logger.make(({ message }) => {
