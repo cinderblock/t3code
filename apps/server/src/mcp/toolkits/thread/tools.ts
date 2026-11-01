@@ -15,6 +15,7 @@ import {
   OrchestratorMcpFailure,
   OrchestrationV2DispatchCommandResult,
   ThreadId,
+  ThreadBlockUntil,
   ThreadPriority,
   RunId,
   NonNegativeInt,
@@ -31,7 +32,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
   description:
-    "Pin, snooze, settle, archive, prioritize, or mark a thread unread. Omit `threadId` for this thread. `snooze` needs `snoozedUntil`. `set_priority` takes `priority`: 1 high, -1 low, 0 or null normal; higher sorts first in the user's inbox. Settling this thread applies at turn end. A failed turn or queued message leaves it active.",
+    "Pin, snooze, block, settle, archive, prioritize, or mark a thread unread. Omit `threadId` for this thread. `snooze` needs `snoozedUntil`. `block` parks a thread that can't go on until another thread is done, and needs `blockerThreadId` and `until`; the thread returns to the user's inbox when that happens, or when the other thread fails or is archived. To continue by yourself then, also use `t3_send_later` with `afterThread`. `set_priority` takes `priority`: 1 high, -1 low, 0 or null normal; higher sorts first in the user's inbox. Settling this thread applies at turn end. A failed turn or queued message leaves it active.",
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     action: Schema.Literals([
@@ -45,8 +46,16 @@ const ThreadOrganizeTool = Tool.make("t3_thread_organize", {
       "unarchive",
       "mark_unread",
       "set_priority",
+      "block",
+      "unblock",
     ]),
     snoozedUntil: Schema.optional(IsoDateTime),
+    blockerThreadId: Schema.optional(ThreadId),
+    until: Schema.optional(
+      ThreadBlockUntil.annotate({
+        description: "finished: it stops working. settled: the user is done with it.",
+      }),
+    ),
     priority: Schema.optional(Schema.NullOr(ThreadPriority)),
   }),
   success: Schema.Union([

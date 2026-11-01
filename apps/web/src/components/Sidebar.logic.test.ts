@@ -22,6 +22,7 @@ import {
   pinOrderKeyBetween,
   resolveProjectStatusIndicator,
   resolveSidebarSweepKeys,
+  resolveSidebarThreadSection,
   resolveSidebarThreadStatus,
   resolveSidebarV2TopStatus,
   resolveThreadStatusPill,
@@ -40,6 +41,7 @@ import {
   type SidebarListMarker,
   type SidebarSection,
   resolveSidebarDropVerb,
+  blockedOnLabel,
 } from "./Sidebar.logic";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
@@ -58,6 +60,19 @@ import {
 } from "./sidebar/routeReveal";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
+
+describe("blocked threads", () => {
+  it("parks a blocked thread above every other placement", () => {
+    expect(
+      resolveSidebarThreadSection({ blocked: true, snoozed: true, settled: true, pinned: true }),
+    ).toBe("blocked");
+  });
+
+  it("names the thread it waits on", () => {
+    expect(blockedOnLabel("Fix the build")).toBe("Waiting on Fix the build");
+    expect(blockedOnLabel(undefined)).toBe("Waiting on another thread");
+  });
+});
 
 describe("deleteSelectedThreadEntries", () => {
   const entries = [{ threadKey: "one" }, { threadKey: "two" }, { threadKey: "three" }] as const;
@@ -1493,6 +1508,7 @@ describe("Working shelf (beta)", () => {
         unpin: true,
         unsettle: false,
         unsnooze: false,
+        unblock: false,
       });
     });
   });

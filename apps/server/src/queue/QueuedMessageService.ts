@@ -40,6 +40,8 @@ import {
   resolveIdleCompaction,
   resolveProjectProviderInstanceEnabled,
   ThreadId,
+  threadBlockReleased,
+  type ThreadBlockUntil,
   type QueuedMessage,
   type QueuedMessageCancelInput,
   type QueuedMessageDiscardInput,
@@ -143,6 +145,9 @@ export function findTriggerWindow(
   );
 }
 
+/** The threads `thread` triggers wait on, null once one is gone. A missing key means not read. */
+export type AwaitedThreads = ReadonlyMap<string, Parameters<typeof threadBlockReleased>[1]>;
+
 /**
  * Pure trigger predicate, evaluated by the reactor each tick.
  *
@@ -153,6 +158,7 @@ export function isTriggerDue(
   trigger: QueuedMessageTrigger,
   nowMs: number,
   limitsByInstance: UsageLimitsByInstance,
+  awaitedThreads: AwaitedThreads = new Map(),
 ): boolean {
   switch (trigger.type) {
     case "at": {
@@ -186,6 +192,19 @@ export function isTriggerDue(
       const minutesToReset = (resetMs - nowMs) / 60_000;
       return (
         remainingPercent >= trigger.minRemainingPercent && minutesToReset <= trigger.leadMinutes
+      );
+    }
+    case "thread": {
+      const thread = awaitedThreads.get(trigger.threadId);
+      return (
+        thread !== undefined &&
+        threadBlockReleased(
+          {
+            until: trigger.until,
+            blockedAt: trigger.since ?? DateTime.formatIso(DateTime.makeUnsafe(nowMs)),
+          },
+          thread,
+        )
       );
     }
   }
@@ -231,7 +250,8 @@ export function stampTriggerBaseline(
 /** When an agent's message sends. Windows are named by kind; the provider's ids vary. */
 export type QueuedMessageWhen =
   | { readonly at: string }
-  | { readonly windowReset: "session" | "weekly" };
+  | { readonly windowReset: "session" | "weekly" }
+  | { readonly afterThread: ThreadId; readonly until: ThreadBlockUntil };
 
 /**
  * Refuses what would send at once or never, since an agent cannot see the sidebar to notice.
@@ -242,6 +262,9 @@ export function resolveScheduledTrigger(
   nowMs: number,
   limitsByInstance: UsageLimitsByInstance,
 ): { readonly trigger: QueuedMessageTrigger } | { readonly error: string } {
+  if ("afterThread" in when) {
+    return { trigger: { type: "thread", threadId: when.afterThread, until: when.until } };
+  }
   if ("at" in when) {
     return Date.parse(when.at) > nowMs
       ? { trigger: { type: "at", at: when.at } }
@@ -395,6 +418,7 @@ export const make = Effect.gen(function* () {
   const withBaseline = Effect.fn("QueuedMessageService.withBaseline")(function* (
     trigger: QueuedMessageTrigger,
   ) {
+    if (trigger.type === "thread") return { ...trigger, since: yield* nowIso };
     if (trigger.type !== "window-reset") return trigger;
     return stampTriggerBaseline(
       trigger,
@@ -605,6 +629,22 @@ export const make = Effect.gen(function* () {
     );
     if ("error" in resolved) {
       return yield* new QueuedMessageError({ message: resolved.error });
+    }
+    if (resolved.trigger.type === "thread") {
+      if (resolved.trigger.threadId === thread.id) {
+        return yield* new QueuedMessageError({ message: "A thread can't wait on itself." });
+      }
+      const awaited = yield* threads
+        .getThreadShell(resolved.trigger.threadId)
+        .pipe(Effect.mapError(toQueuedError("Failed to read the awaited thread")));
+      const nothingToWaitFor =
+        awaited === null ||
+        threadBlockReleased({ until: resolved.trigger.until, blockedAt: yield* nowIso }, awaited);
+      if (nothingToWaitFor) {
+        return yield* new QueuedMessageError({
+          message: `Thread ${resolved.trigger.threadId} is already ${resolved.trigger.until}; there is nothing to wait for.`,
+        });
+      }
     }
     return yield* enqueue({
       id,
@@ -1005,6 +1045,7 @@ export const make = Effect.gen(function* () {
     }
     const limitsByInstance = usageLimitsByInstance(yield* providerRegistry.getProviders);
     const nowMs = yield* Clock.currentTimeMillis;
+    const awaitedThreads = new Map<string, Parameters<typeof threadBlockReleased>[1]>();
     for (const row of rows) {
       const decoded = decodeQueuedMessageRow(row);
       if ("error" in decoded) {
@@ -1016,7 +1057,10 @@ export const make = Effect.gen(function* () {
       if (trigger !== decoded.message.trigger) {
         yield* saveObservedTrigger(row, trigger);
       }
-      if (!isTriggerDue(trigger, nowMs, limitsByInstance)) {
+      if (trigger.type === "thread" && !awaitedThreads.has(trigger.threadId)) {
+        awaitedThreads.set(trigger.threadId, yield* threads.getThreadShell(trigger.threadId));
+      }
+      if (!isTriggerDue(trigger, nowMs, limitsByInstance, awaitedThreads)) {
         continue;
       }
       yield* sendIfThreadIsLive(decoded.message);

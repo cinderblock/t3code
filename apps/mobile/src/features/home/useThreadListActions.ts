@@ -256,6 +256,7 @@ export function useThreadListActions(): {
   const executeAction = useThreadActionExecutor();
   const snoozeMutation = useAtomCommand(threadEnvironment.snooze, { reportFailure: false });
   const unsnoozeMutation = useAtomCommand(threadEnvironment.unsnooze, { reportFailure: false });
+  const unblockMutation = useAtomCommand(threadEnvironment.unblock, { reportFailure: false });
   const pinMutation = useAtomCommand(threadEnvironment.pin, { reportFailure: false });
   const unpinMutation = useAtomCommand(threadEnvironment.unpin, { reportFailure: false });
   const setAutoSettleMutation = useAtomCommand(threadEnvironment.setAutoSettle, {
@@ -416,10 +417,15 @@ export function useThreadListActions(): {
       const result = await withThreadDismissal(
         key,
         () =>
-          unsnoozeMutation({
-            environmentId: thread.environmentId,
-            input: { threadId: thread.id, reason: "user" },
-          }),
+          thread.blockedOn != null
+            ? unblockMutation({
+                environmentId: thread.environmentId,
+                input: { threadId: thread.id },
+              })
+            : unsnoozeMutation({
+                environmentId: thread.environmentId,
+                input: { threadId: thread.id, reason: "user" },
+              }),
         (result) => result._tag === "Success",
       );
       if (result._tag === "Failure") {

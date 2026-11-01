@@ -4,7 +4,7 @@ import {
   pinOrderKeyBetween,
   planPinnedReorder,
 } from "@t3tools/client-runtime/state/thread-sort";
-import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
+import { effectiveBlocked, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentId } from "@t3tools/contracts";
 
 export type ThreadMoveDestination =
@@ -281,7 +281,7 @@ export function threadDropLifecycle(
     pin: false,
     unpin: thread.pinnedAt != null,
     unsettle: thread.settledOverride === "settled",
-    unsnooze: effectiveSnoozed(thread, { now }),
+    unsnooze: effectiveSnoozed(thread, { now }) || effectiveBlocked(thread),
   };
 }
 

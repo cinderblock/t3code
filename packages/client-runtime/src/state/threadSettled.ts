@@ -144,6 +144,17 @@ export function effectiveSnoozed(
   return !threadRaisedHandWhileSnoozed(shell);
 }
 
+/**
+ * A block that is waiting on someone else. A thread that needs the user leaves the shelf, as it
+ * does from Snoozed, and keeps its block so it goes back once that's answered.
+ */
+export function effectiveBlocked(
+  shell: ThreadSnoozeShell & Partial<Pick<EnvironmentThreadShell, "blockedOn">>,
+): boolean {
+  if (shell.blockedOn == null) return false;
+  return !threadRaisedHandWhileSnoozed({ ...shell, snoozedAt: shell.blockedOn.blockedAt });
+}
+
 export function threadWokeAt(
   shell: ThreadSnoozeShell,
   options: { readonly now: string },

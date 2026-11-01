@@ -342,7 +342,22 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
           break;
         case "unsnooze":
         case "unsettle":
+        case "unblock":
           command = { ...common, type: `thread.${input.action}`, reason: "user" };
+          break;
+        case "block":
+          if (input.blockerThreadId === undefined || input.until === undefined) {
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: "block requires blockerThreadId and until.",
+            });
+          }
+          command = {
+            ...common,
+            type: "thread.block",
+            blockerThreadId: input.blockerThreadId,
+            until: input.until,
+          };
           break;
         case "mark_unread":
           command = { ...common, type: "thread.mark-unread" };

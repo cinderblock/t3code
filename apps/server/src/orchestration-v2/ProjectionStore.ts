@@ -5,6 +5,7 @@ import * as Stream from "effect/Stream";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import { makeThreadFind, findProjectedThreadItems } from "./ThreadFind.ts";
 import type {
+  OrchestrationV2ThreadBlock,
   OrchestrationV2SearchThreadInput,
   OrchestrationV2SearchThreadResult,
   OrchestrationV2ThreadHistoryPage,
@@ -184,6 +185,11 @@ export type ProjectionLimitRecoveryCandidate = Pick<
   | "snoozedUntil"
 >;
 
+export interface ProjectionBlockedThread {
+  readonly id: ThreadId;
+  readonly blockedOn: OrchestrationV2ThreadBlock;
+}
+
 export type ProjectionThreadPullRequests = Pick<
   OrchestrationV2AppThread,
   "id" | "projectId" | "lineage" | "settledOverride" | "settledAt" | "pullRequests"
@@ -206,6 +212,7 @@ export type ProjectionSettlementCandidate = Pick<
   | "autoSettleDisabledAt"
   | "snoozedUntil"
   | "snoozedAt"
+  | "blockedOn"
   | "latestRunId"
   | "latestRunRequestedAt"
   | "latestRunStartedAt"
@@ -509,6 +516,10 @@ export interface ProjectionStoreV2Shape {
   readonly getSettlementCandidates: (
     threadId?: ThreadId,
   ) => Effect.Effect<ReadonlyArray<ProjectionSettlementCandidate>, ProjectionStoreV2Error>;
+  /** Live threads with a stored block, optionally only those waiting on `blockerThreadId`. */
+  readonly getBlockedThreads: (
+    blockerThreadId?: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<ProjectionBlockedThread>, ProjectionStoreV2Error>;
   readonly getThreadsWithPullRequests: (
     threadId?: ThreadId,
   ) => Effect.Effect<ReadonlyArray<ProjectionThreadPullRequests>, ProjectionStoreV2Error>;
@@ -844,6 +855,8 @@ export function applyToProjection(
     case "thread.unsnoozed":
     case "thread.auto-settle-set":
     case "thread.priority-set":
+    case "thread.blocked":
+    case "thread.unblocked":
     case "thread.pinned":
     case "thread.unpinned":
     case "thread.pin-reordered":
@@ -1712,6 +1725,7 @@ export function threadShellFromProjection(
     autoSettleDisabledAt: projection.thread.autoSettleDisabledAt ?? null,
     pinOrderKey: projection.thread.pinOrderKey ?? null,
     priority: projection.thread.priority ?? null,
+    blockedOn: projection.thread.blockedOn ?? null,
     lastVisitedAt: projection.thread.lastVisitedAt,
     opens: projection.thread.opens ?? null,
     titleRegeneration: projection.thread.titleRegeneration ?? null,
@@ -1973,6 +1987,7 @@ function shellFromState(input: {
     autoSettleDisabledAt: input.state.thread.autoSettleDisabledAt ?? null,
     pinOrderKey: input.state.thread.pinOrderKey ?? null,
     priority: input.state.thread.priority ?? null,
+    blockedOn: input.state.thread.blockedOn ?? null,
     lastVisitedAt: input.state.thread.lastVisitedAt,
     opens: input.state.thread.opens ?? null,
     titleRegeneration: input.state.thread.titleRegeneration ?? null,
@@ -2023,6 +2038,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             case "thread.unsnoozed":
             case "thread.auto-settle-set":
             case "thread.priority-set":
+            case "thread.blocked":
+            case "thread.unblocked":
             case "thread.pinned":
             case "thread.unpinned":
             case "thread.pin-reordered":
@@ -2857,6 +2874,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             event.type !== "thread.unsnoozed" &&
             event.type !== "thread.auto-settle-set" &&
             event.type !== "thread.priority-set" &&
+            event.type !== "thread.blocked" &&
+            event.type !== "thread.unblocked" &&
             event.type !== "thread.pinned" &&
             event.type !== "thread.unpinned" &&
             event.type !== "thread.pin-reordered" &&
@@ -6267,6 +6286,25 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         )
         .pipe(Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })));
 
+    const getBlockedThreads: ProjectionStoreV2Shape["getBlockedThreads"] = Effect.fn(
+      "ProjectionStore.getBlockedThreads",
+    )(
+      function* (blockerThreadId) {
+        const rows = yield* sql<PayloadRow>`
+          SELECT payload_json
+          FROM orchestration_v2_projection_threads
+          WHERE deleted_at IS NULL
+            AND json_extract(payload_json, '$.archivedAt') IS NULL
+            AND json_extract(payload_json, '$.blockedOn.threadId') ${blockerThreadId === undefined ? sql`IS NOT NULL` : sql`= ${blockerThreadId}`}
+        `;
+        const threads = yield* Effect.forEach(rows, (row) => decodeThreadPayload(row.payload_json));
+        return threads.flatMap((thread) =>
+          thread.blockedOn == null ? [] : [{ id: thread.id, blockedOn: thread.blockedOn }],
+        );
+      },
+      Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+    );
+
     const getThreadsWithPullRequests: ProjectionStoreV2Shape["getThreadsWithPullRequests"] =
       Effect.fn("ProjectionStore.getThreadsWithPullRequests")(
         function* (threadId) {
@@ -6784,6 +6822,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       findGuestShareThreadId: readOnReader(findGuestShareThreadId),
       getThread: readOnReader(getThread),
       getSettlementCandidates: readOnReader(getSettlementCandidates),
+      getBlockedThreads: readOnReader(getBlockedThreads),
       getThreadsWithPullRequests: readOnReader(getThreadsWithPullRequests),
       getThreadWorktreePaths: readOnReader(getThreadWorktreePaths),
       getThreadProjection,
@@ -6996,6 +7035,19 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
         }
         return projection.thread;
       }),
+      getBlockedThreads: Effect.fn("ProjectionStore.getBlockedThreads")(
+        function* (blockerThreadId) {
+          const projections = (yield* Ref.get(replayState)).projections;
+          return [...projections.values()].flatMap(({ thread }) =>
+            thread.blockedOn != null &&
+            thread.deletedAt === null &&
+            thread.archivedAt === null &&
+            (blockerThreadId === undefined || thread.blockedOn.threadId === blockerThreadId)
+              ? [{ id: thread.id, blockedOn: thread.blockedOn }]
+              : [],
+          );
+        },
+      ),
       getSettlementCandidates: Effect.fn("ProjectionStore.getSettlementCandidates")(
         function* (threadId) {
           const projections = (yield* Ref.get(replayState)).projections;

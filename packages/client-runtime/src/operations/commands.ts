@@ -1,5 +1,6 @@
 import { remapComposerContextAttachments } from "@t3tools/shared/composerContextReferences";
 import {
+  type ThreadBlockUntil,
   type ThreadLinkedPullRequest,
   CommandId,
   CheckpointId,
@@ -563,6 +564,33 @@ export const unsettleThread = Effect.fn("EnvironmentCommands.unsettleThread")(fu
     commandId: yield* allocateCommandId(input),
     threadId: input.threadId,
     reason: input.reason,
+  });
+});
+
+export interface BlockThreadInput extends ThreadCommandInput {
+  readonly blockerThreadId: ThreadId;
+  readonly until: ThreadBlockUntil;
+}
+export const blockThread = Effect.fn("EnvironmentCommands.blockThread")(function* (
+  input: BlockThreadInput,
+) {
+  return yield* dispatch({
+    type: "thread.block",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    blockerThreadId: input.blockerThreadId,
+    until: input.until,
+  });
+});
+
+export const unblockThread = Effect.fn("EnvironmentCommands.unblockThread")(function* (
+  input: ThreadCommandInput,
+) {
+  return yield* dispatch({
+    type: "thread.unblock",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    reason: "user",
   });
 });
 

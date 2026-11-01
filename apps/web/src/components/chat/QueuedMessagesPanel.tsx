@@ -183,6 +183,7 @@ export const QueuedMessagesPanel = memo(function QueuedMessagesPanel(props: {
                       accounts={usageAccounts}
                       preferredInstanceId={message.sendContext.modelSelection?.instanceId ?? null}
                       initialTrigger={message.trigger}
+                      thread={{ environmentId, threadId: message.threadId }}
                       confirmLabel="Save trigger"
                       onConfirm={(trigger) => {
                         setEditingMessageId(null);

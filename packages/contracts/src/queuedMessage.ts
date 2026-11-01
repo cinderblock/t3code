@@ -10,7 +10,10 @@ import {
 import { ChatAttachment } from "./chatAttachment.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { ModelSelection } from "./modelSelection.ts";
-import { OrchestrationV2ThreadLaunchWorkspaceStrategy } from "./orchestrationV2.ts";
+import {
+  OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  ThreadBlockUntil,
+} from "./orchestrationV2.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 
 /**
@@ -64,6 +67,14 @@ export const QueuedMessageTrigger = Schema.Union([
     minRemainingPercent: Schema.Number,
     /** How close to reset before firing, in minutes. */
     leadMinutes: Schema.Number,
+  }),
+  /** Send when another thread is done, by the same rule that releases a blocked thread. */
+  Schema.Struct({
+    type: Schema.Literal("thread"),
+    threadId: ThreadId,
+    until: ThreadBlockUntil,
+    /** Stamped by the server. A failure before this doesn't count. */
+    since: Schema.optional(IsoDateTime),
   }),
 ]);
 export type QueuedMessageTrigger = typeof QueuedMessageTrigger.Type;

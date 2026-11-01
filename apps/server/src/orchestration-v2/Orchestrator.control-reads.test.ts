@@ -16,8 +16,11 @@ import {
   RunId,
   RuntimeRequestId,
   ThreadId,
+  IsoDateTime,
   TurnItemId,
 } from "@t3tools/contracts";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as ThreadBlockService from "./ThreadBlockService.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -1406,6 +1409,134 @@ it.effect("dispatch records the command outcome and its duration", () =>
 
     assert.strictEqual((yield* successes).count - successesBefore, 1);
     assert.strictEqual((yield* durations).count - durationsBefore, 1);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+const createBlockThread = (threadId: ThreadId) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make(`create-${threadId}`),
+      threadId,
+      projectId: ProjectId.make("project:block"),
+      title: threadId,
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+  });
+
+const blockCommand = (threadId: ThreadId, blockerThreadId: ThreadId, id: string) =>
+  ({
+    type: "thread.block",
+    commandId: CommandId.make(`block-${id}`),
+    threadId,
+    blockerThreadId,
+    until: "settled",
+  }) as const;
+
+it.effect("stores a block, then the release service clears it when the blocker settles", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const waiting = ThreadId.make("thread:waiting");
+    const blocker = ThreadId.make("thread:blocker");
+    yield* createBlockThread(waiting);
+    yield* createBlockThread(blocker);
+
+    yield* orchestrator.dispatch(blockCommand(waiting, blocker, "release"));
+    const blocked = yield* projections.getThread(waiting);
+    assert.equal(blocked.blockedOn?.threadId, blocker);
+    assert.deepEqual(
+      (yield* projections.getBlockedThreads(blocker)).map((thread) => thread.id),
+      [waiting],
+    );
+
+    yield* ThreadBlockService.releaseBlockedThreads(undefined).pipe(
+      Effect.provide(NodeCrypto.layer),
+    );
+    assert.equal((yield* projections.getThread(waiting)).blockedOn?.threadId, blocker);
+
+    yield* orchestrator.dispatch({
+      type: "thread.settle",
+      commandId: CommandId.make("settle-blocker"),
+      threadId: blocker,
+    });
+    yield* ThreadBlockService.releaseBlockedThreads(blocker).pipe(Effect.provide(NodeCrypto.layer));
+    assert.equal((yield* projections.getThread(waiting)).blockedOn ?? null, null);
+    assert.deepEqual(yield* projections.getBlockedThreads(), []);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("refuses a block on itself, in a cycle, or that would release at once", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const a = ThreadId.make("thread:a");
+    const b = ThreadId.make("thread:b");
+    const c = ThreadId.make("thread:c");
+    for (const thread of [a, b, c]) yield* createBlockThread(thread);
+
+    const refused = (command: Parameters<typeof orchestrator.dispatch>[0]) =>
+      orchestrator.dispatch(command).pipe(
+        Effect.flip,
+        Effect.map((error) => ("cause" in error ? error.cause : error)),
+      );
+
+    assert.include(String(yield* refused(blockCommand(a, a, "self"))), "cannot block on itself");
+
+    yield* orchestrator.dispatch(blockCommand(a, b, "ab"));
+    yield* orchestrator.dispatch(blockCommand(b, c, "bc"));
+    assert.include(String(yield* refused(blockCommand(c, a, "ca"))), "already waiting");
+
+    const idle = ThreadId.make("thread:idle");
+    yield* createBlockThread(idle);
+    assert.include(
+      String(yield* refused({ ...blockCommand(c, idle, "idle"), until: "finished" })),
+      "nothing to wait for",
+    );
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("keeps one parked state: block, snooze and settle replace each other", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const thread = ThreadId.make("thread:parked");
+    const blocker = ThreadId.make("thread:parked-blocker");
+    yield* createBlockThread(thread);
+    yield* createBlockThread(blocker);
+
+    yield* orchestrator.dispatch({
+      type: "thread.snooze",
+      commandId: CommandId.make("parked-snooze"),
+      threadId: thread,
+      snoozedUntil: IsoDateTime.make("2099-01-01T00:00:00.000Z"),
+    });
+    yield* orchestrator.dispatch(blockCommand(thread, blocker, "over-snooze"));
+    const blocked = yield* projections.getThread(thread);
+    assert.equal(blocked.snoozedUntil ?? null, null);
+    assert.equal(blocked.blockedOn?.threadId, blocker);
+
+    yield* orchestrator.dispatch({
+      type: "thread.snooze",
+      commandId: CommandId.make("parked-snooze-again"),
+      threadId: thread,
+      snoozedUntil: IsoDateTime.make("2099-01-01T00:00:00.000Z"),
+    });
+    assert.equal((yield* projections.getThread(thread)).blockedOn ?? null, null);
+
+    yield* orchestrator.dispatch(blockCommand(thread, blocker, "before-settle"));
+    yield* orchestrator.dispatch({
+      type: "thread.settle",
+      commandId: CommandId.make("parked-settle"),
+      threadId: thread,
+    });
+    assert.equal((yield* projections.getThread(thread)).blockedOn ?? null, null);
   }).pipe(Effect.provide(layerTest)),
 );
 

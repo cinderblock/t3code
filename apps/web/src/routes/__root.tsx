@@ -16,6 +16,7 @@ import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { APP_DISPLAY_NAME, APP_VERSION } from "../branding";
 import { AppSidebarLayout } from "../components/AppSidebarLayout";
 import { CommandPalette } from "../components/CommandPalette";
+import { BlockThreadDialogHost } from "../components/BlockThreadDialog";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
 import { AddProjectToMachineDialogHost } from "../components/AddProjectToMachineDialog";
@@ -166,6 +167,7 @@ function RootRouteBranch() {
     return (
       <>
         <CustomSnoozeDialogHost />
+        <BlockThreadDialogHost />
         <GuestShareDialogHost />
         <CommandPalette>
           <AppSidebarLayout>
@@ -205,6 +207,7 @@ function RootRouteBranch() {
         <ReopenClosedViewShortcut />
         <ConfirmDialogHost />
         <CustomSnoozeDialogHost />
+        <BlockThreadDialogHost />
         <GuestShareDialogHost />
         <ProjectCloneToastCoordinator />
         {primaryEnvironmentAuthenticated ? <PasskeyEnrollmentOffer /> : null}

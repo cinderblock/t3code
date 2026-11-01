@@ -120,6 +120,7 @@ export function idleCompactionWindow(
   if (thread.settledAt !== null || thread.settledOverride === "settled") return null;
   if (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs)
     return null;
+  if (thread.blockedOn != null) return null;
   const latestRun = latestOf(runs);
   if (latestRun?.status !== "completed" || latestRun.completedAt === null) return null;
   const usage = compactableUsage(records, latestRun);

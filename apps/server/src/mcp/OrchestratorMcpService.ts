@@ -871,6 +871,7 @@ function listItemFromShell(
     ...threadSettlement(shell),
     ...threadSnooze(shell, nowMs),
     priority: shell.priority ?? null,
+    blockedOn: shell.blockedOn ?? null,
     parentThreadId: shell.lineage.parentThreadId,
     relationshipToParent: shell.lineage.relationshipToParent,
     itemCount: shell.visibleItemCount,
@@ -924,6 +925,7 @@ function threadDetail(
     ...threadSettlement(projection.thread),
     ...threadSnooze(shell, nowMs),
     priority: projection.thread.priority ?? null,
+    blockedOn: projection.thread.blockedOn ?? null,
     createdAt: DateTime.formatIso(projection.thread.createdAt),
     updatedAt: DateTime.formatIso(projection.thread.updatedAt),
   };
