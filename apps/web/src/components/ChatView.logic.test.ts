@@ -177,6 +177,89 @@ describe("hasServerAcknowledgedLocalDispatch", () => {
     ).toBe(false);
   });
 
+  describe("a message queued behind other work", () => {
+    const queuedRun = {
+      ...completedTurn,
+      runId: RunId.make("turn-2"),
+      status: "queued" as const,
+      requestedAt: "2026-03-29T00:01:00.000Z",
+      startedAt: null,
+      completedAt: null,
+    };
+    const acknowledged = (input: {
+      readonly phase: "running" | "connecting";
+      readonly latestUserMessageId: MessageId;
+    }) =>
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch: createLocalDispatchSnapshot(
+          makeThread({ latestRun: completedTurn, runtime: readySession }),
+          { latestUserMessageId: MessageId.make("message-before") },
+        ),
+        phase: input.phase,
+        latestRun: queuedRun,
+        latestUserMessageId: input.latestUserMessageId,
+        // The shell leaves out an automatic compaction, so a message behind one reads as queued.
+        runtime: { ...readySession, status: "queued", activeRunId: null },
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      });
+
+    it("is delivered while an automatic compaction runs ahead of it", () => {
+      expect(
+        acknowledged({
+          phase: "running",
+          latestUserMessageId: MessageId.make("message-queued"),
+        }),
+      ).toBe(true);
+    });
+
+    it("stays delivered between the run ahead of it ending and its own start", () => {
+      expect(
+        acknowledged({
+          phase: "connecting",
+          latestUserMessageId: MessageId.make("message-queued"),
+        }),
+      ).toBe(true);
+    });
+
+    it("is not delivered until the server has the message", () => {
+      expect(
+        acknowledged({
+          phase: "connecting",
+          latestUserMessageId: MessageId.make("message-before"),
+        }),
+      ).toBe(false);
+    });
+  });
+
+  it("still holds a delivered message while its run is starting", () => {
+    const localDispatch = createLocalDispatchSnapshot(
+      makeThread({ latestRun: completedTurn, runtime: readySession }),
+      { latestUserMessageId: MessageId.make("message-before") },
+    );
+    const startingRun = {
+      ...completedTurn,
+      runId: RunId.make("turn-2"),
+      status: "starting" as const,
+      startedAt: null,
+      completedAt: null,
+    };
+
+    expect(
+      hasServerAcknowledgedLocalDispatch({
+        localDispatch,
+        phase: "connecting",
+        latestRun: startingRun,
+        latestUserMessageId: MessageId.make("message-sent"),
+        runtime: { ...readySession, status: "starting", activeRunId: startingRun.runId },
+        hasPendingApproval: false,
+        hasPendingUserInput: false,
+        threadError: null,
+      }),
+    ).toBe(false);
+  });
+
   it("waits for the matching running turn before acknowledging", () => {
     const localDispatch = createLocalDispatchSnapshot(
       makeThread({ latestRun: completedTurn, runtime: readySession }),

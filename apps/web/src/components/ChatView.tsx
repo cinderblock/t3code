@@ -2405,6 +2405,7 @@ export default function ChatView(props: ChatViewProps) {
     !isServerThread ||
     !manualCompactionProviderAvailable ||
     isWorking ||
+    phase === "connecting" ||
     isRevertingCheckpoint ||
     threadDetailLoading ||
     isPreparingWorktree ||

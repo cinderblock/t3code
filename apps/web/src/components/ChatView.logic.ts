@@ -1124,14 +1124,18 @@ export function hasServerAcknowledgedLocalDispatch(input: {
   if (input.hasPendingApproval || input.hasPendingUserInput || Boolean(input.threadError)) {
     return true;
   }
-  if (input.phase === "connecting" || derivePhase(input.runtime ?? null) === "connecting") {
-    return false;
-  }
-
   const latestRun = input.latestRun ?? null;
   const runtime = input.runtime ?? null;
   const latestUserMessageChanged =
     input.localDispatch.latestUserMessageId !== (input.latestUserMessageId ?? null);
+  // Queued reads as connecting, and the shell omits an automatic compaction ahead of the message.
+  if (latestUserMessageChanged && latestRun?.status === "queued") {
+    return true;
+  }
+  if (input.phase === "connecting" || derivePhase(input.runtime ?? null) === "connecting") {
+    return false;
+  }
+
   const latestRunChanged =
     input.localDispatch.latestRunId !== (latestRun?.runId ?? null) ||
     input.localDispatch.latestRunRequestedAt !== (latestRun?.requestedAt ?? null) ||
