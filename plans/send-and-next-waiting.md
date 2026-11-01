@@ -47,8 +47,9 @@ leave" action, but landing on a thread that needs them instead of a draft.
 - [x] Rebuild and restart the desktop app. The idle watcher relaunched it on 2026-10-31 at
       6:27 PM PDT (2026-11-01 01:27Z), run `C:\temp\t3runs\20261031-182535`.
 - [x] `Ctrl+W` settles and moves on, with tests and docs
-- [ ] `Ctrl+W` order fix: committed, not yet in the running app. Needs a rebuild and restart, and
-      the maintainer has not yet approved that restart.
+- [ ] `Ctrl+W` order fix (`54abfadd71`): committed, not yet in the running app. The maintainer
+      approved the restart, and the idle watcher (pid 27764) has been waiting since
+      2026-11-01 11:49 AM PST (19:49Z).
 - [ ] Try `Alt+Enter`, `Ctrl+Alt+]` and `Ctrl+W` in the real app. Not done: no browser verification
       was requested.
 
@@ -73,7 +74,7 @@ The maintainer asked for `Ctrl+W` to act like closing a finished tab.
 
 ### Ctrl+W did nothing after the first relaunch
 
-Reported 2026-11-01 PDT. `Alt+Enter` worked, `Ctrl+W` did not.
+Reported 2026-11-01. `Alt+Enter` worked, `Ctrl+W` did not.
 
 - The last matching rule wins, and startup sync writes new defaults ahead of the saved rules, so
   custom shortcuts win overlaps. In an existing `keybindings.json` the new `thread.settleAndNext`
