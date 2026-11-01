@@ -44,9 +44,8 @@ leave" action, but landing on a thread that needs them instead of a draft.
 - [x] Bridge, sidebar handler, send path
 - [x] Docs
 - [x] Checks and commit
-- [ ] Rebuild and restart the desktop app. `start-t3.ps1 -BuildOnly` refuses while the app runs, since
-      swapping web chunks would break its lazy routes, and restarting it would stop the app hosting
-      this thread, so that step is the maintainer's.
+- [x] Rebuild and restart the desktop app. The idle watcher relaunched it on 2026-10-31 at
+      6:27 PM PDT (2026-11-01 01:27Z), run `C:\temp\t3runs\20261031-182535`.
 - [x] `Ctrl+W` settles and moves on, with tests and docs
 - [ ] Try `Alt+Enter`, `Ctrl+Alt+]` and `Ctrl+W` in the real app. Not done: no browser verification
       was requested.
