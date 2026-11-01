@@ -295,7 +295,7 @@ it.effect("schedule needs a time, and refuses one already past", () =>
   Effect.gen(function* () {
     assert.deepInclude(yield* callTool({ action: "schedule", text: "When?" }), {
       code: "invalid_request",
-      message: "This action needs `at` or `windowReset`.",
+      message: "This action needs `at`, `windowReset` or `afterThread`.",
     });
     yield* TestClock.adjust("1 hour");
     assert.deepInclude(

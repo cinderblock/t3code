@@ -4,6 +4,7 @@ import {
   QueuedMessageId,
   QueuedMessageStatus,
   QueuedMessageTrigger,
+  ThreadBlockUntil,
   ThreadId,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
@@ -27,7 +28,7 @@ const SendLaterEntry = Schema.Struct({
 
 const SendLaterTool = Tool.make("t3_send_later", {
   description:
-    "Send one message into a thread later, once, when the user asks to send something at a time or when their usage resets. Omit `threadId` for this thread. schedule: `text`, plus `at` or `windowReset`. list: messages not sent yet, and failed ones. cancel: by `id`. For repeating work use schedule_task. For follow-ups behind the current run use t3_queue.",
+    "Send one message into a thread later, once, when the user asks to send something at a time or when their usage resets, or when another thread is done. Omit `threadId` for this thread. schedule: `text`, plus `at`, `windowReset`, or `afterThread` with `until`. list: messages not sent yet, and failed ones. cancel: by `id`. For repeating work use schedule_task. For follow-ups behind the current run use t3_queue.",
   parameters: Schema.Struct({
     action: Schema.Literals(["schedule", "list", "cancel"]),
     threadId: Schema.optional(ThreadId),
@@ -38,6 +39,15 @@ const SendLaterTool = Tool.make("t3_send_later", {
     windowReset: Schema.optional(
       Schema.Literals(["session", "weekly"]).annotate({
         description: "Send when this usage window resets. session is the 5-hour window.",
+      }),
+    ),
+    afterThread: Schema.optional(
+      ThreadId.annotate({ description: "Send when this other thread is done." }),
+    ),
+    until: Schema.optional(
+      ThreadBlockUntil.annotate({
+        description:
+          "With afterThread. finished: it stops working. settled: the user is done with it.",
       }),
     ),
     id: Schema.optional(QueuedMessageId),

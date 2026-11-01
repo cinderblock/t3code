@@ -72,7 +72,14 @@ export const layer = McpToolAccess.toLayer(SendLaterToolkit, {
         const when =
           input.at !== undefined
             ? { at: input.at }
-            : { windowReset: yield* required(input.windowReset, "at` or `windowReset") };
+            : input.afterThread !== undefined
+              ? { afterThread: input.afterThread, until: yield* required(input.until, "until") }
+              : {
+                  windowReset: yield* required(
+                    input.windowReset,
+                    "at`, `windowReset` or `afterThread",
+                  ),
+                };
         const crypto = yield* Crypto.Crypto;
         const id = QueuedMessageId.make(yield* crypto.randomUUIDv4().pipe(Effect.orDie));
         return entry(
