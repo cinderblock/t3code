@@ -211,6 +211,17 @@ longest is at the top of each priority group. To put the most recent first inste
 **Inbox order** for that group in **Settings → General**. Your saved order returns when you turn
 the Working section off.
 
+### Block a thread on another thread
+
+When a thread can't go on until another one is done, choose **Blocked on a thread…** from its
+context menu, pick the other thread, and choose whether to wait until it finishes or settles.
+Agents can do the same. The thread moves to **Blocked**, and returns to your inbox, marked unread,
+when the other thread is done. It also returns if the other thread fails or is archived, so
+nothing waits forever. To have it continue by itself, queue a message with **When another thread
+is done**. Choose **Stop waiting** to end a block early.
+
+On mobile, blocked threads appear in **Snoozed**, and waking one ends the block.
+
 ### Set thread priority
 
 Open a thread's menu and choose **Priority**, then **High**, **Normal**, or **Low**. On web and
