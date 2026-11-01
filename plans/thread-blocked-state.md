@@ -88,6 +88,8 @@ thread waiting on another thread had no way to say so.
 - [x] Typecheck and tests (server, web, mobile, contracts, client-runtime)
 - [ ] Evals for the changed tool text (no `ANTHROPIC_API_KEY` in a repo `.env` on this machine)
 - [ ] Integrated pass in a real client (needs the user's go-ahead)
+- [x] Merged into `master` as `fc3581ba1f` (2026-11-01), not pushed. Web typecheck clean on the merged tree.
+- [ ] Running app rebuilt: the idle watcher (pid 27764) relaunches once no thread is working.
 
 ## Things not to do
 
