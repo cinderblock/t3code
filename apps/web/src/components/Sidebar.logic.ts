@@ -165,16 +165,29 @@ export const animateSidebarLayoutChanges: AnimateLayoutChanges = (args) =>
 // Snoozed rows cannot accept drops without a wake time. Working and Scheduled placement follows the
 // thread's state, so those rows only drag out as chat context.
 
-export type SidebarSection = "pinned" | "active" | "working" | "scheduled" | "snoozed" | "settled";
+export type SidebarSection =
+  | "pinned"
+  | "active"
+  | "working"
+  | "scheduled"
+  | "blocked"
+  | "snoozed"
+  | "settled";
 
 export const isCardSection = (section: SidebarSection) =>
-  section !== "snoozed" && section !== "settled";
+  section !== "blocked" && section !== "snoozed" && section !== "settled";
+
+export function blockedOnLabel(blockerTitle: string | undefined): string {
+  return `Waiting on ${blockerTitle ?? "another thread"}`;
+}
 
 export function resolveSidebarThreadSection(input: {
+  readonly blocked: boolean;
   readonly snoozed: boolean;
   readonly settled: boolean;
   readonly pinned: boolean;
 }): SidebarSection {
+  if (input.blocked) return "blocked";
   if (input.snoozed) return "snoozed";
   if (input.settled) return "settled";
   if (input.pinned) return "pinned";
@@ -190,6 +203,7 @@ export type SidebarListMarker =
   | "pinned-divider"
   | "working-header"
   | "scheduled-header"
+  | "blocked-header"
   | "snoozed-header"
   | "settled-header";
 
@@ -213,6 +227,7 @@ function sectionAtSidebarSlot(items: readonly SidebarListItem[], index: number):
     if (item.marker === "pinned-divider") section = "active";
     else if (item.marker === "working-header") section = "working";
     else if (item.marker === "scheduled-header") section = "scheduled";
+    else if (item.marker === "blocked-header") section = "blocked";
     else if (item.marker === "snoozed-header") section = "snoozed";
     else if (item.marker === "settled-header") section = "settled";
   }
@@ -236,7 +251,14 @@ export function resolveSidebarDropTarget(
   const moved = items.filter((_, index) => index !== activeIndex);
   moved.splice(overIndex, 0, items[activeIndex]!);
   const section = sectionAtSidebarSlot(moved, overIndex);
-  if (section === "working" || section === "scheduled" || section === "snoozed") return null;
+  if (
+    section === "working" ||
+    section === "scheduled" ||
+    section === "blocked" ||
+    section === "snoozed"
+  ) {
+    return null;
+  }
   const pinnedOrder: string[] = [];
   const activeOrder: string[] = [];
   let currentSection: SidebarSection = "pinned";
@@ -246,6 +268,7 @@ export function resolveSidebarDropTarget(
       else if (
         item.marker === "working-header" ||
         item.marker === "scheduled-header" ||
+        item.marker === "blocked-header" ||
         item.marker === "snoozed-header" ||
         item.marker === "settled-header"
       )
@@ -276,6 +299,7 @@ export type SidebarThreadDropPlan =
       readonly unpin: boolean;
       readonly unsettle: boolean;
       readonly unsnooze: boolean;
+      readonly unblock: boolean;
     }
   | { readonly kind: "settle" };
 
@@ -285,7 +309,14 @@ export function resolveSidebarDropVerb(
   from: SidebarSection,
   to: SidebarSection | null,
 ): SidebarDropVerb | null {
-  if (to === null || to === from || to === "working" || to === "scheduled" || to === "snoozed") {
+  if (
+    to === null ||
+    to === from ||
+    to === "working" ||
+    to === "scheduled" ||
+    to === "blocked" ||
+    to === "snoozed"
+  ) {
     return null;
   }
   if (to === "pinned") return "pin";
@@ -376,6 +407,7 @@ export function planSidebarThreadDrop(input: {
               unpin: activePinned,
               unsettle: activeSettled,
               unsnooze: activeSection === "snoozed",
+              unblock: activeSection === "blocked",
             };
       }
       const order = target.activeOrder;
@@ -395,6 +427,7 @@ export function planSidebarThreadDrop(input: {
         unpin: activePinned,
         unsettle: activeSettled,
         unsnooze: activeSection === "snoozed",
+        unblock: activeSection === "blocked",
       };
     }
     case "settled":

@@ -7,6 +7,7 @@ import type {
   OrchestrationProjectShell,
   OrchestrationV2ProviderGoal,
   OrchestrationV2RunStatus,
+  OrchestrationV2ThreadBlock,
   OrchestrationV2ProviderFailureClass,
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadShell,
@@ -181,6 +182,7 @@ export interface EnvironmentThreadShell {
   readonly activeOrderKey: string | null;
   /** null is normal priority; higher sorts first. */
   readonly priority: number | null;
+  readonly blockedOn: OrchestrationV2ThreadBlock | null;
   readonly pullRequests: ReadonlyArray<import("@t3tools/contracts").ThreadPullRequestLink>;
   readonly linkedPullRequest?: ThreadLinkedPullRequest | null;
   readonly branchPullRequest?: ThreadLinkedPullRequest | null;
@@ -341,6 +343,7 @@ export function presentThreadShell(
     pinOrderKey: thread.pinOrderKey ?? null,
     activeOrderKey: thread.activeOrderKey ?? null,
     priority: thread.priority ?? null,
+    blockedOn: thread.blockedOn ?? null,
     ...(thread.lastVisitedAt === undefined
       ? {}
       : { lastVisitedAt: nullableIso(thread.lastVisitedAt) }),

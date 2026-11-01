@@ -13,6 +13,7 @@ import {
   EnvironmentAuthorizationError,
   EnvironmentId,
   type ScopedThreadRef,
+  type ThreadBlockUntil,
   ThreadId,
   sessionGrantsScope,
 } from "@t3tools/contracts";
@@ -37,6 +38,7 @@ import { releaseComposerDraftUploads } from "../lib/composerDraftUploads";
 import { readLocalApi } from "../localApi";
 import {
   readEnvironmentSupportsAutoSettleOptOut,
+  readEnvironmentSupportsBlocking,
   readEnvironmentSupportsPriority,
   readEnvironmentSupportsPinning,
   readEnvironmentSupportsPinReorder,
@@ -117,6 +119,18 @@ function topOfPinnedRunOrderKey(): string | undefined {
     if (firstKey === null || shell.pinOrderKey < firstKey) firstKey = shell.pinOrderKey;
   }
   return pinOrderKeyBetween(null, firstKey) ?? undefined;
+}
+
+class ThreadBlockingUnsupportedError extends Schema.TaggedError<ThreadBlockingUnsupportedError>()(
+  "ThreadBlockingUnsupportedError",
+  {
+    environmentId: EnvironmentId,
+    threadId: ThreadId,
+  },
+) {
+  override get message(): string {
+    return "This environment's server does not support blocked threads yet. Update the server to use them.";
+  }
 }
 
 export class ThreadPriorityUnsupportedError extends Schema.TaggedError<ThreadPriorityUnsupportedError>()(
@@ -282,6 +296,12 @@ export function useThreadActions() {
     reportFailure: false,
   });
   const setThreadAutoSettleMutation = useOrchestrationCommand(threadEnvironment.setAutoSettle, {
+    reportFailure: false,
+  });
+  const blockThreadMutation = useOrchestrationCommand(threadEnvironment.block, {
+    reportFailure: false,
+  });
+  const unblockThreadMutation = useOrchestrationCommand(threadEnvironment.unblock, {
     reportFailure: false,
   });
   const setThreadPriorityMutation = useOrchestrationCommand(threadEnvironment.setPriority, {
@@ -668,6 +688,33 @@ export function useThreadActions() {
     });
   };
 
+  const blockThread = async (
+    target: ScopedThreadRef,
+    blockerThreadId: ThreadId,
+    until: ThreadBlockUntil,
+  ) => {
+    if (!readEnvironmentSupportsBlocking(target.environmentId)) {
+      return AsyncResult.failure(
+        Cause.fail(
+          new ThreadBlockingUnsupportedError({
+            environmentId: target.environmentId,
+            threadId: target.threadId,
+          }),
+        ),
+      );
+    }
+    return blockThreadMutation({
+      environmentId: target.environmentId,
+      input: { threadId: target.threadId, blockerThreadId, until },
+    });
+  };
+
+  const unblockThread = async (target: ScopedThreadRef) =>
+    unblockThreadMutation({
+      environmentId: target.environmentId,
+      input: { threadId: target.threadId },
+    });
+
   const setThreadPriority = async (target: ScopedThreadRef, priority: number | null) => {
     if (!readEnvironmentSupportsPriority(target.environmentId)) {
       return AsyncResult.failure(
@@ -967,5 +1014,7 @@ export function useThreadActions() {
     markThreadUnread,
     setThreadAutoSettle,
     setThreadPriority,
+    blockThread,
+    unblockThread,
   };
 }

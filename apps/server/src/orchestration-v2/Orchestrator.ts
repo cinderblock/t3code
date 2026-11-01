@@ -25,6 +25,8 @@ import {
   type GuestMessageId,
   isCompactionCommandMessage,
   isOrchestrationV2WorkActive,
+  IsoDateTime,
+  threadBlockReleased,
   isProviderNativeSubagentThread,
   MessageId,
   type NodeId,
@@ -36,6 +38,7 @@ import {
   type ThreadPullRequestLink,
   type ThreadPullRequestWatch,
   type OrchestrationV2AppThread,
+  type OrchestrationV2ThreadBlock,
   type OrchestrationV2ContextHandoff,
   type OrchestrationV2ContextSourcePoint,
   type OrchestrationV2ContextTransfer,
@@ -487,6 +490,8 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.unsnooze":
     case "thread.auto-settle.set":
     case "thread.priority.set":
+    case "thread.block":
+    case "thread.unblock":
     case "thread.pin":
     case "thread.unpin":
     case "thread.pin.reorder":
@@ -2828,6 +2833,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           | "thread.unsnooze"
           | "thread.auto-settle.set"
           | "thread.priority.set"
+          | "thread.block"
+          | "thread.unblock"
           | "thread.pin"
           | "thread.unpin"
           | "thread.pin.reorder"
@@ -2976,6 +2983,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command.type === "thread.unsnooze" ||
         command.type === "thread.auto-settle.set" ||
         command.type === "thread.priority.set" ||
+        command.type === "thread.block" ||
+        command.type === "thread.unblock" ||
         command.type === "thread.pin" ||
         command.type === "thread.unpin" ||
         command.type === "thread.pin.reorder" ||
@@ -3188,26 +3197,80 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     }
     let snoozedUntil: DateTime.Utc | null = null;
-    if (command.type === "thread.snooze") {
+    let blockedOn: OrchestrationV2ThreadBlock | null = null;
+    if (command.type === "thread.block") {
+      const rejectBlock = (cause: string) =>
+        new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause,
+        });
+      if (command.blockerThreadId === command.threadId) {
+        return yield* rejectBlock(`Thread ${command.threadId} cannot block on itself.`);
+      }
+      if (thread.archivedAt !== null || thread.settledOverride === "settled") {
+        return yield* rejectBlock(`Thread ${command.threadId} is settled or archived.`);
+      }
+      const readBlocker = (threadId: ThreadId) =>
+        projectionStore
+          .getThreadShell(threadId)
+          .pipe(
+            Effect.mapError(
+              (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+            ),
+          );
+      const blocker = yield* readBlocker(command.blockerThreadId);
+      if (blocker === null) {
+        return yield* rejectBlock(`Thread ${command.blockerThreadId} does not exist.`);
+      }
+      const block = {
+        threadId: command.blockerThreadId,
+        until: command.until,
+        blockedAt: IsoDateTime.make(DateTime.formatIso(now)),
+      };
+      // An agent can't see the sidebar, so a block that would release at once must fail loudly.
+      if (threadBlockReleased(block, blocker)) {
+        return yield* rejectBlock(
+          `Thread ${command.blockerThreadId} is already ${command.until}; there is nothing to wait for.`,
+        );
+      }
+      const visited = new Set<ThreadId>([command.blockerThreadId]);
+      let next = blocker.blockedOn?.threadId;
+      while (next !== undefined && !visited.has(next)) {
+        if (next === command.threadId) {
+          return yield* rejectBlock(
+            `Thread ${command.blockerThreadId} is already waiting on thread ${command.threadId}.`,
+          );
+        }
+        visited.add(next);
+        next = (yield* readBlocker(next))?.blockedOn?.threadId;
+      }
+      blockedOn = block;
+    }
+    if (command.type === "thread.snooze" || command.type === "thread.block") {
+      const parkedAs = command.type === "thread.snooze" ? "snoozed" : "blocked";
       const projection = yield* loadProjectionForCommand(command, ["runs", "runtimeRequests"], {
         turnItemTypes: [],
       });
-      const parsedSnoozedUntil = DateTime.make(command.snoozedUntil);
-      if (
-        Option.isNone(parsedSnoozedUntil) ||
-        DateTime.toEpochMillis(parsedSnoozedUntil.value) <= DateTime.toEpochMillis(now)
-      ) {
-        return yield* new OrchestratorDispatchError({
-          commandId: command.commandId,
-          commandType: command.type,
-          cause: `Thread ${command.threadId} snooze wake time ${command.snoozedUntil} is not in the future.`,
-        });
+      if (command.type === "thread.snooze") {
+        const parsedSnoozedUntil = DateTime.make(command.snoozedUntil);
+        if (
+          Option.isNone(parsedSnoozedUntil) ||
+          DateTime.toEpochMillis(parsedSnoozedUntil.value) <= DateTime.toEpochMillis(now)
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: `Thread ${command.threadId} snooze wake time ${command.snoozedUntil} is not in the future.`,
+          });
+        }
+        snoozedUntil = parsedSnoozedUntil.value;
       }
       if (projection.runtimeRequests.some((request) => request.status === "pending")) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
-          cause: `Thread ${command.threadId} has a pending approval or user-input request and cannot be snoozed.`,
+          cause: `Thread ${command.threadId} has a pending approval or user-input request and cannot be ${parkedAs}.`,
         });
       }
       const queuedRuns = projection.runs.filter((run) => run.status === "queued");
@@ -3229,12 +3292,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
-          cause: `Thread ${command.threadId} has a queued run and cannot be snoozed.`,
+          cause: `Thread ${command.threadId} has a queued run and cannot be ${parkedAs}.`,
         });
       }
-      snoozedUntil = parsedSnoozedUntil.value;
     }
     let markUnreadVisitedAt: DateTime.Utc | null = null;
+    if (command.type === "thread.unblock" && command.reason === "blocker") {
+      const projection = yield* loadProjectionForCommand(command, ["runs"]);
+      const latestRunCompletedAt = projection.runs.at(-1)?.completedAt ?? null;
+      markUnreadVisitedAt =
+        latestRunCompletedAt === null
+          ? null
+          : DateTime.subtract(latestRunCompletedAt, { milliseconds: 1 });
+    }
     if (command.type === "thread.mark-unread") {
       const projection = yield* loadProjectionForCommand(command, ["runs"]);
       const latestRunCompletedAt = projection.runs.at(-1)?.completedAt ?? null;
@@ -3275,8 +3345,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             activeOrderKey: null,
             snoozedUntil: null,
             snoozedAt: null,
+            blockedOn: null,
             updatedAt:
-              alreadySettled && thread.snoozedUntil == null && thread.snoozedAt == null
+              alreadySettled &&
+              thread.snoozedUntil == null &&
+              thread.snoozedAt == null &&
+              thread.blockedOn == null
                 ? thread.updatedAt
                 : now,
           };
@@ -3298,6 +3372,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             snoozedUntil,
             limitRecovery: thread.limitRecovery ? { ...thread.limitRecovery, snooze: false } : null,
             snoozedAt: now,
+            blockedOn: null,
+            updatedAt: now,
+          };
+        }
+        case "thread.block":
+          return { ...thread, blockedOn, snoozedUntil: null, snoozedAt: null, updatedAt: now };
+        case "thread.unblock": {
+          if (thread.blockedOn == null) return { ...thread, blockedOn: null };
+          return {
+            ...thread,
+            blockedOn: null,
+            lastSnoozeWakeAt: now,
+            lastVisitedAt: markUnreadVisitedAt ?? thread.lastVisitedAt,
             updatedAt: now,
           };
         }
@@ -3330,7 +3417,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
         case "thread.pin": {
           const alreadyPinned = thread.pinnedAt != null;
-          const promotes = thread.settledOverride === "settled" || thread.snoozedUntil != null;
+          const promotes =
+            thread.settledOverride === "settled" ||
+            thread.snoozedUntil != null ||
+            thread.blockedOn != null;
           return {
             ...thread,
             pinnedAt: alreadyPinned ? thread.pinnedAt : now,
@@ -3342,6 +3432,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             settledAt: thread.settledOverride === "settled" ? null : thread.settledAt,
             snoozedUntil: null,
             snoozedAt: null,
+            blockedOn: null,
             lastSnoozeWakeAt: thread.snoozedUntil == null ? thread.lastSnoozeWakeAt : now,
             updatedAt: alreadyPinned && !promotes ? thread.updatedAt : now,
           };
@@ -3724,6 +3815,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return "thread.auto-settle-set" as const;
         case "thread.priority.set":
           return "thread.priority-set" as const;
+        case "thread.block":
+          return "thread.blocked" as const;
+        case "thread.unblock":
+          return "thread.unblocked" as const;
         case "thread.pin":
           return "thread.pinned" as const;
         case "thread.unpin":
@@ -5185,6 +5280,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command,
       )({
         type: "thread.unsnoozed",
+        threadId: command.threadId,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+        payload: thread,
+      });
+      projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+    }
+    if (projection.thread.blockedOn != null && !automaticWake) {
+      const now = yield* DateTime.now;
+      const thread: OrchestrationV2AppThread = {
+        ...projection.thread,
+        blockedOn: null,
+        updatedAt: now,
+      };
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.unblocked",
         threadId: command.threadId,
         providerInstanceId: thread.providerInstanceId,
         occurredAt: now,
@@ -11918,6 +12032,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.unsnooze":
       case "thread.auto-settle.set":
       case "thread.priority.set":
+      case "thread.block":
+      case "thread.unblock":
       case "thread.pin":
       case "thread.unpin":
       case "thread.pin.reorder":

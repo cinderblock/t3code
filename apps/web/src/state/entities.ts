@@ -319,6 +319,13 @@ export function readEnvironmentSupportsPinning(environmentId: EnvironmentId): bo
   );
 }
 
+export function readEnvironmentSupportsBlocking(environmentId: EnvironmentId): boolean {
+  return (
+    appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities
+      .threadBlocking === true
+  );
+}
+
 export function readEnvironmentSupportsPriority(environmentId: EnvironmentId): boolean {
   return (
     appAtomRegistry.get(environmentServerConfigsAtom).get(environmentId)?.environment.capabilities

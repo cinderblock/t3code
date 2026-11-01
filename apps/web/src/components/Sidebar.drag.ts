@@ -123,6 +123,7 @@ export function createSidebarSortingStrategy(input: {
       active: [],
       working: [],
       scheduled: [],
+      blocked: [],
       snoozed: [],
       settled: [],
     };

@@ -8,6 +8,7 @@ import {
 } from "./chat/threadContextDrag";
 import { discardComposerDraft } from "../lib/discardComposerDraft";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
+import { requestThreadBlock } from "./BlockThreadDialog";
 import { useAtomValue } from "@effect/atom-react";
 import * as Option from "effect/Option";
 import { Atom } from "effect/reactivity";
@@ -25,6 +26,7 @@ import { SortableContext } from "@dnd-kit/sortable";
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import {
   canSnooze,
+  effectiveBlocked,
   effectiveSnoozed,
   threadWokeAt,
 } from "@t3tools/client-runtime/state/thread-settled";
@@ -56,7 +58,7 @@ import {
   AuthOrchestrationOperateScope,
   ProjectId,
   type ScopedThreadRef,
-  type ThreadId,
+  ThreadId,
 } from "@t3tools/contracts";
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 
@@ -212,6 +214,8 @@ import {
   type SidebarListItem,
   type SidebarSection,
   resolveSidebarRowThreadId,
+  blockedOnLabel,
+  isSidebarThreadWorking,
 } from "./Sidebar.logic";
 import {
   createSidebarCollisionDetection,
@@ -319,6 +323,7 @@ const SETTLED_TAIL_INITIAL_COUNT = 10;
 const SETTLED_TAIL_PAGE_COUNT = 25;
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
+const BLOCKED_SHELF_EXPANDED_KEY = "t3code:sidebar:blocked-expanded";
 const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
 const SCHEDULED_SHELF_EXPANDED_KEY = "t3code:sidebar:scheduled-expanded";
 
@@ -436,6 +441,11 @@ function useSidebarThreads(input: {
     false,
     Schema.Boolean,
   );
+  const [blockedShelfExpanded, setBlockedShelfExpanded] = useLocalStorage(
+    BLOCKED_SHELF_EXPANDED_KEY,
+    false,
+    Schema.Boolean,
+  );
   const [snoozedShelfExpanded, setSnoozedShelfExpanded] = useLocalStorage(
     SNOOZED_SHELF_EXPANDED_KEY,
     false,
@@ -478,6 +488,7 @@ function useSidebarThreads(input: {
     activeThreads,
     workingThreads,
     scheduledThreads,
+    blockedThreads,
     snoozedThreads,
     settledThreads,
   } = partition;
@@ -507,6 +518,9 @@ function useSidebarThreads(input: {
   const renderedSettledThreads = settledShelfExpanded
     ? visibleSettledThreads
     : routeThreadOnly(visibleSettledThreads, routeRowThreadKey);
+  const visibleBlockedThreads = blockedShelfExpanded
+    ? blockedThreads
+    : routeThreadOnly(blockedThreads, routeRowThreadKey);
   const visibleSnoozedThreads = snoozedShelfExpanded
     ? snoozedThreads
     : routeThreadOnly(snoozedThreads, routeRowThreadKey);
@@ -521,6 +535,7 @@ function useSidebarThreads(input: {
     ...activeThreads,
     ...visibleWorkingThreads,
     ...visibleScheduledThreads,
+    ...visibleBlockedThreads,
     ...visibleSnoozedThreads,
     ...renderedSettledThreads,
   ];
@@ -530,6 +545,7 @@ function useSidebarThreads(input: {
     [activeThreads, "active"],
     [workingThreads, "working"],
     [scheduledThreads, "scheduled"],
+    [blockedThreads, "blocked"],
     [snoozedThreads, "snoozed"],
     [settledThreads, "settled"],
   ] as const) {
@@ -546,6 +562,7 @@ function useSidebarThreads(input: {
       ...activeThreads,
       ...workingThreads,
       ...scheduledThreads,
+      ...blockedThreads,
       ...snoozedThreads,
       ...settledThreads,
     ],
@@ -560,6 +577,8 @@ function useSidebarThreads(input: {
       })),
     settledShelfExpanded,
     toggleSettledShelf: () => setSettledShelfExpanded((value) => !value),
+    blockedShelfExpanded,
+    toggleBlockedShelf: () => setBlockedShelfExpanded((value) => !value),
     snoozedShelfExpanded,
     toggleSnoozedShelf: () => setSnoozedShelfExpanded((value) => !value),
     workingShelfExpanded,
@@ -567,13 +586,14 @@ function useSidebarThreads(input: {
     scheduledShelfExpanded,
     toggleScheduledShelf: () => setScheduledShelfExpanded((value) => !value),
     renderedSettledThreads,
+    visibleBlockedThreads,
     visibleSnoozedThreads,
     visibleWorkingThreads,
     visibleScheduledThreads,
     orderedThreadKeys: orderedThreads.map(threadShellKey),
     threadByKey: new Map(orderedThreads.map((thread) => [threadShellKey(thread), thread] as const)),
     settledThreadKeys: new Set(settledThreads.map(threadShellKey)),
-    snoozedThreadKeys: new Set(snoozedThreads.map(threadShellKey)),
+    snoozedThreadKeys: new Set([...blockedThreads, ...snoozedThreads].map(threadShellKey)),
     sectionByThreadKey,
     pinnedKeys: pinnedThreads.map(threadShellKey),
     activeKeys: activeThreads.map(threadShellKey),
@@ -615,6 +635,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
       : inboxObservation.shelf(thread);
     return shelf === "working" ? working : shelf === "scheduled" ? scheduled : active;
   };
+  const blocked: EnvironmentThreadShell[] = [];
   const snoozed: EnvironmentThreadShell[] = [];
   const settled: EnvironmentThreadShell[] = [];
   const draggable = new Set<string>();
@@ -647,17 +668,24 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
       );
     } else {
       const section = resolveSidebarThreadSection({
+        // Mid-run it belongs on Working; the shelf is for when it has stopped to wait.
+        blocked:
+          capabilities?.threadBlocking === true &&
+          effectiveBlocked(thread) &&
+          !isSidebarThreadWorking(thread),
         snoozed: supportsSnooze && effectiveSnoozed(thread, { now: preciseNow }),
         settled: supportsSettlement && thread.settledOverride === "settled",
         pinned: thread.pinnedAt != null,
       });
-      (section === "snoozed"
-        ? snoozed
-        : section === "settled"
-          ? settled
-          : section === "pinned"
-            ? pinned
-            : inbox(thread)
+      (section === "blocked"
+        ? blocked
+        : section === "snoozed"
+          ? snoozed
+          : section === "settled"
+            ? settled
+            : section === "pinned"
+              ? pinned
+              : inbox(thread)
       ).push(thread);
     }
   }
@@ -687,6 +715,9 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
           }),
     workingThreads: sortWorkingThreadsBySend(working),
     scheduledThreads: sortWorkingThreadsBySend(scheduled),
+    blockedThreads: blocked.toSorted((left, right) =>
+      (left.blockedOn?.blockedAt ?? "").localeCompare(right.blockedOn?.blockedAt ?? ""),
+    ),
     snoozedThreads: snoozed.toSorted(
       (left, right) =>
         firstValidTimestampMs(left.snoozedUntil ?? null) -
@@ -733,13 +764,15 @@ function isOptimisticDropReleased(input: {
   if (thread === undefined || thread.archivedAt !== null) {
     return true;
   }
-  const canonicalSection = effectiveSnoozed(thread, { now })
-    ? "snoozed"
-    : thread.settledOverride === "settled"
-      ? "settled"
-      : thread.pinnedAt != null
-        ? "pinned"
-        : "active";
+  const canonicalSection = effectiveBlocked(thread)
+    ? "blocked"
+    : effectiveSnoozed(thread, { now })
+      ? "snoozed"
+      : thread.settledOverride === "settled"
+        ? "settled"
+        : thread.pinnedAt != null
+          ? "pinned"
+          : "active";
   if (
     canonicalSection !== optimisticDrop.sourceSection &&
     canonicalSection !== optimisticDrop.section
@@ -906,6 +939,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     unsettleThread,
     snoozeThread,
     unsnoozeThread,
+    blockThread,
+    unblockThread,
     pinThread,
     unpinThread,
     confirmAndUnpinThread,
@@ -1249,6 +1284,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     activeThreads,
     workingThreads,
     scheduledThreads,
+    blockedThreads,
     snoozedThreads,
     settledThreads,
     snoozeNow,
@@ -1260,6 +1296,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     showMoreSettled,
     settledShelfExpanded,
     toggleSettledShelf,
+    blockedShelfExpanded,
+    toggleBlockedShelf,
     snoozedShelfExpanded,
     toggleSnoozedShelf,
     workingShelfExpanded,
@@ -1267,6 +1305,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     scheduledShelfExpanded,
     toggleScheduledShelf,
     renderedSettledThreads,
+    visibleBlockedThreads,
     visibleSnoozedThreads,
     visibleWorkingThreads,
     visibleScheduledThreads,
@@ -1695,7 +1734,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   };
   const attemptUnsnooze = (threadRef: ScopedThreadRef) => {
     void (async () => {
-      const result = await unsnoozeThread(threadRef);
+      // Blocked rows share the wake action; the block is what's holding them.
+      const blocked = readThreadShell(threadRef)?.blockedOn != null;
+      const result = await (blocked ? unblockThread(threadRef) : unsnoozeThread(threadRef));
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         toastManager.add(
@@ -1946,6 +1987,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         activeThreads.length +
         workingThreads.length +
         scheduledThreads.length +
+        blockedThreads.length +
         snoozedThreads.length +
         settledCount ===
       0
@@ -1966,6 +2008,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (scheduledThreads.length > 0) {
       items.push({ kind: "marker", marker: "scheduled-header" });
       items.push(...rowsOf(visibleScheduledThreads, "scheduled"));
+    }
+    if (blockedThreads.length > 0) {
+      items.push({ kind: "marker", marker: "blocked-header" });
+      items.push(...rowsOf(visibleBlockedThreads, "blocked"));
     }
     if (snoozedThreads.length > 0) {
       items.push({ kind: "marker", marker: "snoozed-header" });
@@ -2138,7 +2184,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       clearsSnooze:
         plan.kind === "pin" ||
         plan.kind === "settle" ||
-        (plan.kind === "move-active" && plan.unsnooze),
+        (plan.kind === "move-active" && (plan.unsnooze || plan.unblock)),
       order: plan.kind === "settle" ? null : plan.order,
       keysAtDrop: target.section === "active" ? activeKeysById : pinnedKeysById,
       assignedKeys: new Map(assignments.map(({ id, orderKey }) => [id, orderKey])),
@@ -2190,6 +2236,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             plan.unsettle &&
             !(await run(unsettleThread(threadRef), "Failed to un-settle thread"))
           )
+            return;
+          if (plan.unblock && !(await run(unblockThread(threadRef), "Failed to unblock thread")))
             return;
           if (plan.unsnooze && !(await run(unsnoozeThread(threadRef), "Failed to wake thread")))
             return;
@@ -2609,6 +2657,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         const supportsAutoSettleOptOut =
           serverConfigs.get(thread.environmentId)?.environment.capabilities
             .threadAutoSettleOptOut === true;
+        const supportsBlocking =
+          serverConfigs.get(thread.environmentId)?.environment.capabilities.threadBlocking === true;
         const supportsPriority =
           serverConfigs.get(thread.environmentId)?.environment.capabilities.threadPriority === true;
         const supportsTitleRegeneration =
@@ -2616,7 +2666,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             .threadTitleRegeneration === true;
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const isSettled = settledThreadKeysRef.current.has(threadKey);
-        const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
+        const isSnoozed = snoozedThreadKeysRef.current.has(threadKey) && thread.blockedOn == null;
         const isPinned = thread.pinnedAt != null;
         const snoozePresets = resolveSnoozePresets(
           new Date(),
@@ -2651,6 +2701,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               autoSettleEnabled: thread.autoSettleDisabledAt == null,
               isSnoozed,
               canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
+              isBlocked: supportsBlocking && effectiveBlocked(thread),
               isRegeneratingTitle,
               isRunning: !threadRuntimeCanArchive(thread.runtime),
               canShareWithGuest: appAtomRegistry.get(
@@ -2660,6 +2711,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 settlement: supportsSettlement,
                 autoSettleOptOut: supportsAutoSettleOptOut,
                 snooze: supportsSnooze,
+                blocking: supportsBlocking,
                 pinning: supportsPinning,
                 priority: supportsPriority,
                 titleRegeneration: supportsTitleRegeneration,
@@ -2722,6 +2774,29 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             return;
           case "unsettle":
             attemptUnsettle(threadRef);
+            return;
+          case "block": {
+            const choice = await requestThreadBlock(threadRef);
+            if (choice === null) return;
+            const result = await blockThread(
+              threadRef,
+              ThreadId.make(choice.blockerThreadId),
+              choice.until,
+            );
+            if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+              const error = squashAtomCommandFailure(result);
+              toastManager.add(
+                stackedThreadToast({
+                  type: "error",
+                  title: "Failed to block thread",
+                  description: error instanceof Error ? error.message : "An error occurred.",
+                }),
+              );
+            }
+            return;
+          }
+          case "unblock":
+            attemptUnsnooze(threadRef);
             return;
           case "unsnooze":
             attemptUnsnooze(threadRef);
@@ -3326,7 +3401,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             thread={thread}
                             variant={rowVariant}
                             variantAction={
-                              section === "snoozed"
+                              section === "snoozed" || section === "blocked"
                                 ? "unsnooze"
                                 : section === "settled"
                                   ? "unsettle"
@@ -3360,11 +3435,20 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               `${thread.environmentId}:${thread.id}`,
                             )}
                             snoozeWakeLabelText={
-                              section === "snoozed" && thread.snoozedUntil != null
-                                ? snoozeWakeLabel(thread.snoozedUntil, {
-                                    now: new Date().toISOString(),
-                                  })
-                                : null
+                              section === "blocked" && thread.blockedOn != null
+                                ? blockedOnLabel(
+                                    readThreadShell(
+                                      scopeThreadRef(
+                                        thread.environmentId,
+                                        thread.blockedOn.threadId,
+                                      ),
+                                    )?.title,
+                                  )
+                                : section === "snoozed" && thread.snoozedUntil != null
+                                  ? snoozeWakeLabel(thread.snoozedUntil, {
+                                      now: new Date().toISOString(),
+                                    })
+                                  : null
                             }
                             wokeAt={threadWokeAt(thread, { now: snoozeNow })}
                             isActive={routeRowThreadKey === threadKey}
@@ -3509,19 +3593,45 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               />,
                             );
                             break;
+                          case "blocked-header":
+                            items.push(
+                              <SidebarSectionHeader
+                                key="blocked-shelf-header"
+                                marker="blocked-header"
+                                className={cn(
+                                  workingThreads.length + scheduledThreads.length === 0 &&
+                                    "mt-auto",
+                                )}
+                                label="Blocked"
+                                count={blockedThreads.length}
+                                hostsUndoNotice={
+                                  workingThreads.length + scheduledThreads.length === 0
+                                }
+                                toggle={{
+                                  expanded: blockedShelfExpanded,
+                                  onToggle: toggleBlockedShelf,
+                                }}
+                              />,
+                            );
+                            break;
                           case "snoozed-header":
                             items.push(
                               <SidebarSectionHeader
                                 key="snoozed-shelf-header"
                                 marker="snoozed-header"
                                 className={cn(
-                                  workingThreads.length + scheduledThreads.length === 0 &&
-                                    "mt-auto",
+                                  workingThreads.length +
+                                    scheduledThreads.length +
+                                    blockedThreads.length ===
+                                    0 && "mt-auto",
                                 )}
                                 label="Snoozed"
                                 count={snoozedThreads.length}
                                 hostsUndoNotice={
-                                  workingThreads.length + scheduledThreads.length === 0
+                                  workingThreads.length +
+                                    scheduledThreads.length +
+                                    blockedThreads.length ===
+                                  0
                                 }
                                 toggle={{
                                   expanded: snoozedShelfExpanded,
@@ -3538,6 +3648,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 className={cn(
                                   workingThreads.length +
                                     scheduledThreads.length +
+                                    blockedThreads.length +
                                     snoozedThreads.length ===
                                     0 && "mt-auto",
                                 )}
@@ -3546,6 +3657,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 hostsUndoNotice={
                                   workingThreads.length +
                                     scheduledThreads.length +
+                                    blockedThreads.length +
                                     snoozedThreads.length ===
                                   0
                                 }
@@ -3612,6 +3724,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             activeThreads.length +
             workingThreads.length +
             scheduledThreads.length +
+            blockedThreads.length +
             snoozedThreads.length +
             settledCount ===
             0 ? (

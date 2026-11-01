@@ -2,7 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 
-import { NodeId, RunAttemptId, TrimmedNonEmptyString } from "./index.ts";
+import { IsoDateTime, NodeId, RunAttemptId, ThreadId, TrimmedNonEmptyString } from "./index.ts";
 import {
   latestProviderTurnForAttempt,
   OrchestrationV2ProviderCapabilities,
@@ -15,6 +15,7 @@ import {
   OrchestrationV2ThreadHistoryPage,
   OrchestrationV2TurnItem,
   OrchestrationV2TurnItemJson,
+  threadBlockReleased,
 } from "./orchestrationV2.ts";
 
 const now = DateTime.makeUnsafe("2026-04-20T00:00:00.000Z");
@@ -475,6 +476,70 @@ describe("thread open stats", () => {
     const opens = { openedAt: 1, score: 1, picks: [{ query: "upl", at: 1 }] };
     expect(decode({ ...shell, opens }).opens).toEqual(opens);
     expect(decode({ ...shell, opens: { openedAt: "2026-10-01", score: 1 } }).opens).toBeNull();
+  });
+
+  describe("threadBlockReleased", () => {
+    const blockedAt = "2026-10-01T12:00:00.000Z";
+    const blocker = (overrides: Partial<Parameters<typeof threadBlockReleased>[1] & object>) => ({
+      archivedAt: null,
+      settledOverride: null,
+      status: "running" as const,
+      latestRunCompletedAt: null,
+      blockedOn: null,
+      ...overrides,
+    });
+    const after = DateTime.makeUnsafe("2026-10-01T13:00:00.000Z");
+    const before = DateTime.makeUnsafe("2026-10-01T11:00:00.000Z");
+
+    it("releases when the blocker is gone, archived or settled", () => {
+      for (const until of ["settled", "finished"] as const) {
+        expect(threadBlockReleased({ until, blockedAt }, null)).toBe(true);
+        expect(threadBlockReleased({ until, blockedAt }, blocker({ archivedAt: after }))).toBe(
+          true,
+        );
+        expect(
+          threadBlockReleased({ until, blockedAt }, blocker({ settledOverride: "settled" })),
+        ).toBe(true);
+      }
+    });
+
+    it("keeps waiting while the blocker works", () => {
+      for (const status of ["running", "waiting", "queued", "starting", "preparing"] as const) {
+        expect(threadBlockReleased({ until: "finished", blockedAt }, blocker({ status }))).toBe(
+          false,
+        );
+      }
+    });
+
+    it("finished releases on any stop, unless the blocker is itself blocked", () => {
+      const block = { until: "finished", blockedAt } as const;
+      expect(threadBlockReleased(block, blocker({ status: "completed" }))).toBe(true);
+      expect(threadBlockReleased(block, blocker({ status: "idle" }))).toBe(true);
+      expect(
+        threadBlockReleased(
+          block,
+          blocker({
+            status: "completed",
+            blockedOn: {
+              threadId: ThreadId.make("thread:other"),
+              until: "settled",
+              blockedAt: IsoDateTime.make(blockedAt),
+            },
+          }),
+        ),
+      ).toBe(false);
+    });
+
+    it("settled waits past a clean stop and an earlier failure, but not a new one", () => {
+      const block = { until: "settled", blockedAt } as const;
+      expect(threadBlockReleased(block, blocker({ status: "completed" }))).toBe(false);
+      expect(
+        threadBlockReleased(block, blocker({ status: "failed", latestRunCompletedAt: before })),
+      ).toBe(false);
+      expect(
+        threadBlockReleased(block, blocker({ status: "failed", latestRunCompletedAt: after })),
+      ).toBe(true);
+    });
   });
 });
 

@@ -157,6 +157,8 @@ export function isAutoSettlementCandidate(
   if (thread.activityRunStatus != null) return false;
   if (backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks ?? [])) return false;
   if (threadHasQueuedTurnStart(thread, nowMs)) return false;
+  // Waiting on another thread is not abandonment.
+  if (thread.blockedOn != null) return false;
   // Interrupted runs must keep the same snooze protection the sidebar shows.
   return !isSnoozed(thread, nowMs);
 }

@@ -2,7 +2,7 @@
 import type { SidebarInboxSortDirections } from "@t3tools/contracts/settings";
 import { threadRuntimeIsActive, type EnvironmentThreadShell } from "./models.ts";
 import { toSortableTimestamp } from "./threadSort.ts";
-import { effectiveSnoozed } from "./threadSettled.ts";
+import { effectiveBlocked, effectiveSnoozed } from "./threadSettled.ts";
 
 type WorkingThreadInput = Pick<
   EnvironmentThreadShell,
@@ -156,6 +156,7 @@ type TrackedInboxThread = WorkingThreadInput &
       | "settledAt"
       | "snoozedAt"
       | "snoozedUntil"
+      | "blockedOn"
       | "activeOrderKey"
       | "pendingGuestMessageCount"
     >
@@ -264,6 +265,7 @@ export function createInboxReturnTracker() {
           thread.settledAt,
           thread.snoozedAt,
           thread.snoozedUntil,
+          thread.blockedOn?.blockedAt,
           thread.activeOrderKey,
         ]);
         const previous = states.get(key);
@@ -286,7 +288,8 @@ export function createInboxReturnTracker() {
           thread.deletedAt != null ||
           thread.pinnedAt != null ||
           thread.settledOverride === "settled" ||
-          effectiveSnoozed(thread, { now: observedAt });
+          effectiveSnoozed(thread, { now: observedAt }) ||
+          effectiveBlocked(thread);
         const actual = resolveThreadShelf(thread, isScheduled?.(thread) === true);
         // Only shelf placement is held: execution state and attention requests stay authoritative.
         // Leaving Working holds even onto Scheduled, and a sent message holds until its run starts.

@@ -101,7 +101,12 @@ export function SidebarDragBoundary(props: {
 }
 
 export function SidebarSectionHeader(props: {
-  marker: "working-header" | "scheduled-header" | "snoozed-header" | "settled-header";
+  marker:
+    | "working-header"
+    | "scheduled-header"
+    | "blocked-header"
+    | "snoozed-header"
+    | "settled-header";
   label: string;
   /** A muted trailing count. */
   count: number;
@@ -117,9 +122,11 @@ export function SidebarSectionHeader(props: {
       ? "working"
       : props.marker === "scheduled-header"
         ? "scheduled"
-        : props.marker === "snoozed-header"
-          ? "snoozed"
-          : "settled";
+        : props.marker === "blocked-header"
+          ? "blocked"
+          : props.marker === "snoozed-header"
+            ? "snoozed"
+            : "settled";
   return (
     <SortableSidebarMarker
       marker={props.marker}

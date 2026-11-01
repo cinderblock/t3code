@@ -1,5 +1,6 @@
 import {
   canSnooze,
+  effectiveBlocked,
   effectiveSnoozed,
   hasQueuedTurnStart,
   QUEUED_TURN_START_GRACE_MS,
@@ -75,6 +76,11 @@ export type ThreadListV2Status =
   | "failed"
   | "limited"
   | "ready";
+/** Blocked threads share the Snoozed shelf here: both are parked, and both wake the same way. */
+function threadParkedAsBlocked(thread: EnvironmentThreadShell): boolean {
+  return effectiveBlocked(thread) && !isThreadWorking(thread);
+}
+
 export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooze" | "unsnooze";
 
 /**
@@ -283,7 +289,7 @@ export function getThreadListV2OrderedSection(input: {
     }
     if (
       (input.snoozeEnvironmentIds?.has(thread.environmentId) ?? true) &&
-      effectiveSnoozed(thread, { now: input.now })
+      (effectiveSnoozed(thread, { now: input.now }) || threadParkedAsBlocked(thread))
     ) {
       return false;
     }
@@ -304,6 +310,8 @@ export interface ThreadListV2Item {
   readonly thread: EnvironmentThreadShell;
   readonly variant: "card" | "slim";
   readonly snoozed: boolean;
+  /** Title of the thread a blocked row waits on, when it's listed. */
+  readonly blockerTitle?: string;
   readonly pinned: boolean;
   readonly wokeAt: string | null;
   readonly isLast: boolean;
@@ -488,9 +496,11 @@ export function buildThreadListV2ListItems(input: {
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
   const threadItems = input.items.map((item): ThreadListV2ListItem => {
     const snoozeWakeLabelText =
-      item.snoozed && item.thread.snoozedUntil != null && input.snoozeLabelNow !== undefined
-        ? snoozeWakeLabel(item.thread.snoozedUntil, { now: input.snoozeLabelNow })
-        : undefined;
+      item.snoozed && threadParkedAsBlocked(item.thread)
+        ? `Waiting on ${item.blockerTitle ?? "another thread"}`
+        : item.snoozed && item.thread.snoozedUntil != null && input.snoozeLabelNow !== undefined
+          ? snoozeWakeLabel(item.thread.snoozedUntil, { now: input.snoozeLabelNow })
+          : undefined;
     // Put the clock on items so recycler equality limits ticks to rows displaying snooze preset times.
     const snoozePresetMinute =
       !item.snoozed &&
@@ -685,7 +695,7 @@ export function buildThreadListV2Items(input: {
     }
     const supportsSettlement = input.settlementEnvironmentIds?.has(thread.environmentId) ?? true;
     const supportsSnooze = input.snoozeEnvironmentIds?.has(thread.environmentId) ?? true;
-    if (supportsSnooze && effectiveSnoozed(thread, { now })) {
+    if (supportsSnooze && (effectiveSnoozed(thread, { now }) || threadParkedAsBlocked(thread))) {
       snoozed.push(thread);
       if (
         thread.snoozedUntil != null &&
@@ -759,7 +769,8 @@ export function buildThreadListV2Items(input: {
   const orderedWorking = sortWorkingThreadsBySend(working);
   const orderedSnoozed = [...snoozed].sort(
     (left, right) =>
-      parseTimestampMs(left.snoozedUntil ?? "") - parseTimestampMs(right.snoozedUntil ?? ""),
+      parseTimestampMs(left.snoozedUntil ?? left.blockedOn?.blockedAt ?? "") -
+      parseTimestampMs(right.snoozedUntil ?? right.blockedOn?.blockedAt ?? ""),
   );
   const selectedThreadKey = input.selectedThreadKey ?? null;
   const visibleWorking =
@@ -837,10 +848,19 @@ export function buildThreadListV2Items(input: {
   }
   const snoozedShelfHeaderIndex = orderedSnoozed.length > 0 ? items.length : null;
   for (const thread of visibleSnoozed) {
+    const blockerTitle =
+      thread.blockedOn == null
+        ? undefined
+        : listedThreads.find(
+            (candidate) =>
+              candidate.environmentId === thread.environmentId &&
+              candidate.id === thread.blockedOn?.threadId,
+          )?.title;
     items.push({
       thread,
       variant: "slim",
       snoozed: true,
+      ...(blockerTitle === undefined ? {} : { blockerTitle }),
       pinned: false,
       wokeAt: null,
       isLast: false,

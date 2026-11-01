@@ -20,6 +20,8 @@ export type ThreadActionMenuId =
   | "snooze"
   | `snooze:${string}`
   | "unsnooze"
+  | "block"
+  | "unblock"
   | "rename"
   | "regenerate-title"
   | "mark-unread"
@@ -88,6 +90,7 @@ export interface ThreadActionMenuState {
   readonly autoSettleEnabled: boolean;
   readonly isSnoozed: boolean;
   readonly canSnoozeNow: boolean;
+  readonly isBlocked: boolean;
   readonly isRegeneratingTitle: boolean;
   /** Archive rejects attached providers, so disable it while running. */
   readonly isRunning: boolean;
@@ -95,6 +98,7 @@ export interface ThreadActionMenuState {
     readonly settlement: boolean;
     readonly autoSettleOptOut: boolean;
     readonly snooze: boolean;
+    readonly blocking: boolean;
     readonly pinning: boolean;
     readonly priority: boolean;
     readonly titleRegeneration: boolean;
@@ -175,6 +179,18 @@ export function buildThreadActionMenuItems(
                   })),
                   { id: "snooze:custom" as const, label: "Custom…", separatorBefore: true },
                 ],
+              },
+        ]
+      : []),
+    ...(state.supports.blocking
+      ? [
+          state.isBlocked
+            ? { id: "unblock" as const, label: "Stop waiting", icon: "clock" }
+            : {
+                id: "block" as const,
+                label: "Blocked on a thread…",
+                icon: "clock",
+                disabled: !state.canSnoozeNow,
               },
         ]
       : []),

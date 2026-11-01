@@ -402,6 +402,17 @@ const LenientThreadOpens = Schema.NullOr(OrchestrationV2ThreadOpens).pipe(
 export const ThreadPriority = Schema.Int.check(Schema.isBetween({ minimum: -100, maximum: 100 }));
 export type ThreadPriority = typeof ThreadPriority.Type;
 
+/** `finished` waits for the blocker to stop working; `settled` for the user to be done with it. */
+export const ThreadBlockUntil = Schema.Literals(["settled", "finished"]);
+export type ThreadBlockUntil = typeof ThreadBlockUntil.Type;
+
+export const OrchestrationV2ThreadBlock = Schema.Struct({
+  threadId: ThreadId,
+  until: ThreadBlockUntil,
+  blockedAt: IsoDateTime,
+});
+export type OrchestrationV2ThreadBlock = typeof OrchestrationV2ThreadBlock.Type;
+
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -450,6 +461,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   priority: Schema.optional(Schema.NullOr(ThreadPriority)),
+  blockedOn: Schema.optional(Schema.NullOr(OrchestrationV2ThreadBlock)),
   lastVisitedAt: Schema.NullOr(Schema.DateTimeUtc).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -1744,6 +1756,8 @@ export const OrchestrationV2DomainEvent = Schema.Union([
       "thread.pin-reordered",
       "thread.active-reordered",
       "thread.priority-set",
+      "thread.blocked",
+      "thread.unblocked",
       "thread.visited",
       "thread.marked-unread",
       "thread.metadata-updated",
@@ -1995,6 +2009,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   priority: Schema.optional(Schema.NullOr(ThreadPriority)),
+  blockedOn: Schema.optional(Schema.NullOr(OrchestrationV2ThreadBlock)),
   lastVisitedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   opens: Schema.optional(LenientThreadOpens),
   titleRegeneration: Schema.optional(
@@ -2050,6 +2065,38 @@ export function isOlderSettledThreadShell(
     thread.settledAt !== null &&
     DateTime.toEpochMillis(thread.settledAt) < beforeMs
   );
+}
+
+/**
+ * Whether a block has run its course. `blocker` is null once the thread is gone. A blocker that is
+ * itself blocked hasn't finished, and a stop only counts for `settled` if it ended after the block,
+ * so a thread can wait on one that failed earlier and is being fixed.
+ */
+export function threadBlockReleased(
+  block: Pick<OrchestrationV2ThreadBlock, "until" | "blockedAt">,
+  blocker: Pick<
+    OrchestrationV2ThreadShell,
+    "archivedAt" | "settledOverride" | "status" | "latestRunCompletedAt" | "blockedOn"
+  > | null,
+): boolean {
+  if (blocker === null || blocker.archivedAt !== null) return true;
+  if (blocker.settledOverride === "settled") return true;
+  switch (blocker.status) {
+    case "idle":
+    case "completed":
+    case "rolled_back":
+      return block.until === "finished" && blocker.blockedOn == null;
+    case "failed":
+    case "interrupted":
+    case "cancelled":
+      if (block.until === "finished" && blocker.blockedOn == null) return true;
+      return (
+        blocker.latestRunCompletedAt != null &&
+        DateTime.toEpochMillis(blocker.latestRunCompletedAt) > Date.parse(block.blockedAt)
+      );
+    default:
+      return false;
+  }
 }
 
 export const OrchestrationV2OlderSettledCount = Schema.Struct({
@@ -2626,6 +2673,8 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.pin-reordered",
       "thread.active-reordered",
       "thread.priority-set",
+      "thread.blocked",
+      "thread.unblocked",
       "thread.visited",
       "thread.marked-unread",
       "thread.pull-request-synced",
@@ -2879,6 +2928,20 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     orderKey: TrimmedNonEmptyString,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.block"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    blockerThreadId: ThreadId,
+    until: ThreadBlockUntil,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.unblock"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    /** `blocker` is the server releasing the block, which marks the thread unread. */
+    reason: Schema.Literals(["user", "blocker"]),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.priority.set"),

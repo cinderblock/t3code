@@ -109,6 +109,8 @@ function shouldPublishAgentAwarenessEvent(
     case "thread.unsnoozed":
     case "thread.auto-settle-set":
     case "thread.priority-set":
+    case "thread.blocked":
+    case "thread.unblocked":
     case "thread.pinned":
     case "thread.unpinned":
     case "thread.pin-reordered":

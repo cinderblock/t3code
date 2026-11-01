@@ -1,10 +1,11 @@
 // @effect-diagnostics globalDate:off -- Tests exercise local calendar snooze boundaries.
-import { ThreadId } from "@t3tools/contracts";
+import { IsoDateTime, ThreadId } from "@t3tools/contracts";
 import { TurnId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   canSnooze,
+  effectiveBlocked,
   effectiveSnoozed,
   hasQueuedTurnStart,
   resolveSnoozePresets,
@@ -68,6 +69,24 @@ type QueuedTurnShell = Parameters<typeof hasQueuedTurnStart>[0];
 function makeQueuedTurnShell(overrides: Partial<QueuedTurnShell> = {}): QueuedTurnShell {
   return { latestUserMessageAt: null, latestTurn: null, session: null, ...overrides };
 }
+
+describe("effectiveBlocked", () => {
+  const shell = {
+    blockedOn: {
+      threadId: ThreadId.make("thread:blocker"),
+      until: "settled",
+      blockedAt: IsoDateTime.make("2026-10-01T00:00:00.000Z"),
+    },
+    hasPendingApprovals: false,
+    hasPendingUserInput: false,
+  } as const;
+
+  it("is blocked until the thread needs the user", () => {
+    expect(effectiveBlocked(shell)).toBe(true);
+    expect(effectiveBlocked({ ...shell, hasPendingApprovals: true })).toBe(false);
+    expect(effectiveBlocked({ ...shell, blockedOn: null })).toBe(false);
+  });
+});
 
 describe("effectiveSnoozed", () => {
   it("never hides on malformed wake data", () => {

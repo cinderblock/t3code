@@ -1,5 +1,6 @@
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
+import { requestThreadBlock } from "../components/BlockThreadDialog";
 import { openGuestShareDialog } from "../components/chat/guestShareDialogState";
 import {
   type AtomCommandResult,
@@ -7,12 +8,12 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import {
-  AuthOrchestrationOperateScope,
-  type ScopedThreadRef,
-  type ThreadId,
-} from "@t3tools/contracts";
+  canSnooze,
+  effectiveBlocked,
+  effectiveSnoozed,
+} from "@t3tools/client-runtime/state/thread-settled";
+import { AuthOrchestrationOperateScope, type ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { useRouter } from "@tanstack/react-router";
 
 import { resolveSnoozePresets } from "../components/Sidebar.snooze";
@@ -31,6 +32,7 @@ import {
   readEnvironmentSupportsPinning,
   readEnvironmentSupportsPriority,
   readEnvironmentSupportsSettlement,
+  readEnvironmentSupportsBlocking,
   readEnvironmentSupportsSnooze,
   readEnvironmentSupportsTitleRegeneration,
   readThreadShell,
@@ -82,6 +84,8 @@ export function useThreadActionMenu(input: {
     unsettleThread,
     snoozeThread,
     unsnoozeThread,
+    blockThread,
+    unblockThread,
     pinThread,
     confirmAndUnpinThread,
     setThreadAutoSettle,
@@ -129,6 +133,7 @@ export function useThreadActionMenu(input: {
         settlement: readEnvironmentSupportsSettlement(threadRef.environmentId),
         autoSettleOptOut: readEnvironmentSupportsAutoSettleOptOut(threadRef.environmentId),
         snooze: readEnvironmentSupportsSnooze(threadRef.environmentId),
+        blocking: readEnvironmentSupportsBlocking(threadRef.environmentId),
         pinning: readEnvironmentSupportsPinning(threadRef.environmentId),
         priority: readEnvironmentSupportsPriority(threadRef.environmentId),
         titleRegeneration: readEnvironmentSupportsTitleRegeneration(threadRef.environmentId),
@@ -149,6 +154,7 @@ export function useThreadActionMenu(input: {
         autoSettleEnabled: thread.autoSettleDisabledAt == null,
         isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
         canSnoozeNow: canSnooze(thread, { now: now.toISOString() }),
+        isBlocked: supports.blocking && effectiveBlocked(thread),
         isRegeneratingTitle,
         isRunning: !threadRuntimeCanArchive(thread.runtime),
         supports,
@@ -227,6 +233,17 @@ export function useThreadActionMenu(input: {
           return;
         case "unsnooze":
           await reportFailure("Failed to wake thread", () => unsnoozeThread(threadRef));
+          return;
+        case "block": {
+          const choice = await requestThreadBlock(threadRef);
+          if (choice === null) return;
+          await reportFailure("Failed to block thread", () =>
+            blockThread(threadRef, ThreadId.make(choice.blockerThreadId), choice.until),
+          );
+          return;
+        }
+        case "unblock":
+          await reportFailure("Failed to unblock thread", () => unblockThread(threadRef));
           return;
         case "pin":
           await reportFailure("Failed to pin thread", () => pinThread(threadRef));
