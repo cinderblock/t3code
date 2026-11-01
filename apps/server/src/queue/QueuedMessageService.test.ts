@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
+import { IsoDateTime, ThreadId } from "@t3tools/contracts";
 import type {
   QueuedMessageTrigger,
   ServerProviderUsageLimits,
@@ -232,6 +233,40 @@ describe("isTriggerDue", () => {
       ]);
       expect(isTriggerDue(trigger, NOW_MS, limits)).toBe(false);
     });
+  });
+});
+
+describe("thread triggers", () => {
+  const trigger = {
+    type: "thread",
+    threadId: ThreadId.make("thread:awaited"),
+    until: "finished",
+    since: IsoDateTime.make("2026-10-01T00:00:00.000Z"),
+  } as const;
+  const awaited = (status: "running" | "completed") =>
+    new Map([
+      [
+        trigger.threadId as string,
+        {
+          archivedAt: null,
+          settledOverride: null,
+          status,
+          latestRunCompletedAt: null,
+          blockedOn: null,
+        },
+      ],
+    ]);
+
+  it("waits for the thread to be read, then follows the block rule", () => {
+    expect(isTriggerDue(trigger, 0, new Map())).toBe(false);
+    expect(isTriggerDue(trigger, 0, new Map(), awaited("running"))).toBe(false);
+    expect(isTriggerDue(trigger, 0, new Map(), awaited("completed"))).toBe(true);
+  });
+
+  it("is due once the thread is gone", () => {
+    expect(isTriggerDue(trigger, 0, new Map(), new Map([[trigger.threadId as string, null]]))).toBe(
+      true,
+    );
   });
 });
 

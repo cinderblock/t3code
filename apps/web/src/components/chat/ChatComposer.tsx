@@ -3800,6 +3800,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           accounts={usageAccounts}
                           preferredInstanceId={selectedInstanceId}
                           {...queueTriggerProps(scopedThreadKey(routeThreadRef))}
+                          thread={routeThreadRef}
                           confirmLabel="Queue message"
                           onConfirm={(trigger) => {
                             setIsQueueTriggerPickerOpen(false);

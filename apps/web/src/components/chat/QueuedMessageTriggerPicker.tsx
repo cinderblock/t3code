@@ -1,4 +1,4 @@
-import type { QueuedMessageTrigger } from "@t3tools/contracts";
+import { ThreadId, type QueuedMessageTrigger, type ThreadBlockUntil } from "@t3tools/contracts";
 import { useState } from "react";
 import { cn } from "~/lib/utils";
 import type { UsageAccountView } from "../../state/quota";
@@ -7,13 +7,14 @@ import {
   describeTriggerWindow,
   isWeeklyTriggerWindow,
 } from "../quota/usagePresentation";
+import { AwaitedThreadPicker, AwaitedUntilToggle } from "../BlockThreadDialog";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 
 const DEFAULT_HEADROOM_PERCENT = 20;
 const DEFAULT_HEADROOM_LEAD_MINUTES = 60;
 
-type TriggerChoice = "session-reset" | "weekly-reset" | "at" | "headroom";
+type TriggerChoice = "session-reset" | "weekly-reset" | "at" | "headroom" | "thread";
 type HeadroomWindowChoice = "session" | "weekly";
 
 /**
@@ -54,6 +55,8 @@ export function describeQueuedMessageTrigger(trigger: QueuedMessageTrigger): str
       return `Sends when >${trigger.minRemainingPercent}% remains near ${describeTriggerWindow(
         trigger.windowId,
       )} reset`;
+    case "thread":
+      return `Sends when another thread ${trigger.until === "settled" ? "settles" : "finishes"}`;
   }
 }
 
@@ -68,6 +71,7 @@ function initialChoiceForTrigger(
   trigger: QueuedMessageTrigger | undefined,
   hasUsageAccount: boolean,
 ): TriggerChoice {
+  if (trigger?.type === "thread") return "thread";
   if (!hasUsageAccount) return "at";
   if (!trigger) return "session-reset";
   switch (trigger.type) {
@@ -89,16 +93,24 @@ export function QueuedMessageTriggerForm(props: {
   accounts: ReadonlyArray<UsageAccountView>;
   preferredInstanceId: string | null;
   initialTrigger?: QueuedMessageTrigger;
+  /** The thread the message goes to. Without one, the form can't offer waiting on another. */
+  thread?: { readonly environmentId: string; readonly threadId: string };
   confirmLabel: string;
   onConfirm: (trigger: QueuedMessageTrigger) => void;
 }) {
-  const { accounts, preferredInstanceId, initialTrigger, confirmLabel, onConfirm } = props;
+  const { accounts, preferredInstanceId, initialTrigger, thread, confirmLabel, onConfirm } = props;
 
   const account = resolveQueuedMessageAccount(accounts, preferredInstanceId);
   const hasUsageAccount = account !== null;
 
   const [choice, setChoice] = useState<TriggerChoice>(() =>
     initialChoiceForTrigger(initialTrigger, hasUsageAccount),
+  );
+  const [awaitedThreadId, setAwaitedThreadId] = useState<string | null>(
+    initialTrigger?.type === "thread" ? initialTrigger.threadId : null,
+  );
+  const [awaitedUntil, setAwaitedUntil] = useState<ThreadBlockUntil>(
+    initialTrigger?.type === "thread" ? initialTrigger.until : "finished",
   );
   const [atValue, setAtValue] = useState<string>(() => {
     if (initialTrigger?.type === "at") {
@@ -131,6 +143,7 @@ export function QueuedMessageTriggerForm(props: {
     ...(hasUsageAccount
       ? [{ value: "headroom" as const, label: "When headroom remains near a window reset" }]
       : []),
+    ...(thread ? [{ value: "thread" as const, label: "When another thread is done" }] : []),
   ];
 
   const parsedAtTime = Date.parse(atValue);
@@ -139,12 +152,27 @@ export function QueuedMessageTriggerForm(props: {
   const percentInvalid =
     choice === "headroom" &&
     (!Number.isFinite(parsedPercent) || parsedPercent <= 0 || parsedPercent >= 100);
-  const confirmDisabled = atInvalid || percentInvalid || (!hasUsageAccount && choice !== "at");
+  const threadInvalid = choice === "thread" && awaitedThreadId === null;
+  const confirmDisabled =
+    atInvalid ||
+    percentInvalid ||
+    threadInvalid ||
+    (!hasUsageAccount && choice !== "at" && choice !== "thread");
 
   const confirm = () => {
     if (confirmDisabled) return;
     if (choice === "at") {
       onConfirm({ type: "at", at: new Date(parsedAtTime).toISOString() });
+      return;
+    }
+    if (choice === "thread") {
+      if (awaitedThreadId !== null) {
+        onConfirm({
+          type: "thread",
+          threadId: ThreadId.make(awaitedThreadId),
+          until: awaitedUntil,
+        });
+      }
       return;
     }
     if (account === null) return;
@@ -206,6 +234,16 @@ export function QueuedMessageTriggerForm(props: {
             onValueChange={(value) => setAtValue(value)}
           />
         </label>
+      ) : null}
+      {choice === "thread" && thread ? (
+        <div className="flex flex-col gap-1.5">
+          <AwaitedThreadPicker
+            target={thread}
+            value={awaitedThreadId}
+            onChange={setAwaitedThreadId}
+          />
+          <AwaitedUntilToggle value={awaitedUntil} onChange={setAwaitedUntil} />
+        </div>
       ) : null}
       {choice === "headroom" ? (
         <div className="flex flex-col gap-1.5">
