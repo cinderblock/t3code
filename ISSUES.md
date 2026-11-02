@@ -142,3 +142,15 @@ Running `node_modules/.pnpm/@tsc-rs+typescript@0.8.0/node_modules/@tsc-rs/typesc
 'reeppllaacceemmeenntt' to be 'replacement'`, `Test timed out in 15000ms`). Both files pass alone,
 twice in a row. Doubled keystrokes suggest something timing-dependent under load, which can fail
 CI or hide a real regression.
+
+## Source-launched desktop reports Electron's version as the app version
+
+`scripts/start-t3.ps1` starts the app through `apps/desktop/scripts/start-electron.mjs`, which passes
+`dist-electron/main.cjs` to Electron. Started that way, `app.getVersion()` returns Electron's version:
+running the built app with `--version` printed `44.4.5`, not `0.1.0`.
+
+Why it matters: `apps/desktop/src/main.ts:118` uses that value as the SSH runner version, so adding an
+SSH environment fails with `curl: (22) The requested URL returned error: 404` while fetching
+`v44.4.5/SHA256SUMS`. Other `appVersion` consumers, such as the update channel and default settings,
+see the wrong value too. Correcting it to `0.1.0` alone would install upstream's server on the remote,
+not this fork's.
