@@ -207,9 +207,10 @@ iOS and Android. Each device keeps its own choice.
 
 While this is on, the active list is ordered by priority, then by when each thread last came back
 to you, so you cannot drag or move threads within it. By default the thread that has waited
-longest is at the top of each priority group. To put the most recent first instead, change
-**Inbox order** for that group in **Settings → General**. Your saved order returns when you turn
-the Working section off.
+longest is at the top of each priority group, and a thread that wakes from a snooze counts as coming
+back when it wakes, so it joins the bottom of its group. To put the most recent first instead,
+change **Inbox order** for that group in **Settings → General**. Your saved order returns when you
+turn the Working section off.
 
 ### Block a thread on another thread
 

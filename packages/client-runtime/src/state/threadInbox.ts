@@ -2,7 +2,12 @@
 import type { SidebarInboxSortDirections } from "@t3tools/contracts/settings";
 import { threadRuntimeIsActive, type EnvironmentThreadShell } from "./models.ts";
 import { toSortableTimestamp } from "./threadSort.ts";
-import { effectiveBlocked, effectiveSnoozed } from "./threadSettled.ts";
+import {
+  effectiveBlocked,
+  effectiveSnoozed,
+  threadWokeAt,
+  type ThreadSnoozeShell,
+} from "./threadSettled.ts";
 
 type WorkingThreadInput = Pick<
   EnvironmentThreadShell,
@@ -56,7 +61,8 @@ export function resolveThreadShelf(
 type InboxThreadInput = Pick<
   EnvironmentThreadShell,
   "id" | "environmentId" | "createdAt" | "unsettledAt" | "latestRun"
-> & { readonly priority?: number | null | undefined };
+> &
+  ThreadSnoozeShell & { readonly priority?: number | null | undefined };
 
 export function inboxPriorityGroup(
   priority: number | null | undefined,
@@ -82,6 +88,7 @@ export function stepThreadPriority(
 export function sortInboxThreadsByReturn<T extends InboxThreadInput>(
   threads: readonly T[],
   directions: SidebarInboxSortDirections,
+  now: string,
   observedReturnAt?: (thread: T) => number | undefined,
 ): T[] {
   const timestamps = new Map(
@@ -92,6 +99,7 @@ export function sortInboxThreadsByReturn<T extends InboxThreadInput>(
         toSortableTimestamp(thread.unsettledAt ?? undefined) ?? 0,
         toSortableTimestamp(thread.latestRun?.requestedAt ?? undefined) ?? 0,
         toSortableTimestamp(thread.latestRun?.completedAt ?? undefined) ?? 0,
+        toSortableTimestamp(threadWokeAt(thread, { now }) ?? undefined) ?? 0,
         observedReturnAt?.(thread) ?? 0,
       ),
     ]),

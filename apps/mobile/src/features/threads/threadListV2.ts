@@ -763,6 +763,7 @@ export function buildThreadListV2Items(input: {
     ? sortInboxThreadsByReturn(
         active,
         input.inboxSortDirections ?? DEFAULT_SIDEBAR_INBOX_SORT_DIRECTIONS,
+        now,
         input.inboxReturnAt,
       )
     : applyPendingThreadOrder(sortThreadsForListV2(active), "active", pending);

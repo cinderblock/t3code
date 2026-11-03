@@ -45,6 +45,7 @@ import {
 } from "./Sidebar.logic";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { EnvironmentId, ProjectId, ProviderInstanceId, RunId, ThreadId } from "@t3tools/contracts";
+import { DEFAULT_SIDEBAR_INBOX_SORT_DIRECTIONS } from "@t3tools/contracts/settings";
 
 import {
   DEFAULT_INTERACTION_MODE,
@@ -1266,6 +1267,7 @@ describe("Working shelf (beta)", () => {
   });
 
   describe("sortInboxThreadsByReturn", () => {
+    const NOW = "2026-03-09T12:00:00.000Z";
     const newestFirst = {
       high: "newest_first",
       normal: "newest_first",
@@ -1278,6 +1280,7 @@ describe("Working shelf (beta)", () => {
         completedAt?: string | null;
         unsettledAt?: string;
         priority?: number | null;
+        snoozedUntil?: string;
       },
     ) => ({
       id: ThreadId.make(id),
@@ -1285,6 +1288,9 @@ describe("Working shelf (beta)", () => {
       createdAt: input.createdAt,
       unsettledAt: input.unsettledAt ?? null,
       priority: input.priority ?? null,
+      snoozedUntil: input.snoozedUntil ?? null,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
       latestRun:
         input.completedAt === undefined
           ? null
@@ -1305,8 +1311,36 @@ describe("Working shelf (beta)", () => {
           }),
         ],
         newestFirst,
+        NOW,
       );
       expect(sorted.map((entry) => entry.id)).toEqual(["old-finished-now", "reopened", "new"]);
+    });
+
+    it("counts a wake as a return, so a woken thread lands after threads already done", () => {
+      const woke = thread("woke", {
+        createdAt: "2026-03-01T09:00:00.000Z",
+        completedAt: "2026-03-02T09:00:00.000Z",
+        snoozedUntil: "2026-03-09T11:00:00.000Z",
+      });
+      const done = thread("done", {
+        createdAt: "2026-03-09T09:00:00.000Z",
+        completedAt: "2026-03-09T10:00:00.000Z",
+      });
+      const order = (directions: Parameters<typeof sortInboxThreadsByReturn>[1]) =>
+        sortInboxThreadsByReturn([woke, done], directions, NOW).map((entry) => entry.id);
+      expect(order(DEFAULT_SIDEBAR_INBOX_SORT_DIRECTIONS)).toEqual(["done", "woke"]);
+      expect(order(newestFirst)).toEqual(["woke", "done"]);
+    });
+
+    it("ignores a wake time that has not arrived", () => {
+      const held = thread("held", {
+        createdAt: "2026-03-01T09:00:00.000Z",
+        snoozedUntil: "2026-03-09T13:00:00.000Z",
+      });
+      const done = thread("done", { createdAt: "2026-03-09T09:00:00.000Z" });
+      expect(
+        sortInboxThreadsByReturn([done, held], newestFirst, NOW).map((entry) => entry.id),
+      ).toEqual(["done", "held"]);
     });
 
     it("counts a return the server does not stamp, like an approval request", () => {
@@ -1319,10 +1353,10 @@ describe("Working shelf (beta)", () => {
         completedAt: "2026-03-09T11:00:00.000Z",
       });
       expect(
-        sortInboxThreadsByReturn([finished, waiting], newestFirst).map((entry) => entry.id),
+        sortInboxThreadsByReturn([finished, waiting], newestFirst, NOW).map((entry) => entry.id),
       ).toEqual(["finished", "asks-approval"]);
       expect(
-        sortInboxThreadsByReturn([finished, waiting], newestFirst, (entry) =>
+        sortInboxThreadsByReturn([finished, waiting], newestFirst, NOW, (entry) =>
           entry === waiting ? Date.parse("2026-03-09T11:05:00.000Z") : undefined,
         ).map((entry) => entry.id),
       ).toEqual(["asks-approval", "finished"]);
@@ -1341,6 +1375,7 @@ describe("Working shelf (beta)", () => {
           thread("zero-is-normal", { createdAt: at(10), priority: 0 }),
         ],
         { high: "oldest_first", normal: "oldest_first", low: "newest_first" },
+        NOW,
       );
       expect(sorted.map((entry) => entry.id)).toEqual([
         "high-early",
@@ -1363,6 +1398,7 @@ describe("Working shelf (beta)", () => {
           thread("low", { createdAt, priority: -1 }),
         ],
         newestFirst,
+        NOW,
       );
       expect(sorted.map((entry) => entry.id)).toEqual(["highest", "high", "low", "lowest"]);
     });

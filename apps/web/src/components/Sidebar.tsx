@@ -387,6 +387,7 @@ function resolveDraggedOrders(input: {
       ? sortInboxThreadsByReturn(
           [...others(activeThreads), applySidebarThreadDrop(thread, "active", drag.occurredAt)],
           input.inboxSortDirections,
+          drag.occurredAt,
           inboxReturns.returnedAt,
         ).map(threadShellKey)
       : undefined,
@@ -692,7 +693,7 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
   // Capability gates dragging only; mixed server versions must preserve the same pinned order across clients.
   const sortedPinned = sortPinnedThreadsForSidebar(pinned);
   const sortedActive = workingShelfEnabled
-    ? sortInboxThreadsByReturn(active, inboxSortDirections, inboxObservation.returnedAt)
+    ? sortInboxThreadsByReturn(active, inboxSortDirections, preciseNow, inboxObservation.returnedAt)
     : sortThreadsForSidebar(active);
   return {
     pinnedThreads:

@@ -206,7 +206,12 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
     return {
       pinned,
       active: workingShelfEnabled
-        ? sortInboxThreadsByReturn(active, inboxSortDirections, threadListInboxReturns.returnedAt)
+        ? sortInboxThreadsByReturn(
+            active,
+            inboxSortDirections,
+            now,
+            threadListInboxReturns.returnedAt,
+          )
         : active,
       snoozed: parked.filter((thread) => effectiveSnoozed(thread, { now })),
       settled: sortSettledThreads(parked.filter((thread) => !effectiveSnoozed(thread, { now }))),

@@ -317,7 +317,9 @@ describe("createInboxReturnTracker", () => {
       low: "newest_first",
     } as const;
     expect(
-      sortInboxThreadsByReturn([a, b], newestFirst, tracker.returnedAt).map((entry) => entry.id),
+      sortInboxThreadsByReturn([a, b], newestFirst, "1970-01-01T00:00:13Z", tracker.returnedAt).map(
+        (entry) => entry.id,
+      ),
     ).toEqual(["b", "a"]);
   });
 
