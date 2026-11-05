@@ -281,6 +281,9 @@ export function restoreQueuedMessageToDraft(input: {
       case "thread":
         store.addThreadContexts(target, [record], addedContext);
         break;
+      case "environment":
+        store.addEnvironmentContexts(target, [record], addedContext);
+        break;
       default:
         break;
     }

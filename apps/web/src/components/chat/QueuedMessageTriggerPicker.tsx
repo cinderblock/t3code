@@ -22,7 +22,7 @@ type HeadroomWindowChoice = "session" | "weekly";
  * account whose provider instances include the composer's current instance,
  * falling back to the first known account.
  */
-export function resolveQueuedMessageAccount(
+function resolveQueuedMessageAccount(
   accounts: ReadonlyArray<UsageAccountView>,
   preferredInstanceId: string | null,
 ): UsageAccountView | null {
@@ -279,7 +279,7 @@ export function QueuedMessageTriggerForm(props: {
               </button>
             ))}
           </div>
-          <div className="text-[11px] text-muted-foreground/70">
+          <div className="text-2xs text-muted-foreground/70">
             Sends within {DEFAULT_HEADROOM_LEAD_MINUTES} minutes of the window reset.
           </div>
         </div>

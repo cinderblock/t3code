@@ -1,16 +1,7 @@
 /**
- * AuthAttemptLimiter — per-client-address limits on the unauthenticated
- * sign-in endpoints of an environment that may face the internet.
- *
- * Credentials are not guessable, so these limits exist to keep one client from
- * degrading sign-in for everyone else: repeated failed sign-ins lock that
- * address out for a while, and passkey challenge requests are capped so a
- * flood cannot crowd out real ones. Successful requests from a well-behaved
- * client never count toward the lockout, so reconnect storms are unaffected.
- *
- * Addresses come from `deriveAuthClientMetadata`, which reads
- * `X-Forwarded-For` only from configured trusted proxies. Behind an untrusted
- * proxy every client shares the proxy's address and therefore one budget.
+ * Per-address limits on unauthenticated sign-in endpoints, so one client cannot degrade sign-in
+ * for others. Only failures count toward lockout. Addresses honor `X-Forwarded-For` only from
+ * trusted proxies; behind an untrusted proxy all clients share one budget.
  */
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
@@ -33,9 +24,9 @@ export interface WindowPolicy {
 }
 
 /** Failed sign-ins allowed per address before it is locked out for the rest of the window. */
-export const FAILED_SIGN_IN_POLICY: WindowPolicy = { limit: 20, windowMs: 10 * 60 * 1000 };
+const FAILED_SIGN_IN_POLICY: WindowPolicy = { limit: 20, windowMs: 10 * 60 * 1000 };
 /** Passkey challenges an address may request per window. */
-export const CHALLENGE_REQUEST_POLICY: WindowPolicy = { limit: 30, windowMs: 60 * 1000 };
+const CHALLENGE_REQUEST_POLICY: WindowPolicy = { limit: 30, windowMs: 60 * 1000 };
 const MAX_TRACKED_ADDRESSES = 10_000;
 
 interface WindowCount {
@@ -107,7 +98,7 @@ export class AuthAttemptLimiter extends Context.Service<
   }
 >()("t3/auth/AuthAttemptLimiter") {}
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.sync(() => {
   const failures = makeWindowCounter(FAILED_SIGN_IN_POLICY);
   const challenges = makeWindowCounter(CHALLENGE_REQUEST_POLICY);

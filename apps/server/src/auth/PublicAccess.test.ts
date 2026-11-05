@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { AuthAccessWriteScope, AuthStandardClientScopes } from "@t3tools/contracts";
 
@@ -13,6 +14,7 @@ import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Sqlite from "../persistence/Sqlite.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
+import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 import * as PublicAccess from "./PublicAccess.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
@@ -23,6 +25,7 @@ const ORIGIN = "https://t3.example.com";
 const client = { deviceType: "desktop" as const, browser: "Chrome", os: "macOS" };
 
 const authLayer = EnvironmentAuth.layer.pipe(
+  Layer.provide(ManagedPolicy.layerTest()),
   Layer.provideMerge(Sqlite.layerMemory),
   Layer.provide(ServerSecretStore.layer),
   Layer.provide(ServerEnvironment.layerIdentity),
@@ -76,7 +79,7 @@ const signIn = (authenticator: ReturnType<typeof makeSoftwareAuthenticator>, ori
     return { credential, result: yield* publicAccess.finishLogin({ origin, credential, client }) };
   });
 
-it.layer(NodeServices.layer)("PublicAccess", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PublicAccess", (it) => {
   it.effect("enrolls a passkey and signs in with the enrolling session's scopes", () =>
     Effect.gen(function* () {
       const publicAccess = yield* PublicAccess.PublicAccess;

@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
@@ -356,7 +357,7 @@ const ServerConfigLayer = ServerConfig.layerTest(process.cwd(), {
 const TestLayer = Layer.mergeAll(GitVcsDriver.layerVcs, GitVcsDriver.layer).pipe(
   Layer.provide(ServerConfigLayer),
   Layer.provideMerge(VcsProcess.layer),
-  Layer.provideMerge(NodeServices.layer),
+  Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
 );
 
 const runGit = (cwd: string, args: ReadonlyArray<string>) =>
@@ -394,190 +395,168 @@ const makeRepo = Effect.fn("makeRepo")(function* () {
 });
 
 it.layer(TestLayer)("graphSnapshot", (it) => {
-  it.effect(
-    "returns commits, refs, and worktrees for a real repository",
-    () =>
-      Effect.gen(function* () {
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-        const cwd = yield* makeRepo();
+  it.effect("returns commits, refs, and worktrees for a real repository", () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const cwd = yield* makeRepo();
 
-        yield* writeAndCommit(cwd, "a.txt", "first");
-        yield* runGit(cwd, ["branch", "-M", "main"]);
-        yield* runGit(cwd, ["tag", "v1.0"]);
-        yield* runGit(cwd, ["checkout", "-b", "feature"]);
-        yield* writeAndCommit(cwd, "b.txt", "on feature");
-        yield* runGit(cwd, ["checkout", "main"]);
-        yield* writeAndCommit(cwd, "c.txt", "on main");
-        yield* runGit(cwd, ["merge", "--no-ff", "-m", "merge feature", "feature"]);
-        yield* runGit(cwd, ["tag", "-a", "v2.0", "-m", "annotated release"]);
+      yield* writeAndCommit(cwd, "a.txt", "first");
+      yield* runGit(cwd, ["branch", "-M", "main"]);
+      yield* runGit(cwd, ["tag", "v1.0"]);
+      yield* runGit(cwd, ["checkout", "-b", "feature"]);
+      yield* writeAndCommit(cwd, "b.txt", "on feature");
+      yield* runGit(cwd, ["checkout", "main"]);
+      yield* writeAndCommit(cwd, "c.txt", "on main");
+      yield* runGit(cwd, ["merge", "--no-ff", "-m", "merge feature", "feature"]);
+      yield* runGit(cwd, ["tag", "-a", "v2.0", "-m", "annotated release"]);
 
-        const snapshot = yield* driver.graphSnapshot({ cwd });
+      const snapshot = yield* driver.graphSnapshot({ cwd });
 
-        assert.strictEqual(snapshot.isRepo, true);
-        assert.strictEqual(snapshot.commits.length, 4, "three commits plus the merge");
+      assert.strictEqual(snapshot.isRepo, true);
+      assert.strictEqual(snapshot.commits.length, 4, "three commits plus the merge");
 
-        const merge = snapshot.commits.find((commit) => commit.summary === "merge feature");
-        assert.isDefined(merge);
-        assert.strictEqual(merge!.parents.length, 2, "a --no-ff merge has two parents");
+      const merge = snapshot.commits.find((commit) => commit.summary === "merge feature");
+      assert.isDefined(merge);
+      assert.strictEqual(merge!.parents.length, 2, "a --no-ff merge has two parents");
 
-        const refNames = snapshot.refs.map((ref) => `${ref.kind}:${ref.name}`);
-        assert.includeMembers(refNames, ["local:main", "local:feature", "tag:v1.0", "tag:v2.0"]);
+      const refNames = snapshot.refs.map((ref) => `${ref.kind}:${ref.name}`);
+      assert.includeMembers(refNames, ["local:main", "local:feature", "tag:v1.0", "tag:v2.0"]);
 
-        // Every ref must point at a commit present in the graph, or the client
-        // would have a label with nowhere to draw it. This is the property that
-        // catches an unpeeled annotated tag.
-        const commitOids = new Set(snapshot.commits.map((commit) => commit.oid));
-        for (const ref of snapshot.refs) {
-          assert.isTrue(
-            commitOids.has(ref.oid),
-            `ref ${ref.kind}:${ref.name} points at ${ref.oid}, which is not in the graph`,
-          );
-        }
-
-        const primary = snapshot.worktrees.find((worktree) => worktree.isPrimary);
-        assert.isDefined(primary);
-        assert.strictEqual(primary!.refName, "main");
-      }),
-    { timeout: 60_000 },
-  );
-
-  it.effect(
-    "excludes T3 checkpoint refs from the graph",
-    () =>
-      Effect.gen(function* () {
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-        const cwd = yield* makeRepo();
-
-        yield* writeAndCommit(cwd, "a.txt", "first");
-        yield* runGit(cwd, ["branch", "-M", "main"]);
-        // A checkpoint commit that no branch, tag, or remote reaches. `git log
-        // --all` would pull it into the graph; the ref selection deliberately
-        // does not, because checkpoints are T3 bookkeeping, not user history.
-        yield* writeAndCommit(cwd, "checkpoint.txt", "checkpoint only");
-        const checkpointOid = (yield* runGit(cwd, ["rev-parse", "HEAD"])).stdout.trim();
-        yield* runGit(cwd, ["update-ref", "refs/t3/checkpoints/test/turn/1", checkpointOid]);
-        yield* runGit(cwd, ["reset", "--hard", "HEAD~1"]);
-
-        const snapshot = yield* driver.graphSnapshot({ cwd });
-
-        assert.strictEqual(
-          snapshot.commits.length,
-          1,
-          "only the branch commit belongs in the graph",
+      // Every ref must point at a commit present in the graph, or the client
+      // would have a label with nowhere to draw it. This is the property that
+      // catches an unpeeled annotated tag.
+      const commitOids = new Set(snapshot.commits.map((commit) => commit.oid));
+      for (const ref of snapshot.refs) {
+        assert.isTrue(
+          commitOids.has(ref.oid),
+          `ref ${ref.kind}:${ref.name} points at ${ref.oid}, which is not in the graph`,
         );
-        assert.isFalse(
-          snapshot.commits.some((commit) => commit.oid === checkpointOid),
-          "checkpoint commits must not appear in the graph",
-        );
-        assert.isFalse(
-          snapshot.refs.some((ref) => ref.name.includes("checkpoint")),
-          "checkpoint refs must not appear as graph labels",
-        );
-      }),
-    { timeout: 60_000 },
+      }
+
+      const primary = snapshot.worktrees.find((worktree) => worktree.isPrimary);
+      assert.isDefined(primary);
+      assert.strictEqual(primary!.refName, "main");
+    }),
   );
 
-  it.effect(
-    "pages through history and reports the end of the walk",
-    () =>
-      Effect.gen(function* () {
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-        const cwd = yield* makeRepo();
+  it.effect("excludes T3 checkpoint refs from the graph", () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const cwd = yield* makeRepo();
 
-        for (let index = 0; index < 5; index++) {
-          yield* writeAndCommit(cwd, `file-${index}.txt`, `commit ${index}`);
-        }
+      yield* writeAndCommit(cwd, "a.txt", "first");
+      yield* runGit(cwd, ["branch", "-M", "main"]);
+      // A checkpoint commit that no branch, tag, or remote reaches. `git log
+      // --all` would pull it into the graph; the ref selection deliberately
+      // does not, because checkpoints are T3 bookkeeping, not user history.
+      yield* writeAndCommit(cwd, "checkpoint.txt", "checkpoint only");
+      const checkpointOid = (yield* runGit(cwd, ["rev-parse", "HEAD"])).stdout.trim();
+      yield* runGit(cwd, ["update-ref", "refs/t3/checkpoints/test/turn/1", checkpointOid]);
+      yield* runGit(cwd, ["reset", "--hard", "HEAD~1"]);
 
-        const firstPage = yield* driver.graphSnapshot({ cwd, limit: 2 });
-        assert.strictEqual(firstPage.commits.length, 2);
-        assert.strictEqual(firstPage.nextCursor, 2);
+      const snapshot = yield* driver.graphSnapshot({ cwd });
 
-        const secondPage = yield* driver.graphSnapshot({ cwd, cursor: 2, limit: 2 });
-        assert.strictEqual(secondPage.commits.length, 2);
-        assert.strictEqual(secondPage.nextCursor, 4);
-
-        const lastPage = yield* driver.graphSnapshot({ cwd, cursor: 4, limit: 2 });
-        assert.strictEqual(lastPage.commits.length, 1);
-        assert.strictEqual(lastPage.nextCursor, null, "the final page must not advertise another");
-
-        const allOids = [...firstPage.commits, ...secondPage.commits, ...lastPage.commits].map(
-          (commit) => commit.oid,
-        );
-        assert.strictEqual(new Set(allOids).size, 5, "pages must not overlap or skip commits");
-      }),
-    { timeout: 60_000 },
+      assert.strictEqual(snapshot.commits.length, 1, "only the branch commit belongs in the graph");
+      assert.isFalse(
+        snapshot.commits.some((commit) => commit.oid === checkpointOid),
+        "checkpoint commits must not appear in the graph",
+      );
+      assert.isFalse(
+        snapshot.refs.some((ref) => ref.name.includes("checkpoint")),
+        "checkpoint refs must not appear as graph labels",
+      );
+    }),
   );
 
-  it.effect(
-    "counts staged, unstaged, and untracked work per worktree",
-    () =>
-      Effect.gen(function* () {
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const cwd = yield* makeRepo();
+  it.effect("pages through history and reports the end of the walk", () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const cwd = yield* makeRepo();
 
-        yield* writeAndCommit(cwd, "tracked.txt", "first");
-        yield* runGit(cwd, ["branch", "-M", "main"]);
+      for (let index = 0; index < 5; index++) {
+        yield* writeAndCommit(cwd, `file-${index}.txt`, `commit ${index}`);
+      }
 
-        // Get both files committed first: staging anything before this commit
-        // would just be swallowed by it.
-        yield* writeAndCommit(cwd, "second.txt", "add second");
+      const firstPage = yield* driver.graphSnapshot({ cwd, limit: 2 });
+      assert.strictEqual(firstPage.commits.length, 2);
+      assert.strictEqual(firstPage.nextCursor, 2);
 
-        // Now one staged edit, one unstaged edit, and one untracked file.
-        yield* fileSystem.writeFileString(path.join(cwd, "tracked.txt"), "staged change");
-        yield* runGit(cwd, ["add", "tracked.txt"]);
-        yield* fileSystem.writeFileString(path.join(cwd, "second.txt"), "modified, not staged");
-        yield* fileSystem.writeFileString(path.join(cwd, "untracked.txt"), "new");
+      const secondPage = yield* driver.graphSnapshot({ cwd, cursor: 2, limit: 2 });
+      assert.strictEqual(secondPage.commits.length, 2);
+      assert.strictEqual(secondPage.nextCursor, 4);
 
-        const result = yield* driver.worktreeChanges({ cwd, worktreePaths: [cwd] });
+      const lastPage = yield* driver.graphSnapshot({ cwd, cursor: 4, limit: 2 });
+      assert.strictEqual(lastPage.commits.length, 1);
+      assert.strictEqual(lastPage.nextCursor, null, "the final page must not advertise another");
 
-        assert.strictEqual(result.worktrees.length, 1);
-        const counts = result.worktrees[0]!;
-        assert.strictEqual(counts.stagedFileCount, 1, "tracked.txt is staged");
-        assert.strictEqual(counts.unstagedFileCount, 1, "second.txt is modified since the index");
-        assert.strictEqual(counts.untrackedFileCount, 1);
-        assert.strictEqual(counts.conflictedFileCount, 0);
-        assert.deepStrictEqual(result.skippedPaths, []);
-      }),
-    { timeout: 60_000 },
+      const allOids = [...firstPage.commits, ...secondPage.commits, ...lastPage.commits].map(
+        (commit) => commit.oid,
+      );
+      assert.strictEqual(new Set(allOids).size, 5, "pages must not overlap or skip commits");
+    }),
   );
 
-  it.effect(
-    "refuses a path that is not a worktree of this repository",
-    () =>
-      Effect.gen(function* () {
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const cwd = yield* makeRepo();
-        yield* writeAndCommit(cwd, "a.txt", "first");
+  it.effect("counts staged, unstaged, and untracked work per worktree", () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* makeRepo();
 
-        // A real git repo, but a different one: reading its status through this
-        // repository's request would be an access-boundary escape.
-        const outsider = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-git-graph-out-" });
-        yield* runGit(outsider, ["init"]);
+      yield* writeAndCommit(cwd, "tracked.txt", "first");
+      yield* runGit(cwd, ["branch", "-M", "main"]);
 
-        const result = yield* driver.worktreeChanges({ cwd, worktreePaths: [outsider] });
+      // Get both files committed first: staging anything before this commit
+      // would just be swallowed by it.
+      yield* writeAndCommit(cwd, "second.txt", "add second");
 
-        assert.deepStrictEqual(result.worktrees, []);
-        assert.deepStrictEqual(result.skippedPaths, [outsider]);
-      }),
-    { timeout: 60_000 },
+      // Now one staged edit, one unstaged edit, and one untracked file.
+      yield* fileSystem.writeFileString(path.join(cwd, "tracked.txt"), "staged change");
+      yield* runGit(cwd, ["add", "tracked.txt"]);
+      yield* fileSystem.writeFileString(path.join(cwd, "second.txt"), "modified, not staged");
+      yield* fileSystem.writeFileString(path.join(cwd, "untracked.txt"), "new");
+
+      const result = yield* driver.worktreeChanges({ cwd, worktreePaths: [cwd] });
+
+      assert.strictEqual(result.worktrees.length, 1);
+      const counts = result.worktrees[0]!;
+      assert.strictEqual(counts.stagedFileCount, 1, "tracked.txt is staged");
+      assert.strictEqual(counts.unstagedFileCount, 1, "second.txt is modified since the index");
+      assert.strictEqual(counts.untrackedFileCount, 1);
+      assert.strictEqual(counts.conflictedFileCount, 0);
+      assert.deepStrictEqual(result.skippedPaths, []);
+    }),
   );
 
-  it.effect(
-    "reports an empty graph for a repository with no commits",
-    () =>
-      Effect.gen(function* () {
-        const driver = yield* GitVcsDriver.GitVcsDriver;
-        const cwd = yield* makeRepo();
+  it.effect("refuses a path that is not a worktree of this repository", () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cwd = yield* makeRepo();
+      yield* writeAndCommit(cwd, "a.txt", "first");
 
-        const snapshot = yield* driver.graphSnapshot({ cwd });
+      // A real git repo, but a different one: reading its status through this
+      // repository's request would be an access-boundary escape.
+      const outsider = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-git-graph-out-" });
+      yield* runGit(outsider, ["init"]);
 
-        assert.strictEqual(snapshot.isRepo, true);
-        assert.deepStrictEqual(snapshot.commits, []);
-        assert.strictEqual(snapshot.nextCursor, null);
-      }),
-    { timeout: 60_000 },
+      const result = yield* driver.worktreeChanges({ cwd, worktreePaths: [outsider] });
+
+      assert.deepStrictEqual(result.worktrees, []);
+      assert.deepStrictEqual(result.skippedPaths, [outsider]);
+    }),
+  );
+
+  it.effect("reports an empty graph for a repository with no commits", () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const cwd = yield* makeRepo();
+
+      const snapshot = yield* driver.graphSnapshot({ cwd });
+
+      assert.strictEqual(snapshot.isRepo, true);
+      assert.deepStrictEqual(snapshot.commits, []);
+      assert.strictEqual(snapshot.nextCursor, null);
+    }),
   );
 });

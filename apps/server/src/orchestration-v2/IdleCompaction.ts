@@ -1,4 +1,8 @@
-import type { OrchestrationV2ThreadProjection, RunId } from "@t3tools/contracts";
+import {
+  isListedThreadLineage,
+  type OrchestrationV2ThreadProjection,
+  type RunId,
+} from "@t3tools/contracts";
 import {
   COMPACTION_SUGGESTION_MIN_TOKENS,
   hasDismissedResumeCompaction,
@@ -37,10 +41,13 @@ export type IdleCompactionRecords = Pick<
 type Run = IdleCompactionRecords["runs"][number];
 
 const latestOf = (runs: ReadonlyArray<Run>) =>
-  runs.reduce<Run | null>(
-    (latest, run) => (latest === null || run.ordinal > latest.ordinal ? run : latest),
-    null,
-  );
+  runs
+    // A removed or steered queued message leaves a cancelled run that never started.
+    .filter((run) => run.status !== "cancelled" || run.startedAt !== null)
+    .reduce<Run | null>(
+      (latest, run) => (latest === null || run.ordinal > latest.ordinal ? run : latest),
+      null,
+    );
 
 /**
  * The context size of the Claude session `latestRun` left behind, or null when T3 must not compact
@@ -59,7 +66,7 @@ function compactableUsage(
   }: IdleCompactionRecords,
   latestRun: Run,
 ) {
-  if (thread.lineage.relationshipToParent === "subagent") return null;
+  if (!isListedThreadLineage(thread.lineage)) return null;
   const message = messages.find((candidate) => candidate.id === latestRun.userMessageId);
   // Never compact a compaction, so one idle spell compacts at most once.
   if (message === undefined || message.text.trim().toLowerCase() === "/compact") return null;

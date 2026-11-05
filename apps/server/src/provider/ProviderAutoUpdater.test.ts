@@ -137,6 +137,8 @@ describe("ProviderAutoUpdater.poll", () => {
         refreshWorkspaceSnapshot: () => unused,
         getProviderMaintenanceCapabilitiesForInstance: () => unused,
         setProviderMaintenanceActionState: () => unused,
+        reloadSecretsAndRefresh: () => unused,
+        invalidateModelCaches: () => unused,
         streamChanges: Stream.empty,
       };
       const layer = Layer.mergeAll(
@@ -165,6 +167,8 @@ describe("ProviderAutoUpdater.poll", () => {
             release: () => Effect.void,
             detach: () => Effect.void,
             runWhenIdle: (_, effect) => (input.idle ? Effect.asSome(effect) : Effect.succeedNone),
+            releaseUnlessBusy: () => Effect.die("unused releaseUnlessBusy"),
+            otherWorkingThreads: () => Effect.die("unused otherWorkingThreads"),
           }),
         ),
       );

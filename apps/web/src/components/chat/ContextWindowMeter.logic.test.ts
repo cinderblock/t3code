@@ -1,7 +1,7 @@
 import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
-import { hasDismissedResumeCompaction } from "@t3tools/shared/claudeCompaction";
 import { describe, expect, it } from "vite-plus/test";
 import { deriveProviderInstanceEntries } from "../../providerInstances";
+import { hasDismissedResumeCompaction } from "@t3tools/client-runtime/state/context-window";
 import {
   hasAvailableCompactionProvider,
   resolveContextWindowModelDisplayName,
@@ -108,11 +108,12 @@ describe("hasDismissedResumeCompaction", () => {
     expect(
       hasDismissedResumeCompaction([
         {
-          kind: "user_input",
-          status: "resolved",
-          answers: {
-            "This session is 2h 0m old and uses 250,000 tokens. Compact it before continuing?":
-              "Don't ask again",
+          kind: "user-input.resolved",
+          payload: {
+            answers: {
+              "This session is 2h 0m old and uses 250,000 tokens. Compact it before continuing?":
+                "Don't ask again",
+            },
           },
         },
       ]),
@@ -123,10 +124,11 @@ describe("hasDismissedResumeCompaction", () => {
     expect(
       hasDismissedResumeCompaction([
         {
-          kind: "user_input",
-          status: "resolved",
-          answers: {
-            "The build cache is large. Compact it before continuing?": "Don't ask again",
+          kind: "user-input.resolved",
+          payload: {
+            answers: {
+              "The build cache is large. Compact it before continuing?": "Don't ask again",
+            },
           },
         },
       ]),

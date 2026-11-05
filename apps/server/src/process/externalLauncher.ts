@@ -22,20 +22,18 @@ import {
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
-import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Base64 from "effect/encoding/Base64";
-import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import * as Ref from "effect/Ref";
-import * as Scope from "effect/Scope";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import { makeStaleWhileRevalidate } from "../environment/staleWhileRevalidate.ts";
 export {
   ExternalLauncherError,
   ExternalLauncherBrowserSpawnError,
@@ -441,15 +439,9 @@ const resolveBrowserLaunch = Effect.fn("externalLauncher.resolveBrowserLaunch")(
   return buildBrowserLaunch(target, platform, env);
 });
 
-// Editor availability only changes when the user installs or removes an editor, but discovering it
-// is expensive in exactly the wrong way: every editor that is NOT installed walks the entire PATH
-// with an fs.stat per candidate (on Windows, once per PATHEXT entry). `server.getConfig` runs this
-// during every client bootstrap, so a reconnect loop multiplies it -- one measured session did
-// ~22.7k `shell.isExecutableFile` stats, which stalls the event loop and makes the next disconnect
-// more likely, feeding the loop.
-//
-// Memoize the resolved list, keyed by platform + PATH + PATHEXT so a PATH change still re-detects,
-// with a short TTL so installing an editor is picked up without restarting the backend.
+// Detection walks all of PATH per missing editor (per PATHEXT on Windows) and runs on every
+// client bootstrap, so a reconnect loop turns it into an event-loop stall. Keyed by platform,
+// PATH and PATHEXT, with a short TTL so newly installed editors still appear.
 const AVAILABLE_EDITORS_CACHE_TTL_MS = 60_000;
 
 interface AvailableEditorsCacheEntry {
@@ -494,13 +486,7 @@ const resolveFileManagerRevealKind = Effect.fn("externalLauncher.resolveFileMana
   },
 );
 
-// Shared scans must survive caller timeouts/disconnects; monotonic expiry prevents clock rollback extending stale entries.
-const EDITOR_DISCOVERY_CACHE_TTL_NANOS = 60_000_000_000n;
-
-interface EditorDiscoveryCacheEntry {
-  readonly scan: Deferred.Deferred<ReadonlyArray<EditorId>>;
-  readonly expiresAtNanos: bigint | undefined;
-}
+const EDITOR_DISCOVERY_CACHE_TTL = "60 seconds";
 
 export class ExternalLauncher extends Context.Service<
   ExternalLauncher,
@@ -720,6 +706,56 @@ const launchEditor = Effect.fn("externalLauncher.launchEditor")(function* (
   yield* launchEditorProcess(launch);
 });
 
+const GRAPHICAL_SESSION_ENV_KEYS: ReadonlySet<string> = new Set([
+  "DISPLAY",
+  "WAYLAND_DISPLAY",
+  "XAUTHORITY",
+]);
+
+// The user manager's environment over D-Bus. `systemctl show-environment` would
+// shell-quote values with spaces as $'...', while this JSON carries them raw.
+const decodeManagerEnvironment = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.Struct({ data: Schema.Array(Schema.String) })),
+);
+
+// Boot services miss the desktop environment imported later into the systemd user manager.
+const readGraphicalSessionEnv = Effect.fn("externalLauncher.readGraphicalSessionEnv")(
+  function* () {
+    const hostEnv = yield* HostProcess.Environment;
+    if ((yield* HostProcess.Platform) !== "linux" || hasGraphicalLinuxSession(hostEnv)) {
+      return {};
+    }
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const output = yield* spawner.string(
+      ChildProcess.make(
+        "busctl",
+        [
+          "--user",
+          "--json=short",
+          "get-property",
+          "org.freedesktop.systemd1",
+          "/org/freedesktop/systemd1",
+          "org.freedesktop.systemd1.Manager",
+          "Environment",
+        ],
+        { stdin: "ignore", stderr: "ignore" },
+      ),
+    );
+    const { data } = yield* decodeManagerEnvironment(output);
+    return Object.fromEntries(
+      data.flatMap((line) => {
+        const separator = line.indexOf("=");
+        const key = line.slice(0, separator);
+        return separator > 0 && GRAPHICAL_SESSION_ENV_KEYS.has(key)
+          ? [[key, line.slice(separator + 1)]]
+          : [];
+      }),
+    );
+  },
+  Effect.timeout("2 seconds"),
+  Effect.orElseSucceed((): NodeJS.ProcessEnv => ({})),
+);
+
 const launchAndUnref = Effect.fn("externalLauncher.launchAndUnref")(function* (
   launch: ProcessLaunch,
   onError: (cause: unknown) => ExternalLauncherError,
@@ -729,7 +765,7 @@ const launchAndUnref = Effect.fn("externalLauncher.launchAndUnref")(function* (
   const { ELECTRON_RUN_AS_NODE: _runAsNode, ...env } = yield* HostProcess.Environment;
   const command = ChildProcess.make(launch.command, launch.args, {
     ...launch.options,
-    env,
+    env: { ...env, ...launch.options.env },
     extendEnv: false,
   });
 
@@ -783,6 +819,7 @@ const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(fu
       options: {
         detached: launch.detached ?? true,
         shell: spawnCommand.shell,
+        env: yield* readGraphicalSessionEnv(),
         stdin: "ignore",
         stdout: "ignore",
         stderr: "ignore",
@@ -813,69 +850,27 @@ export const make = Effect.gen(function* () {
       Effect.provideService(Path.Path, path),
     );
 
-  const scope = yield* Scope.Scope;
-  const editorDiscoveryCache = yield* Ref.make<Option.Option<EditorDiscoveryCacheEntry>>(
-    Option.none(),
-  );
-  const runEditorDiscovery = (scan: Deferred.Deferred<ReadonlyArray<EditorId>>) =>
+  const cachedAvailableEditors = yield* makeStaleWhileRevalidate(
     provideCommandResolutionServices(resolveAvailableEditors()).pipe(
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-      Effect.onExit((exit) =>
-        Effect.gen(function* () {
-          const expiresAtNanos =
-            (yield* Clock.monotonicTimeNanos) + EDITOR_DISCOVERY_CACHE_TTL_NANOS;
-          yield* Ref.update(editorDiscoveryCache, (current) =>
-            Option.isNone(current) || current.value.scan !== scan
-              ? current
-              : Exit.isSuccess(exit)
-                ? Option.some({ scan, expiresAtNanos })
-                : Option.none(),
-          );
-          yield* Deferred.done(scan, exit);
-        }),
-      ),
-      Effect.interruptible,
-      Effect.forkIn(scope),
-    );
-  // Claim and start atomically; interruption between them would leave an entry waiting on no scan.
-  const acquireEditorDiscovery = Effect.gen(function* () {
-    const nowNanos = yield* Clock.monotonicTimeNanos;
-    const [scan, isNewScan] = yield* Ref.modify(
-      editorDiscoveryCache,
-      (
-        current,
-      ): [
-        [EditorDiscoveryCacheEntry["scan"], boolean],
-        Option.Option<EditorDiscoveryCacheEntry>,
-      ] => {
-        if (
-          Option.isSome(current) &&
-          (current.value.expiresAtNanos === undefined || current.value.expiresAtNanos > nowNanos)
-        ) {
-          return [[current.value.scan, false], current];
-        }
-        const scan = Deferred.makeUnsafe<ReadonlyArray<EditorId>>();
-        return [[scan, true], Option.some({ scan, expiresAtNanos: undefined })];
-      },
-    );
-    if (isNewScan) {
-      yield* runEditorDiscovery(scan);
-    }
-    return scan;
-  }).pipe(Effect.uninterruptible);
-  const cachedAvailableEditors = Effect.flatMap(acquireEditorDiscovery, Deferred.await);
+    ),
+    EDITOR_DISCOVERY_CACHE_TTL,
+  );
+  const cachedFileManagerRevealKind = yield* makeStaleWhileRevalidate(
+    provideCommandResolutionServices(resolveFileManagerRevealKind()).pipe(
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+    ),
+    EDITOR_DISCOVERY_CACHE_TTL,
+  );
 
   // Forwarders retain the underlying launcher and discovery spans.
   return ExternalLauncher.of({
     resolveAvailableEditors: Effect.fnUntraced(function* () {
       return yield* cachedAvailableEditors;
     }),
-    resolveFileManagerRevealKind: Effect.fnUntraced(
-      function* () {
-        return yield* provideCommandResolutionServices(resolveFileManagerRevealKind());
-      },
-      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-    ),
+    resolveFileManagerRevealKind: Effect.fnUntraced(function* () {
+      return yield* cachedFileManagerRevealKind;
+    }),
     launchBrowser: Effect.fnUntraced(
       function* (target) {
         return yield* launchBrowser(target);

@@ -1,19 +1,7 @@
 /**
- * PublicAccess — signing in to an environment served from a public HTTPS
- * origin (usually behind a reverse proxy) with a passkey.
- *
- * The user configures the origins the environment is reachable on. A browser
- * that paired on one of those origins can enroll a passkey; later visits sign
- * in with it and receive an ordinary browser session cookie. A passkey carries
- * the scopes of the session that enrolled it, so the pairing link's scopes
- * decide what it can do. One enrolled from a session holding every standard
- * scope (a default pairing link) is a full-access passkey: it signs in with the
- * standard set current at sign-in, so permissions added later reach it
- * without re-enrolling. Revoking a passkey also revokes the sessions it
- * issued, and removing an origin disables the passkeys enrolled on it.
- *
- * Ceremony challenges live in memory: they are single-use, expire after a few
- * minutes, and are bounded so unauthenticated callers cannot grow the map.
+ * Passkey sign-in on configured public HTTPS origins. A passkey carries the scopes of the
+ * session that enrolled it; one enrolled with every standard scope tracks the current standard
+ * set. Revoking a passkey revokes its sessions. Challenges are single-use, short-lived and bounded.
  */
 // @effect-diagnostics-next-line nodeBuiltinImport:off - WebAuthn needs JWK public keys and signature verification, which Effect Crypto does not provide.
 import * as NodeCrypto from "node:crypto";
@@ -220,7 +208,7 @@ export class PublicAccess extends Context.Service<
  * passkeys. WebAuthn needs a secure context, so plain HTTP is only accepted
  * for `localhost`.
  */
-export function normalizePublicOrigin(value: string): string | null {
+function normalizePublicOrigin(value: string): string | null {
   let url: URL;
   try {
     url = new URL(value.trim());
@@ -237,7 +225,7 @@ export function normalizePublicOrigin(value: string): string | null {
 }
 
 /** Parses `10.0.0.5`, `10.0.0.0/8`, `fd00::/8`, … into a BlockList entry. */
-export function parseTrustedProxy(
+function parseTrustedProxy(
   value: string,
 ): { readonly address: string; readonly prefix: number; readonly family: "ipv4" | "ipv6" } | null {
   const [address = "", prefixText, ...rest] = value.trim().split("/");
@@ -387,7 +375,7 @@ const ceremonyFailure = (failure: {
   readonly reason: string;
 }) => new PasskeyCeremonyError({ code: failure.code, reason: failure.reason });
 
-/** @public Service construction is part of the canonical Effect module API. */
+/** @public */
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const sessions = yield* SessionStore.SessionStore;

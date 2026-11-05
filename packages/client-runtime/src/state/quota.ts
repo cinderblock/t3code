@@ -87,7 +87,7 @@ export interface QueuedMessagesProjection {
   readonly messages: ReadonlyArray<QueuedMessage>;
 }
 
-export function applyQueuedMessageEvent(
+function applyQueuedMessageEvent(
   current: Option.Option<QueuedMessagesProjection>,
   event: QueuedMessageStreamEvent,
 ): Option.Option<QueuedMessagesProjection> {
@@ -109,7 +109,7 @@ export function applyQueuedMessageEvent(
   }
 }
 
-export function projectQueuedMessages(
+function projectQueuedMessages(
   current: Option.Option<QueuedMessagesProjection>,
   event: QueuedMessageStreamEvent,
 ): readonly [Option.Option<QueuedMessagesProjection>, ReadonlyArray<QueuedMessagesProjection>] {

@@ -129,7 +129,7 @@ function extractIconHref(source: string): string | null {
   return null;
 }
 
-const optionOnNotFound = <A, R>(
+export const optionOnNotFound = <A, R>(
   effect: Effect.Effect<A, PlatformError.PlatformError, R>,
 ): Effect.Effect<Option.Option<A>, PlatformError.PlatformError, R> =>
   effect.pipe(
@@ -301,11 +301,9 @@ export const make = Effect.gen(function* () {
   const faviconCache = yield* Cache.makeWith<string, string | null, ProjectFaviconResolutionError>(
     (key) => {
       const { cwd, faviconPath } = parseFaviconCacheKey(key);
-      // Degrade to the fallback favicon (null) if a single candidate stat/read hangs, so a slow
-      // filesystem (e.g. an unresponsive mapped network drive) can't keep the asset RPC pending
-      // past the client's slow-request threshold. Real resolution failures are still surfaced;
-      // only the timeout is mapped to absence, and it is cached on the negative TTL like any
-      // other miss.
+      // A hung stat/read (e.g. an unresponsive network drive) degrades to the fallback favicon so
+      // the asset RPC can't stay pending. Only the timeout maps to absence, cached on the negative
+      // TTL; real failures still surface.
       return resolvePathUncached(cwd, faviconPath).pipe(
         Effect.timeoutOption(FAVICON_RESOLVE_TIMEOUT),
         Effect.map((resolved) => Option.getOrElse(resolved, () => null)),

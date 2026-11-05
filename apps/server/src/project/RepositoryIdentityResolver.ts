@@ -6,7 +6,9 @@ import * as Data from "effect/Data";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 
 import * as ProcessRunner from "../processRunner.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
@@ -20,8 +22,6 @@ const DEFAULT_NEGATIVE_CACHE_TTL = Duration.minutes(1);
 
 export interface RepositoryIdentityResolverOptions {
   readonly cacheCapacity?: number;
-  readonly positiveCacheTtl?: Duration.Input;
-  readonly negativeCacheTtl?: Duration.Input;
   readonly refine?: (
     identity: RepositoryIdentity,
   ) => Effect.Effect<RepositoryIdentity, SourceControlProviderError>;
@@ -138,17 +138,23 @@ class RepositoryIdentityCacheKey extends Data.Class<{
 }> {}
 
 /**
- * Locate the work-tree root for `cwd`, or `null` when it can't be determined.
- *
- * Returning `null` rather than falling back to `cwd` lets the caller cache an indeterminate
- * answer on the *negative* TTL. That matters under load: when the machine is busy this `git`
- * call is the first thing to time out, and caching its fallback as though it were a confirmed
- * root would pin the wrong identity for the full positive TTL.
+ * Returns `null` rather than falling back to `cwd` so an indeterminate answer (usually a
+ * timeout under load) is cached on the negative TTL instead of pinning a wrong identity.
  */
 const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.resolveCacheKey")(
   function* (cwd: string) {
     const processRunner = yield* ProcessRunner.ProcessRunner;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const env = explicitBareRepositoryEnv(process.env, yield* HostProcess.Platform);
+
+    // `git -C` cannot enter a missing folder or a file, so every probe below would fail.
+    const isFolder = yield* fileSystem.stat(cwd).pipe(
+      Effect.map((info) => info.type === "Directory"),
+      Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(false)),
+      Effect.orElseSucceed(() => true),
+    );
+    if (!isFolder) return null;
 
     // git is always a real executable; cmd shell mode would split spaced paths on re-tokenization.
     const topLevelResult = yield* processRunner
@@ -170,7 +176,25 @@ const resolveRepositoryIdentityCacheKey = Effect.fn("RepositoryIdentityResolver.
     }
 
     // Explicit Git directories preserve safe.bareRepository=explicit for both layouts.
-    for (const gitDir of [".", ".git"]) {
+    for (const [gitDir, entry] of [
+      [".", "HEAD"],
+      [".git", ".git"],
+    ] as const) {
+      // An explicit --git-dir fails unless the folder has this entry; a symlink counts even
+      // when its target is missing, as git reads a symlinked HEAD's target text.
+      const target = path.join(cwd, entry);
+      const hasEntry = yield* fileSystem.exists(target).pipe(
+        Effect.flatMap((exists) =>
+          exists
+            ? Effect.succeed(true)
+            : fileSystem.readLink(target).pipe(
+                Effect.as(true),
+                Effect.orElseSucceed(() => false),
+              ),
+        ),
+        Effect.orElseSucceed(() => true),
+      );
+      if (!hasEntry) continue;
       const bareResult = yield* processRunner
         .run({
           command: "git",
@@ -234,29 +258,26 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
   options: RepositoryIdentityResolverOptions = {},
 ) {
   const processRunner = yield* ProcessRunner.ProcessRunner;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const cacheCapacity = options.cacheCapacity ?? DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY;
   const refine = options.refine ?? Effect.succeed;
   const timeToLive = (exit: Exit.Exit<unknown>) =>
     Exit.match(exit, {
       onSuccess: (value) =>
-        value === null
-          ? (options.negativeCacheTtl ?? DEFAULT_NEGATIVE_CACHE_TTL)
-          : (options.positiveCacheTtl ?? DEFAULT_POSITIVE_CACHE_TTL),
+        value === null ? DEFAULT_NEGATIVE_CACHE_TTL : DEFAULT_POSITIVE_CACHE_TTL,
       onFailure: () => Duration.zero,
     });
 
-  // `git rev-parse --show-toplevel` is a full subprocess spawn, and without this cache it ran
-  // on *every* resolve — so the identity cache below was paid for with a process spawn on each
-  // lookup, defeating it. Under a projection snapshot that resolves every project's workspace
-  // root this was measured at ~3.8 spawns/sec, 86% of all subprocess spawns the server made,
-  // which is enough on Windows to starve the event loop. See plans/process-spawn-storm.md.
-  // Failed lookups are cached on the negative TTL rather than retried on the next resolve:
-  // under load the lookup fails by *timing out*, and immediate retries feed the very load
-  // that caused the timeout.
+  // Without this every resolve spawned `git rev-parse`, defeating the identity cache below.
+  // Failures are cached on the negative TTL: under load they are timeouts, and immediate
+  // retries feed the load that caused them.
   const repositoryRootCache = yield* Cache.makeWith<string, RepositoryIdentityCacheKey | null>(
     (cwd) =>
       resolveRepositoryIdentityCacheKey(cwd).pipe(
         Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
       ),
     { capacity: cacheCapacity, timeToLive },
   );

@@ -1,30 +1,6 @@
-/**
- * Self-directed V8 CPU profiling for the backend.
- *
- * ## Why not `--cpu-prof`
- *
- * Setting `NODE_OPTIONS=--cpu-prof` before launching the desktop app does not
- * reach this process. It profiles the launcher's pnpm, vite-plus, and the
- * Electron main process — verified: a run produced four profiles, none of them
- * the backend, despite `DesktopBackendConfiguration` copying `process.env` into
- * the child (only `T3CODE_*` names are stripped). Electron appears to sanitize
- * `NODE_OPTIONS` for spawned children.
- *
- * It is also the wrong shape of measurement: those profiles covered the whole
- * 36-minute session at ~20-200 MB each, so the startup window we actually care
- * about was a rounding error inside them.
- *
- * Profiling from inside the process fixes both problems. It is guaranteed to be
- * this process, and it stops on a timer so the profile covers startup and
- * nothing else.
- *
- * ## Usage
- *
- * - `T3_CPU_PROF_DIR` — directory to write into. Unset (the default) disables
- *   profiling entirely and costs nothing.
- * - `T3_CPU_PROF_SECONDS` — how long to profile from startup. Default 90, which
- *   comfortably covers the ~62 s startup burst being investigated.
- */
+// In-process CPU profiling: `NODE_OPTIONS=--cpu-prof` never reaches this backend (Electron
+// strips it for children). `T3_CPU_PROF_DIR` enables it (unset costs nothing);
+// `T3_CPU_PROF_SECONDS` sets how long from startup to profile (default 90).
 
 // node:inspector needs no diagnostics suppression -- it has no Effect
 // equivalent, so the rule does not flag it (adding one is itself a warning).
@@ -35,6 +11,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import * as Duration from "effect/Duration";
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -62,7 +39,7 @@ const post = (session: NodeInspector.Session, method: string) =>
 
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
-    const dir = process.env.T3_CPU_PROF_DIR?.trim();
+    const dir = (yield* Config.String("T3_CPU_PROF_DIR").pipe(Config.withDefault(""))).trim();
     if (!dir) {
       return;
     }

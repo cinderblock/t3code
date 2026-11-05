@@ -149,8 +149,6 @@ const DEFAULT_TIMEOUT = "60 seconds";
 const FORCE_KILL_AFTER = "1 second";
 const DEFAULT_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 
-export { isWindowsCommandNotFound } from "@t3tools/provider-core/server/snapshotProbe";
-
 const collectText = Effect.fnUntraced(function* (input: {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
@@ -442,11 +440,8 @@ const observeRun = Effect.fnUntraced(function* (
 /** @public */
 export const make = Effect.fn("ProcessRunner.make")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  // Looked up optionally so tests can substitute a no-op, but defaulting to the live observer
-  // rather than requiring it: several layers build their own `ProcessRunner`, and a spawn that
-  // went unrecorded because of how a layer happened to be wired is a hole in exactly the
-  // measurement this exists to take. The live observer's store is process-wide, so every
-  // `ProcessRunner` contributes to one view.
+  // Optional so tests can substitute a no-op, but defaulting to the live, process-wide observer:
+  // several layers build their own `ProcessRunner` and none of their spawns may go unrecorded.
   const providedObserver = yield* Effect.serviceOption(ProcessSpawnObserver.ProcessSpawnObserver);
   const observer = Option.isSome(providedObserver)
     ? providedObserver.value

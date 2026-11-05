@@ -4,7 +4,7 @@ import {
   type QueuedMessage,
   type ThreadId,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 
 import * as QueuedMessageService from "../../../queue/QueuedMessageService.ts";
@@ -80,8 +80,8 @@ export const layer = McpToolAccess.toLayer(SendLaterToolkit, {
                     "at`, `windowReset` or `afterThread",
                   ),
                 };
-        const crypto = yield* Crypto.Crypto;
-        const id = QueuedMessageId.make(yield* crypto.randomUUIDv4().pipe(Effect.orDie));
+        const random = yield* SecureRandom.SecureRandom;
+        const id = QueuedMessageId.make(yield* random.uuidV4().pipe(Effect.orDie));
         return entry(
           yield* queued
             .enqueueForThread({ id, thread: projection.thread, text, when })

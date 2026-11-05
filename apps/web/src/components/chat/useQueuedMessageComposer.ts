@@ -27,7 +27,7 @@ import { newMessageId, randomUUID } from "~/lib/utils";
 import { assetEnvironment } from "~/state/assets";
 import { readPreparedConnection } from "~/state/session";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
-import { collapseExpandedComposerCursor } from "../../composer-logic";
+import { collapseExpandedComposerCursor, parseSideChatCommand } from "../../composer-logic";
 import {
   composerTargetKey,
   finalizePromotedDraftThreadByRef,
@@ -50,6 +50,7 @@ import { readThreadShell } from "../../state/entities";
 import { environmentServerConfigsAtom } from "../../state/server";
 import { queuedMessagesAtom, usageEnvironment } from "../../state/quota";
 import { threadEnvironment } from "../../state/threads";
+import { useLinkedEnvironments } from "../../state/peerLinks";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
@@ -156,6 +157,7 @@ export function useQueuedMessageComposer(input: {
   const deleteThread = useOrchestrationCommand(threadEnvironment.delete, { reportFailure: false });
   const handleNewThread = useNewThreadHandler();
   const queueInFlightRef = useRef(false);
+  const linkedEnvironments = useLinkedEnvironments(environmentId);
 
   const queueDraft = async (trigger: QueuedMessageTrigger) => {
     if (!canQueue || threadRef === null || queueInFlightRef.current) return;
@@ -181,6 +183,7 @@ export function useQueuedMessageComposer(input: {
       previewAnnotations: sendContext.previewAnnotations,
       reviewComments: sendContext.reviewComments,
       threadContexts: sendContext.threadContexts,
+      environmentContexts: sendContext.environmentContexts,
     };
     const { sendableTerminalContexts, expiredTerminalContextCount, hasSendableContent } =
       deriveComposerSendState({
@@ -190,7 +193,8 @@ export function useQueuedMessageComposer(input: {
         elementContextCount:
           contents.previewAnnotations.length +
           contents.reviewComments.length +
-          contents.threadContexts.length,
+          contents.threadContexts.length +
+          contents.environmentContexts.length,
       });
     const warnExpiredContexts = (variant: "omitted" | "empty") => {
       if (expiredTerminalContextCount === 0) return;
@@ -204,7 +208,10 @@ export function useQueuedMessageComposer(input: {
       warnExpiredContexts("empty");
       return;
     }
-    if (composerLocalCommand({ ...sendContext, usageLimitsOffered }) !== null) {
+    if (
+      parseSideChatCommand(contents.prompt) !== null ||
+      composerLocalCommand({ ...sendContext, usageLimitsOffered }) !== null
+    ) {
       warn(
         "This command can't be queued",
         "It takes effect here instead of going to the agent. Send it now.",
@@ -215,6 +222,7 @@ export function useQueuedMessageComposer(input: {
       text: contents.prompt,
       records: contents.threadContexts,
       environmentId,
+      linkedEnvironments,
     });
     if (stranded) {
       warn(stranded.title, stranded.description);
@@ -268,6 +276,7 @@ export function useQueuedMessageComposer(input: {
         reviewComments: snapshot.reviewComments,
         previewAnnotations: snapshot.previewAnnotations,
         threadContexts: snapshot.threadContexts,
+        environmentContexts: snapshot.environmentContexts,
         attachments: snapshot.attachments.map((attachment, index) => ({
           attachment,
           attachmentId: attachments[index]!.id,

@@ -177,7 +177,7 @@ type ThreadKeyInput = Pick<EnvironmentThreadShell, "environmentId" | "id">;
  * run can end moments before its continuation starts, so clients wait this long
  * before treating the thread as done.
  */
-export const WORKING_EXIT_GRACE_MS = 2_000;
+const WORKING_EXIT_GRACE_MS = 2_000;
 
 /**
  * Keep one at module scope so placement survives routes that unmount the list. Call
@@ -193,7 +193,7 @@ export function createInboxReturnTracker() {
       /** Where the thread lands when `deadline` passes. */
       target: InboxShelf | null;
       deadline: number | null;
-      placement: string;
+      placement: string | null;
     }
   >();
   const returns = new Map<string, number>();
@@ -265,19 +265,23 @@ export function createInboxReturnTracker() {
       for (const thread of threads) {
         const key = keyOf(thread);
         present.add(key);
-        const placement = JSON.stringify([
-          thread.archivedAt,
-          thread.deletedAt,
-          thread.pinnedAt,
-          thread.settledOverride,
-          thread.settledAt,
-          thread.snoozedAt,
-          thread.snoozedUntil,
-          thread.blockedOn?.blockedAt,
-          thread.activeOrderKey,
-        ]);
         const previous = states.get(key);
         const from = previous?.shelf ?? null;
+        const actual = resolveThreadShelf(thread, isScheduled?.(thread) === true);
+        const placement =
+          actual !== null || from !== null
+            ? JSON.stringify([
+                thread.archivedAt,
+                thread.deletedAt,
+                thread.pinnedAt,
+                thread.settledOverride,
+                thread.settledAt,
+                thread.snoozedAt,
+                thread.snoozedUntil,
+                thread.blockedOn?.blockedAt,
+                thread.activeOrderKey,
+              ])
+            : null;
         const asksUser =
           thread.hasPendingApprovals ||
           thread.hasPendingUserInput ||
@@ -298,7 +302,6 @@ export function createInboxReturnTracker() {
           thread.settledOverride === "settled" ||
           effectiveSnoozed(thread, { now: observedAt }) ||
           effectiveBlocked(thread);
-        const actual = resolveThreadShelf(thread, isScheduled?.(thread) === true);
         // Only shelf placement is held: execution state and attention requests stay authoritative.
         // Leaving Working holds even onto Scheduled, and a sent message holds until its run starts.
         const deadline =
@@ -322,7 +325,8 @@ export function createInboxReturnTracker() {
         }
       }
       schedule();
-      const observedShelves = new Map([...states].map(([key, state]) => [key, state.shelf]));
+      const observedShelves = new Map<string, InboxShelf | null>();
+      states.forEach((state, key) => observedShelves.set(key, state.shelf));
       const observedReturns = new Map(returns);
       const shelf = (thread: WorkingThreadInput & ThreadKeyInput) => {
         const observed = observedShelves.get(keyOf(thread));

@@ -1,39 +1,18 @@
 /**
- * Rolling instrumentation for subprocess spawning.
- *
- * The server periodically falls into a "spawn storm": subprocess creation saturates the Node
- * event loop, unrelated in-process work (SQLite, stats, RPC dispatch) queues behind it, and
- * round-trips blow past the client's 15s slow-request threshold. The storm is not reliably
- * reproducible, so this records enough to diagnose one *after the fact* from the logs alone.
- *
- * Two things make it worth measuring spawns specifically rather than trusting the trace:
- *
- * 1. Windows process creation is expensive, and `@effect/platform-node-shared` reacts to any
- *    non-zero child exit by running `taskkill /pid <pid> /T /F` through `NodeChildProcess.exec`
- *    — twice, via both an `exit` listener and the `acquireRelease` finalizer. `exec` goes
- *    through `cmd.exe`, so each kill costs cmd.exe + taskkill.exe + two conhost.exe. A single
- *    *expected* non-zero exit (e.g. `git rev-parse` in a non-repo, which exits 128) therefore
- *    costs roughly eight extra processes on top of the one we asked for. Counting non-zero
- *    exits is counting the amplifier.
- * 2. Spans tell you an operation was slow; they don't tell you the machine was being buried by
- *    process creation at that moment. The storm report pins both together.
- *
- * See `plans/process-spawn-storm.md` for the measurements this was built from.
+ * Rolling subprocess-spawn instrumentation, to diagnose a spawn storm from logs after the fact.
+ * On Windows each non-zero child exit triggers `taskkill` through `cmd.exe` twice, so non-zero
+ * exits amplify process creation. See `plans/process-spawn-storm.md`.
  */
 
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 /**
- * How a subprocess finished, from the spawner's point of view.
- *
- * `non-zero-exit` is the load-bearing one on Windows: it is what triggers the dependency's
- * redundant `taskkill` cleanup, so it drives the amplification estimate rather than merely
- * describing an unhappy command.
+ * How a subprocess finished. `non-zero-exit` is what triggers the redundant Windows `taskkill`
+ * cleanup, so it drives the amplification estimate.
  */
 export type ProcessSpawnOutcome = "ok" | "non-zero-exit" | "timeout" | "spawn-error" | "error";
 
@@ -98,23 +77,12 @@ const WINDOWS_CLEANUP_PROCESSES_PER_NON_ZERO_EXIT = 8;
 const TOP_N = 5;
 
 /**
- * Shared across every `ProcessRunner` instance, deliberately.
- *
- * Several layers (`VcsProcess`, `TerminalManager`, `ServerEnvironment`, `PortScanner`,
- * `RepositoryIdentityResolver`, ...) each build their own `ProcessRunner`, so layer-scoped
- * state would fragment the measurement into a handful of partial views. What is being measured
- * — how fast this OS process is creating child processes — is a property of the process as a
- * whole, so the store is too. Node's single thread makes the plain mutation safe.
+ * Process-wide on purpose: several layers build their own `ProcessRunner`, and the spawn rate
+ * being measured belongs to the whole OS process. Node's single thread makes mutation safe.
  */
 const store: { records: ProcessSpawnRecord[]; lastReportAtMs: number } = {
   records: [],
   lastReportAtMs: 0,
-};
-
-/** Test seam: drop everything recorded so far. */
-export const resetForTesting = (): void => {
-  store.records = [];
-  store.lastReportAtMs = 0;
 };
 
 const labelFor = (record: Pick<ProcessSpawnRecord, "command" | "subcommand">): string =>
@@ -269,17 +237,3 @@ export const make = Effect.fn("ProcessSpawnObserver.make")(function* () {
 
   return ProcessSpawnObserver.of({ record, summarize });
 });
-
-export const layer = Layer.effect(ProcessSpawnObserver, make());
-
-/** No-op instance for tests and call sites that don't care about instrumentation. */
-export const noop = ProcessSpawnObserver.of({
-  record: Effect.fnUntraced(function* () {
-    yield* Effect.void;
-  }),
-  summarize: Effect.fnUntraced(function* (windowMs: number = WINDOW_MS) {
-    return yield* Effect.succeed(summarizeRecords([], windowMs, false));
-  }),
-});
-
-export const layerNoop = Layer.succeed(ProcessSpawnObserver, noop);

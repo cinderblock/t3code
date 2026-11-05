@@ -39,7 +39,7 @@ export class PasskeyActionError extends Schema.TaggedError<PasskeyActionError>()
   },
 ) {}
 
-export const isPasskeyActionError = Schema.is(PasskeyActionError);
+const isPasskeyActionError = Schema.is(PasskeyActionError);
 
 /** True when the user dismissed the browser's passkey prompt; nothing to report. */
 export const isPasskeyPromptDismissed = (error: unknown) =>
@@ -163,7 +163,7 @@ export async function signInWithPasskey(): Promise<void> {
   await completeBrowserSessionSignIn();
 }
 
-export function fetchPublicAccess(): Promise<AuthPublicAccessConfig> {
+function fetchPublicAccess(): Promise<AuthPublicAccessConfig> {
   return runPrimaryHttp(
     PrimaryEnvironmentHttpClient.pipe(
       Effect.flatMap((client) => client.auth.publicAccess({ headers: {} })),

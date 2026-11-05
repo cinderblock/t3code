@@ -1,10 +1,10 @@
 import type { EnvironmentId, VcsGraphRef } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { RefreshCwIcon } from "lucide-react";
-import { useMemo } from "react";
 
 import { layoutGitGraph } from "~/lib/gitGraphLayout";
 import { cn } from "~/lib/utils";
+import { useNowMinute } from "~/hooks/useNowMinute";
 import { useEnvironmentQuery } from "~/state/query";
 import { vcsEnvironment } from "~/state/vcs";
 
@@ -21,33 +21,24 @@ import {
   type GitGraphWorktreeRow,
 } from "./gitGraphPresentation";
 
-/**
- * Every ref renders as a pill. Remote pills are tinted per remote, so
- * `origin/main` and `upstream/main` are distinguishable without reading the
- * whole truncated name.
- */
-function RefChip(props: { graphRef: VcsGraphRef }) {
-  const { graphRef } = props;
+/** Remote pills are tinted per remote, so `origin/main` and `upstream/main` differ at a glance. */
+function RefChip(props: { item: VcsGraphRef }) {
+  const { item } = props;
   const remoteColors =
-    graphRef.kind === "remote" && graphRef.remoteName !== null
-      ? remoteChipColors(graphRef.remoteName)
-      : null;
+    item.kind === "remote" && item.remoteName !== null ? remoteChipColors(item.remoteName) : null;
 
   return (
     <span
       className={cn(
-        // `inline-block`, not `inline-flex`: `text-overflow: ellipsis` does not
-        // apply to a flex container's anonymous text child, so an inline-flex
-        // chip spills its branch name over the neighbouring column instead of
-        // truncating. `min-w-0` lets a long name give ground rather than push.
-        "inline-block min-w-0 max-w-[9rem] truncate rounded-full border px-1.5 py-px align-middle text-[10px] leading-4",
-        graphRef.current
+        // Not inline-flex: ellipsis does not apply to a flex container's anonymous text child.
+        "inline-block min-w-0 max-w-[9rem] truncate rounded-full border px-1.5 py-px align-middle text-3xs leading-4",
+        item.current
           ? "border-primary/50 bg-primary/15 font-medium text-primary"
-          : graphRef.kind === "tag"
+          : item.kind === "tag"
             ? "border-warning/40 bg-warning/10 text-warning-foreground"
             : remoteColors
               ? "text-foreground"
-              : graphRef.kind === "remote"
+              : item.kind === "remote"
                 ? // A remote whose name git did not resolve; still a pill, just
                   // without an identity colour.
                   "border-border bg-muted/60 text-foreground"
@@ -59,12 +50,12 @@ function RefChip(props: { graphRef: VcsGraphRef }) {
           : undefined
       }
     >
-      {graphRef.name}
+      {item.name}
     </span>
   );
 }
 
-export function GitGraphPanel(props: {
+function GitGraphPanel(props: {
   environmentId: EnvironmentId;
   cwd: string | null;
   /** The worktree this thread works in; its rows sort to the top. */
@@ -81,38 +72,28 @@ export function GitGraphPanel(props: {
   // Only ask about worktrees this snapshot actually reported, and only once the
   // panel has a snapshot — so opening the tab costs one `git status` per real
   // worktree, and closing it costs nothing.
-  const worktreePaths = useMemo(
-    () => (snapshot?.worktrees ?? []).map((worktree) => worktree.path).toSorted(),
-    [snapshot?.worktrees],
-  );
+  const worktreePaths = (snapshot?.worktrees ?? []).map((worktree) => worktree.path).toSorted();
   const worktreeChangesQuery = useEnvironmentQuery(
     cwd === null || worktreePaths.length === 0
       ? null
       : vcsEnvironment.worktreeChanges({ environmentId, input: { cwd, worktreePaths } }),
   );
-  const worktreeRows = useMemo(
-    () =>
-      buildWorktreeRows({
-        worktrees: snapshot?.worktrees ?? [],
-        changes: worktreeChangesQuery.data?.worktrees ?? [],
-        activeWorktreePath,
-      }),
-    [snapshot?.worktrees, worktreeChangesQuery.data?.worktrees, activeWorktreePath],
-  );
+  const worktreeRows = buildWorktreeRows({
+    worktrees: snapshot?.worktrees ?? [],
+    changes: worktreeChangesQuery.data?.worktrees ?? [],
+    activeWorktreePath,
+  });
 
   const hasMultipleWorktrees = new Set(worktreeRows.map((row) => row.worktreePath)).size > 1;
 
-  const layout = useMemo(() => layoutGitGraph(snapshot?.commits ?? []), [snapshot?.commits]);
-  const refsByOid = useMemo(() => groupGraphRefsByOid(snapshot?.refs ?? []), [snapshot?.refs]);
-  // Read once per render rather than per row, so every age on screen is
-  // measured against the same instant.
-  const nowMs = Date.now();
+  const layout = layoutGitGraph(snapshot?.commits ?? []);
+  const refsByOid = groupGraphRefsByOid(snapshot?.refs ?? []);
+  // One instant for every row, so ages on screen agree.
+  const nowMinute = useNowMinute();
+  const nowMs = Date.parse(`${nowMinute}:00.000Z`);
 
   const header = (
-    <div
-      className="surface-subheader flex items-center justify-between gap-2 px-4"
-      data-surface-subheader
-    >
+    <div className="flex items-center justify-between gap-2 px-4" data-surface-subheader>
       <span className="truncate text-sm font-medium">History</span>
       <div className="flex shrink-0 items-center gap-2">
         {snapshot ? (
@@ -180,11 +161,11 @@ export function GitGraphPanel(props: {
                     // Capped as a group so chips and summary each keep a share
                     // of a narrow row instead of one starving the other.
                     <span className="flex max-w-[55%] shrink-0 items-center gap-1 overflow-hidden">
-                      {visibleRefs.map((graphRef) => (
-                        <RefChip key={`${graphRef.kind}:${graphRef.name}`} graphRef={graphRef} />
+                      {visibleRefs.map((item) => (
+                        <RefChip key={`${item.kind}:${item.name}`} item={item} />
                       ))}
                       {overflowCount > 0 ? (
-                        <span className="shrink-0 rounded-full border border-border bg-muted px-1.5 py-px text-[10px] leading-4 text-muted-foreground">
+                        <span className="shrink-0 rounded-full border border-border bg-muted px-1.5 py-px text-3xs leading-4 text-muted-foreground">
                           +{overflowCount}
                         </span>
                       ) : null}
@@ -200,13 +181,13 @@ export function GitGraphPanel(props: {
                 </div>
                 {/* The author is the first thing worth dropping when the panel
                     is narrow; the summary is what people scan for. */}
-                <span className="hidden max-w-[7rem] shrink-0 truncate text-[11px] text-muted-foreground @md:block">
+                <span className="hidden max-w-[7rem] shrink-0 truncate text-2xs text-muted-foreground @md:block">
                   {commit.authorName}
                 </span>
-                <span className="w-9 shrink-0 text-right text-[11px] tabular-nums text-muted-foreground">
+                <span className="w-9 shrink-0 text-right text-2xs tabular-nums text-muted-foreground">
                   {formatCommitAge(DateTime.toEpochMillis(commit.committedAt), nowMs)}
                 </span>
-                <span className="w-14 shrink-0 text-right font-mono text-[11px] text-muted-foreground">
+                <span className="w-14 shrink-0 text-right font-mono text-2xs text-muted-foreground">
                   {shortOid(commit.oid)}
                 </span>
               </li>
@@ -264,15 +245,15 @@ function WorktreeChangeRow(props: { row: GitGraphWorktreeRow; showWorktree: bool
           {row.kind === "staged" ? "Staged changes" : "Uncommitted changes"}
         </span>
         {showWorktree ? (
-          <span className="min-w-0 truncate text-[11px] text-muted-foreground">
+          <span className="min-w-0 truncate text-2xs text-muted-foreground">
             {row.isActiveWorktree ? `${row.label} · this thread` : row.label}
           </span>
         ) : null}
         {detail.length > 0 ? (
-          <span className="shrink-0 text-[11px] text-muted-foreground">({detail.join(", ")})</span>
+          <span className="shrink-0 text-2xs text-muted-foreground">({detail.join(", ")})</span>
         ) : null}
       </span>
-      <span className="shrink-0 text-[11px] tabular-nums text-muted-foreground">
+      <span className="shrink-0 text-2xs tabular-nums text-muted-foreground">
         {row.fileCount} {row.fileCount === 1 ? "file" : "files"}
       </span>
     </li>
@@ -296,9 +277,9 @@ function LoadingState() {
     >
       {Array.from({ length: 8 }, (_, index) => (
         <div key={index} className="flex items-center gap-2">
-          <Skeleton className="size-3 rounded-full" />
-          <Skeleton className="h-3 flex-1 rounded-full" />
-          <Skeleton className="h-3 w-10 rounded-full" />
+          <Skeleton shape="pill" className="size-3" />
+          <Skeleton shape="pill" className="h-3 flex-1" />
+          <Skeleton shape="pill" className="h-3 w-10" />
         </div>
       ))}
       <span className="sr-only">Loading history</span>

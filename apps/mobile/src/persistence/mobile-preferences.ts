@@ -26,6 +26,7 @@ import { MobileStorageDecodeError, MobileStorageEncodeError } from "./mobile-sto
 
 const PREFERENCES_KEY = "t3code.preferences";
 const PREFERENCES_FALLBACK_KEY = "t3code.preferences.fallback";
+const encodeJson = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
 export const PullRequestListControls = Schema.Struct({
   state: PullRequestListState,
@@ -154,6 +155,8 @@ export class MobilePreferencesSaveError extends Schema.TaggedError<MobilePrefere
   }
 }
 
+const isMobilePreferencesSaveError = Schema.is(MobilePreferencesSaveError);
+
 interface PreferencesFallback {
   readonly payload: string;
   readonly updatedAt: number;
@@ -171,7 +174,7 @@ export class MobilePreferencesStore extends Context.Service<
       transform: (current: Preferences) => Partial<Preferences>,
     ) => Effect.Effect<Preferences, MobilePreferencesSaveError>;
   }
->()("@t3tools/mobile/persistence/MobilePreferencesStore") {}
+>()("@t3tools/mobile/persistence/mobile-preferences/MobilePreferencesStore") {}
 
 function sanitizePreferences(parsed: Preferences): Preferences {
   const preferences: {
@@ -377,7 +380,7 @@ function sanitizePreferences(parsed: Preferences): Preferences {
   return preferences;
 }
 
-export const make = Effect.fn("MobilePreferencesStore.make")(function* () {
+const make = Effect.fn("MobilePreferencesStore.make")(function* () {
   const database = yield* MobileDatabase.MobileDatabase;
   const secureStorage = yield* MobileSecureStorage.MobileSecureStorage;
   const lock = yield* Semaphore.make(1);
@@ -432,10 +435,9 @@ export const make = Effect.fn("MobilePreferencesStore.make")(function* () {
     key: string,
     value: unknown,
   ) {
-    return yield* Effect.try({
-      try: () => JSON.stringify(value),
-      catch: (cause) => new MobileStorageEncodeError({ key, cause }),
-    });
+    return yield* encodeJson(value).pipe(
+      Effect.mapError((cause) => new MobileStorageEncodeError({ key, cause })),
+    );
   });
 
   const nextUpdatedAt = Ref.modify(lastUpdatedAt, (last) => {
@@ -548,34 +550,33 @@ export const make = Effect.fn("MobilePreferencesStore.make")(function* () {
     .withPermits(1)(loadUnlocked)
     .pipe(Effect.mapError((cause) => new MobilePreferencesLoadError({ cause })));
 
-  const update = Effect.fn("MobilePreferencesStore.update")((transform) =>
-    lock
-      .withPermits(1)(
-        Effect.gen(function* () {
-          const current = yield* loadUnlocked;
-          const patch = yield* Effect.try({
-            try: () => transform(current),
-            catch: (cause) => new MobilePreferencesSaveError({ cause }),
-          });
-          const next: Preferences = { ...current, ...patch };
-          const payload = yield* encode(PREFERENCES_KEY, next);
-          yield* saveJson(payload);
-          return next;
-        }),
-      )
-      .pipe(
-        Effect.mapError((cause) =>
-          cause instanceof MobilePreferencesSaveError
-            ? cause
-            : new MobilePreferencesSaveError({ cause }),
+  const update = Effect.fn("MobilePreferencesStore.update")(
+    (transform: (current: Preferences) => Partial<Preferences>) =>
+      lock
+        .withPermits(1)(
+          Effect.gen(function* () {
+            const current = yield* loadUnlocked;
+            const patch = yield* Effect.try({
+              try: () => transform(current),
+              catch: (cause) => new MobilePreferencesSaveError({ cause }),
+            });
+            const next: Preferences = { ...current, ...patch };
+            const payload = yield* encode(PREFERENCES_KEY, next);
+            yield* saveJson(payload);
+            return next;
+          }),
+        )
+        .pipe(
+          Effect.mapError((cause) =>
+            isMobilePreferencesSaveError(cause) ? cause : new MobilePreferencesSaveError({ cause }),
+          ),
         ),
-      ),
   );
 
   return MobilePreferencesStore.of({
     load,
     update,
-    savePatch: (patch) => update(() => patch),
+    savePatch: Effect.fn("MobilePreferencesStore.savePatch")((patch) => update(() => patch)),
   });
 });
 

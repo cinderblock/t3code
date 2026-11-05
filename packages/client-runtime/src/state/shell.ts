@@ -31,7 +31,8 @@ import type { RpcSession } from "../rpc/session.ts";
 import * as ShellSnapshotLoader from "./shellSnapshotHttp.ts";
 import type { DeferredShellSnapshot } from "./shellPullRequests.ts";
 import {
-  applyShellStreamEvent,
+  applyShellStreamEvents,
+  type ShellStreamEvent,
   mergeShellSnapshotProjects,
   reuseUnchangedThreadShells,
   sameThreadPullRequests,
@@ -40,6 +41,7 @@ import {
   emitShellAppliedDiagnostic,
   emitShellStreamDiagnostic,
   emitShellSubscribedDiagnostic,
+  shouldReportApplied,
 } from "./shellStreamDiagnostics.ts";
 import { type EnvironmentCatalogState, enabledEnvironmentIds } from "./connections.ts";
 import { followStreamInEnvironment } from "./runtime.ts";
@@ -207,6 +209,31 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
     );
 
   const appliedCount = { value: 0 };
+  const reportApplied = (
+    itemKind: string,
+    itemSequence: number | null,
+    snapshot: OrchestrationV2ShellSnapshot,
+    items: number,
+  ) => {
+    const before = appliedCount.value;
+    appliedCount.value += items;
+    // A batch advances the count by several items; report the heartbeat it passed, if any.
+    let reported: number | undefined;
+    for (let count = appliedCount.value; count > before && reported === undefined; count -= 1) {
+      if (shouldReportApplied(count)) reported = count;
+    }
+    return reported === undefined
+      ? Effect.void
+      : emitShellAppliedDiagnostic({
+          environmentId,
+          itemKind,
+          appliedCount: reported,
+          itemSequence,
+          nextSequence: snapshot.snapshotSequence,
+          nextThreadCount: snapshot.threads.length,
+          nextProjectCount: snapshot.projects.length,
+        });
+  };
 
   // Server items and deferred link fills both read the snapshot and write it back; one at a
   // time, so neither can overwrite what the other wrote in between.
@@ -218,10 +245,87 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   ) {
     const initial = yield* SubscriptionRef.get(state);
     let waiting = yield* Ref.get(awaitingCompletion);
-    /* oxlint-disable oxc/no-accumulating-spread -- This copies a fixed-shape state record, not a growing collection. */
     let next = initial;
     let receivedSnapshot = false;
+    let deltas: Array<ShellStreamEvent> = [];
+    // Runs inside applyItems' span, once per delta batch.
+    const flushDeltas = Effect.fnUntraced(function* () {
+      if (deltas.length === 0) return;
+      const batch = deltas;
+      deltas = [];
+      const last = batch[batch.length - 1]!;
+      if (Option.isNone(next.snapshot)) {
+        // Report the ways this view can silently stop matching the server. See
+        // shellStreamDiagnostics.ts — threads have gone missing here while every other layer was
+        // provably healthy, and none of these paths previously left any trace.
+        yield* emitShellStreamDiagnostic({
+          environmentId,
+          itemKind: last.kind,
+          itemSequence: last.sequence,
+          previousSequence: null,
+          nextSequence: null,
+          previousThreadCount: null,
+          nextThreadCount: null,
+          previousProjectCount: null,
+          nextProjectCount: null,
+          discardedAsStale: false,
+          droppedWithoutSnapshot: true,
+        });
+        return;
+      }
+      const previousSnapshot = next.snapshot.value;
+      let sequence = previousSnapshot.snapshotSequence;
+      let removedAt: Map<ThreadId, number> | undefined;
+      let stale: ShellStreamEvent | undefined;
+      for (const delta of batch) {
+        if (delta.sequence <= sequence) {
+          stale ??= delta;
+          continue;
+        }
+        switch (delta.kind) {
+          case "thread.removed":
+            removedAt ??= new Map(next.removedAt);
+            removedAt.set(delta.threadId, delta.sequence);
+            break;
+          case "thread.updated":
+          case "project.updated":
+          case "project.removed":
+            break;
+          default:
+            continue;
+        }
+        sequence = delta.sequence;
+      }
+      const nextSnapshot = applyShellStreamEvents(previousSnapshot, batch);
+      yield* emitShellStreamDiagnostic({
+        environmentId,
+        itemKind: (stale ?? last).kind,
+        itemSequence: (stale ?? last).sequence,
+        previousSequence: previousSnapshot.snapshotSequence,
+        nextSequence: nextSnapshot.snapshotSequence,
+        previousThreadCount: previousSnapshot.threads.length,
+        nextThreadCount: nextSnapshot.threads.length,
+        previousProjectCount: previousSnapshot.projects.length,
+        nextProjectCount: nextSnapshot.projects.length,
+        discardedAsStale: stale !== undefined,
+        droppedWithoutSnapshot: false,
+      });
+      yield* reportApplied(last.kind, last.sequence, nextSnapshot, batch.length);
+      next = {
+        ...next,
+        removedAt: removedAt ?? next.removedAt,
+        snapshot: Option.some(nextSnapshot),
+        status: waiting ? "synchronizing" : "live",
+        error: Option.none(),
+      };
+    });
     for (const item of items) {
+      if (item.kind !== "snapshot" && item.kind !== "synchronized") {
+        deltas.push(item);
+        continue;
+      }
+      // Snapshots can reset the cursor; completion markers change the sync status.
+      yield* flushDeltas();
       if (item.kind === "synchronized") {
         waiting = false;
         if (Option.isSome(next.snapshot)) {
@@ -229,80 +333,39 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
         }
         continue;
       }
+      const authoritative = item.resolvedRepositoryIdentityRoots === undefined;
+      const nextSnapshot = mergeShellSnapshotProjects(
+        Option.getOrNull(next.snapshot),
+        item.snapshot,
+        item.resolvedRepositoryIdentityRoots === undefined
+          ? undefined
+          : { resolvedRepositoryIdentityRoots: item.resolvedRepositoryIdentityRoots },
+      );
       const previousSnapshot = Option.getOrNull(next.snapshot);
-      const authoritative =
-        item.kind === "snapshot" && item.resolvedRepositoryIdentityRoots === undefined;
-      const nextSnapshot =
-        item.kind === "snapshot"
-          ? mergeShellSnapshotProjects(
-              Option.getOrNull(next.snapshot),
-              item.snapshot,
-              item.resolvedRepositoryIdentityRoots === undefined
-                ? undefined
-                : {
-                    resolvedRepositoryIdentityRoots: item.resolvedRepositoryIdentityRoots,
-                  },
-            )
-          : Option.match(next.snapshot, {
-              onNone: () => null,
-              onSome: (snapshot) =>
-                item.sequence > snapshot.snapshotSequence
-                  ? applyShellStreamEvent(snapshot, item)
-                  : snapshot,
-            });
-
-      // Report the ways this view can silently stop matching the server. See
-      // shellStreamDiagnostics.ts — threads have gone missing here while every other layer was
-      // provably healthy, and none of these paths previously left any trace. `previousSnapshot`
-      // is the running batch value, so a stale event mid-batch is still caught.
       yield* emitShellStreamDiagnostic({
         environmentId,
         itemKind: item.kind,
-        itemSequence: item.kind === "snapshot" ? null : item.sequence,
+        itemSequence: null,
         previousSequence: previousSnapshot?.snapshotSequence ?? null,
-        nextSequence: nextSnapshot?.snapshotSequence ?? null,
-        previousThreadCount: previousSnapshot?.threads.length ?? null,
-        nextThreadCount: nextSnapshot?.threads.length ?? null,
-        previousProjectCount: previousSnapshot?.projects.length ?? null,
-        nextProjectCount: nextSnapshot?.projects.length ?? null,
-        discardedAsStale:
-          item.kind !== "snapshot" &&
-          previousSnapshot !== null &&
-          nextSnapshot === previousSnapshot,
-        droppedWithoutSnapshot: item.kind !== "snapshot" && previousSnapshot === null,
-      });
-
-      if (nextSnapshot === null) continue;
-
-      appliedCount.value += 1;
-      yield* emitShellAppliedDiagnostic({
-        environmentId,
-        itemKind: item.kind,
-        appliedCount: appliedCount.value,
-        itemSequence: item.kind === "snapshot" ? null : item.sequence,
         nextSequence: nextSnapshot.snapshotSequence,
+        previousThreadCount: previousSnapshot?.threads.length ?? null,
         nextThreadCount: nextSnapshot.threads.length,
+        previousProjectCount: previousSnapshot?.projects.length ?? null,
         nextProjectCount: nextSnapshot.projects.length,
+        discardedAsStale: false,
+        droppedWithoutSnapshot: false,
       });
-      receivedSnapshot ||= item.kind === "snapshot";
-      const removal =
-        item.kind === "thread.removed" &&
-        Option.exists(next.snapshot, (snapshot) => item.sequence > snapshot.snapshotSequence)
-          ? item
-          : null;
+      yield* reportApplied(item.kind, null, nextSnapshot, 1);
+      receivedSnapshot = true;
       next = {
         snapshot: Option.some(nextSnapshot),
         status: waiting ? "synchronizing" : "live",
         error: Option.none(),
         generation: authoritative ? ++lastShellGeneration : next.generation,
-        removedAt: authoritative
-          ? EMPTY_REMOVALS
-          : removal === null
-            ? next.removedAt
-            : new Map(next.removedAt).set(removal.threadId, removal.sequence),
+        removedAt: authoritative ? EMPTY_REMOVALS : next.removedAt,
       };
     }
-    /* oxlint-enable oxc/no-accumulating-spread */
+    yield* flushDeltas();
     yield* Ref.set(awaitingCompletion, waiting);
     if (next === initial) return;
     if (pendingLinkIds !== undefined && Option.isSome(next.snapshot)) {
@@ -404,21 +467,15 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
       ORCHESTRATION_V2_WS_METHODS.subscribeShell,
       Effect.fn("EnvironmentShellState.makeSubscribeInput")(function* (session) {
         yield* Ref.set(activeSubscriptionSession, session);
-        const { supportsCompletionMarker, omitIdleSubagents, omitOlderSettled } =
-          yield* session.initialConfig.pipe(
-            Effect.map((config) => ({
-              supportsCompletionMarker: config.shellResumeCompletionMarker === true,
-              omitIdleSubagents: config.shellThreadFamilies === true,
-              omitOlderSettled:
-                config.shellOlderSettled === true && config.shellThreadFamilies === true,
-            })),
-            Effect.orElseSucceed(() => ({
-              supportsCompletionMarker: false,
-              omitIdleSubagents: false,
-              omitOlderSettled: false,
-            })),
-          );
-        yield* Ref.set(awaitingCompletion, supportsCompletionMarker);
+        const { omitIdleSubagents, omitOlderSettled } = yield* session.initialConfig.pipe(
+          Effect.map((config) => ({
+            omitIdleSubagents: config.shellThreadFamilies === true,
+            omitOlderSettled:
+              config.shellOlderSettled === true && config.shellThreadFamilies === true,
+          })),
+          Effect.orElseSucceed(() => ({ omitIdleSubagents: false, omitOlderSettled: false })),
+        );
+        yield* Ref.set(awaitingCompletion, true);
         yield* setSynchronizing;
 
         // Foreground resubscriptions on the same live session can resume from
@@ -486,22 +543,12 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
           ...(omitOlderSettled ? { omitOlderSettled: true as const } : {}),
         };
         if (!canResume || Option.isNone(current.snapshot)) {
-          return {
-            ...omission,
-            ...(supportsCompletionMarker ? { requestCompletionMarker: true as const } : {}),
-          };
-        }
-        if (!supportsCompletionMarker) {
-          yield* SubscriptionRef.update(state, (value) => ({
-            ...value,
-            status: "live" as const,
-            error: Option.none(),
-          }));
+          return { ...omission, requestCompletionMarker: true as const };
         }
         return {
           afterSequence: current.snapshot.value.snapshotSequence,
           ...omission,
-          ...(supportsCompletionMarker ? { requestCompletionMarker: true as const } : {}),
+          requestCompletionMarker: true as const,
         };
       }),
       {
@@ -538,16 +585,12 @@ function shellStateChanges(environmentId: EnvironmentId) {
 export interface EnvironmentShellSummary {
   readonly hasSnapshot: boolean;
   readonly hasSynchronizingShell: boolean;
-  readonly hasCachedShell: boolean;
-  readonly hasLiveShell: boolean;
   readonly firstError: string | null;
 }
 
 const EMPTY_ENVIRONMENT_SHELL_SUMMARY: EnvironmentShellSummary = Object.freeze({
   hasSnapshot: false,
   hasSynchronizingShell: false,
-  hasCachedShell: false,
-  hasLiveShell: false,
   firstError: null,
 });
 
@@ -560,8 +603,6 @@ function shellSummariesEqual(
   return (
     left.hasSnapshot === right.hasSnapshot &&
     left.hasSynchronizingShell === right.hasSynchronizingShell &&
-    left.hasCachedShell === right.hasCachedShell &&
-    left.hasLiveShell === right.hasLiveShell &&
     left.firstError === right.firstError
   );
 }
@@ -586,15 +627,11 @@ export function createEnvironmentShellSummaryAtom(input: {
   return Atom.make((get) => {
     let hasSnapshot = false;
     let hasSynchronizingShell = false;
-    let hasCachedShell = false;
-    let hasLiveShell = false;
     let firstError: string | null = null;
 
     for (const environmentId of enabledEnvironmentIds(get(input.catalogValueAtom))) {
       const state = get(input.shellStateValueAtom(environmentId));
       hasSynchronizingShell ||= state.status === "synchronizing";
-      hasCachedShell ||= state.status === "cached";
-      hasLiveShell ||= state.status === "live";
       if (firstError === null) {
         firstError = Option.getOrNull(state.error);
       }
@@ -607,8 +644,6 @@ export function createEnvironmentShellSummaryAtom(input: {
     const next: EnvironmentShellSummary = {
       hasSnapshot,
       hasSynchronizingShell,
-      hasCachedShell,
-      hasLiveShell,
       firstError,
     };
     if (shellSummariesEqual(previousSummary, next)) {
@@ -678,7 +713,7 @@ export function createEnvironmentShellAtoms<R, E>(
 
   const stateValueAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) =>
-      Option.getOrElse(AsyncResult.value(get(stateAtom(environmentId))), () => EMPTY_SHELL_STATE),
+      AsyncResult.getOrElse(get(stateAtom(environmentId)), () => EMPTY_SHELL_STATE),
     ).pipe(Atom.withLabel(`environment-shell-state-value:${environmentId}`)),
   );
 

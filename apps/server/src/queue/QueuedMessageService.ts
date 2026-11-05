@@ -1,16 +1,7 @@
 /**
- * QueuedMessageService — durable "send later" for chat messages.
- *
- * Messages live in the `fork_queued_messages` table (outside the orchestration
- * event log — a cancelled queued message leaves no trace in the thread).
- * A reactor loop evaluates triggers against the clock and the usage limits
- * every provider instance publishes; when a trigger fires the stored send
- * context is replayed as a normal `message.dispatch` through thread
- * management, so downstream behavior is identical to the user pressing send.
- *
- * Dispatch is two-phase: a row is claimed as `sending` before the turn starts
- * and settled to `sent`/`failed` afterwards, so a dispatch whose settle write
- * fails can never be replayed as a second turn on the next tick.
+ * Durable send-later messages, outside the orchestration event log. Fired triggers replay the
+ * stored send context as a normal `message.dispatch`. Rows are claimed `sending` before the turn
+ * and settled after, so a failed settle write never replays as a second turn.
  */
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -105,9 +96,7 @@ const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
  */
 export type UsageLimitsByInstance = ReadonlyMap<string, ServerProviderUsageLimits>;
 
-export function usageLimitsByInstance(
-  providers: ReadonlyArray<ServerProvider>,
-): UsageLimitsByInstance {
+function usageLimitsByInstance(providers: ReadonlyArray<ServerProvider>): UsageLimitsByInstance {
   const limits = new Map<string, ServerProviderUsageLimits>();
   for (const provider of providers) {
     if (provider.usageLimits !== undefined && provider.usageLimits.windows.length > 0) {
@@ -404,7 +393,7 @@ export class QueuedMessageService extends Context.Service<
 const toQueuedError = (message: string) => (cause: unknown) =>
   new QueuedMessageError({ message, cause });
 
-export const make = Effect.gen(function* () {
+const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const launches = yield* ThreadLaunch.ThreadLaunchService;

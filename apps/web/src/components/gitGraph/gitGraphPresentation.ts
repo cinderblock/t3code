@@ -52,13 +52,8 @@ export interface RemoteChipColors {
 }
 
 /**
- * A stable colour per remote, so `origin/main` and `upstream/main` are tellable
- * apart at a glance.
- *
- * Only the border and a low-alpha background are tinted; the label keeps the
- * theme's own foreground colour. A mid-lightness hue used as small text would
- * fall below a comfortable contrast ratio on a light background, and this has
- * to work in both themes without a per-theme palette.
+ * A stable colour per remote. Only the border and a low-alpha background are tinted: a mid-hue
+ * label would lack contrast on a light background, and this must work in both themes.
  */
 export function remoteChipColors(remoteName: string): RemoteChipColors {
   const hue = REMOTE_HUES[hashString(remoteName) % REMOTE_HUES.length]!;
@@ -106,7 +101,7 @@ export function groupGraphRefsByOid(
  * branches would otherwise push the commit summary off the row entirely, and
  * the summary is the thing people actually read.
  */
-export const GIT_GRAPH_MAX_VISIBLE_REFS = 3;
+const GIT_GRAPH_MAX_VISIBLE_REFS = 3;
 
 export function splitVisibleGraphRefs(
   refs: ReadonlyArray<VcsGraphRef>,

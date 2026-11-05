@@ -16,11 +16,8 @@ import * as VcsDriver from "./VcsDriver.ts";
 const DETECTION_CACHE_CAPACITY = 2_048;
 // Detection costs three git processes per cwd; cached hits still stat disk, so TTL bounds only undetectable changes.
 const DETECTION_CACHE_TTL = Duration.minutes(5);
-// Cache detection FAILURES too, briefly. A failure means the path couldn't be probed at all — e.g.
-// an unreachable folder (a network drive not visible to the backend). Without this, every status /
-// checkpoint / title operation re-runs git against that path, and those spawns pile up and can
-// destabilize the backend. Backing the failure off means one probe per window instead of a storm,
-// and it self-heals when the path becomes reachable again.
+// Detection failures (path not probeable, e.g. an unreachable network drive) are cached
+// briefly so every status/checkpoint/title op doesn't re-spawn git against the path.
 const DETECTION_FAILURE_TTL = Duration.seconds(30);
 
 export interface VcsDriverResolveInput {
@@ -57,12 +54,6 @@ function parseDetectionCacheKey(key: string): {
   readonly requestedKind: VcsDriverKind | "auto";
 } {
   const separatorIndex = key.indexOf("\0");
-  if (separatorIndex === -1) {
-    return {
-      cwd: key,
-      requestedKind: "auto",
-    };
-  }
   return {
     requestedKind: key.slice(0, separatorIndex) as VcsDriverKind | "auto",
     cwd: key.slice(separatorIndex + 1),
@@ -159,13 +150,8 @@ export const make = Effect.gen(function* () {
       }),
     {
       capacity: DETECTION_CACHE_CAPACITY,
-      // Merge of two distinct intents the conflict conflated:
-      //   - upstream: a successful "not a repo" (null) must NOT be cached, or a
-      //     freshly-created repo stays invisible for the TTL.
-      //   - fork: a detection FAILURE (path not probeable at all) must be cached
-      //     briefly, or every status/checkpoint/title op re-spawns git against
-      //     an unreachable path and the spawns pile up.
-      // Different cases, so keep both rather than picking a side.
+      // A successful "not a repo" (null) must not be cached, or a new repo stays invisible for the
+      // TTL; a detection failure must be cached briefly, or git spawns against it pile up.
       timeToLive: Exit.match({
         onSuccess: (detected) => (detected === null ? Duration.zero : DETECTION_CACHE_TTL),
         onFailure: () => DETECTION_FAILURE_TTL,

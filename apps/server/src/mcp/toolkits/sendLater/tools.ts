@@ -8,7 +8,7 @@ import {
   ThreadId,
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
-import * as Crypto from "effect/Crypto";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 
@@ -59,7 +59,7 @@ const SendLaterTool = Tool.make("t3_send_later", {
     McpInvocationContext.McpInvocationContext,
     ThreadManagementService.ThreadManagementService,
     QueuedMessageService.QueuedMessageService,
-    Crypto.Crypto,
+    SecureRandom.SecureRandom,
   ],
 }).annotate(Tool.Destructive, true);
 

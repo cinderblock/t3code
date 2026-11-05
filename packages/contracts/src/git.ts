@@ -14,14 +14,14 @@ import { VcsDriverKind } from "./vcs.ts";
 const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 const GitFilePath = Schema.String.check(Schema.isNonEmpty());
 const GIT_LIST_BRANCHES_MAX_LIMIT = 200;
-export const GIT_GRAPH_MAX_LIMIT = 500;
+const GIT_GRAPH_MAX_LIMIT = 500;
 export const GIT_GRAPH_DEFAULT_LIMIT = 200;
 /**
  * Each path costs one `git status` subprocess, so this caps the blast radius of
  * a single request. See `VcsStatusBroadcaster` for why unbounded status fanout
  * is a hazard in this codebase.
  */
-export const GIT_WORKTREE_CHANGES_MAX_PATHS = 32;
+const GIT_WORKTREE_CHANGES_MAX_PATHS = 32;
 
 export const GitStackedAction = Schema.Literals([
   "commit",
@@ -170,12 +170,8 @@ export const VcsGraphSnapshotInput = Schema.Struct({
 export type VcsGraphSnapshotInput = typeof VcsGraphSnapshotInput.Type;
 
 /**
- * Uncommitted-change counts for specific worktrees.
- *
- * Deliberately not folded into {@link VcsGraphSnapshotInput}: the caller passes
- * the exact worktrees it wants counted, so the cost of this call is visible at
- * the call site rather than scaling silently with however many worktrees a
- * machine has accumulated.
+ * Not folded into {@link VcsGraphSnapshotInput}: the caller names the worktrees to count, so
+ * the cost is visible at the call site rather than scaling with the machine's worktrees.
  */
 export const VcsWorktreeChangesInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
@@ -484,6 +480,7 @@ export const GitCommandFailureReason = Schema.Literals([
   "authentication_failed",
   "branch_already_exists",
   "branch_checked_out_in_worktree",
+  "config_locked",
   "host_key_unverified",
   "not_a_repository",
   "path_already_exists",

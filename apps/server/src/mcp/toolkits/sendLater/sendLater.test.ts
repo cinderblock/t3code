@@ -93,7 +93,7 @@ const layerFor = (
     Layer.provide(NodeSqliteClient.layer({ filename: ":memory:" })),
   );
   return McpHttpServer.layerSendLaterToolkit.pipe(
-    Layer.provideMerge(McpServer.McpServer.layer),
+    Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
     Layer.provide(NodeCrypto.layer),
     Layer.provideMerge(queued),
     Layer.provideMerge(threads),

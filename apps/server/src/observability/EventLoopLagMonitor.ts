@@ -1,36 +1,6 @@
-/**
- * Event-loop lag monitor.
- *
- * The backend is a single Node process; anything synchronous (a `statSync` PATH
- * walk, a large `JSON.parse`, a synchronous SQLite query — the driver is
- * `node:sqlite`'s `DatabaseSync`) blocks the loop for its whole duration. While
- * blocked the process cannot answer its readiness endpoint or the WebSocket
- * health probe, so the desktop client concludes the backend is dead and
- * reconnects — which re-runs bootstrap and blocks it further.
- *
- * Every diagnosis of that spiral so far has been inferred from *effects*
- * (timeouts, reconnects) rather than measured. This measures it directly: a
- * fiber sleeps a fixed interval and reports how much longer than requested the
- * sleep actually took. That overshoot is, by definition, time the loop was
- * unavailable to run timers — i.e. blocked.
- *
- * Cheap by construction: 4 wakeups/second that do nothing but subtract two
- * numbers, and it only logs when it sees a real stall.
- *
- * Opt-in, like `CpuProfiler`: it runs only when one of these is set.
- * - `T3_EVENT_LOOP_LAG_MS` — report threshold in ms (`1` for the 250 ms default).
- * - `T3_DIAGNOSTICS_FILE` — also append each stall as JSON to this path.
- *
- * ## Why it writes its own file
- *
- * `Effect.logWarning` goes to stdout and the trace, and both proved unreliable
- * for this: the desktop's capture of backend stdout into `server-child.log`
- * silently stopped recording (a run's "CPU profiler started" line exists in no
- * current log despite the profile being written), and `server.trace.ndjson`
- * rotates roughly every 60-90s under load, so a 19s window is all that
- * survives. Appending directly — the same approach that makes CpuProfiler
- * reliable — means stall evidence outlives both.
- */
+// Measures event-loop stalls as sleep overshoot. Opt-in: `T3_EVENT_LOOP_LAG_MS` (report
+// threshold, `1` for the 250 ms default), `T3_DIAGNOSTICS_FILE` (append each stall as JSON).
+// Writes its own file because backend stdout capture and the rotating trace lose the evidence.
 
 // @effect-diagnostics-next-line nodeBuiltinImport:off - diagnostic sink must not depend on the app's FileSystem layer or its logger
 import * as NodeFS from "node:fs";
@@ -40,6 +10,7 @@ import * as NodeOS from "node:os";
 
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
@@ -52,18 +23,8 @@ const DEFAULT_THRESHOLD_MS = 250;
 const SEVERE_THRESHOLD_MS = 5_000;
 
 /**
- * CPU accounting, so a stall can be attributed rather than guessed at.
- *
- * A stall says the loop was unavailable; it does not say why. These two numbers
- * separate the only answers that matter:
- *
- * - `selfCpuPct` high  -> this process was busy. The work is ours to fix.
- * - `selfCpuPct` low while `systemCpuPct` is high -> the machine was contended
- *   and the backend was starved of CPU by something else. Nothing in this
- *   codebase would fix that.
- *
- * Measured over the same window as the stall, so the attribution is local to
- * the event rather than a session average.
+ * High `selfCpuPct`: this process was busy. Low `selfCpuPct` with high `systemCpuPct`: the
+ * backend was starved by something else. Measured over the stall's own window.
  */
 interface CpuSnapshot {
   readonly selfUs: number;
@@ -133,7 +94,11 @@ export const layer = Layer.effectDiscard(
     // A diagnostic that is on by default is a diagnostic nobody asked for; the
     // sampling is cheap, but the file it writes is not something a production
     // install should grow unprompted.
-    if (!process.env.T3_EVENT_LOOP_LAG_MS?.trim() && !process.env.T3_DIAGNOSTICS_FILE?.trim()) {
+    const lagSetting = yield* Config.String("T3_EVENT_LOOP_LAG_MS").pipe(Config.withDefault(""));
+    const diagnosticsFile = yield* Config.String("T3_DIAGNOSTICS_FILE").pipe(
+      Config.withDefault(""),
+    );
+    if (!lagSetting.trim() && !diagnosticsFile.trim()) {
       return;
     }
 
