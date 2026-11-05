@@ -1,5 +1,7 @@
 import type { EnvironmentId, VcsGraphRef } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import { TagIcon } from "lucide-react";
+import type { CSSProperties } from "react";
 
 import { layoutGitGraph } from "~/lib/gitGraphLayout";
 import { cn } from "~/lib/utils";
@@ -7,6 +9,7 @@ import { useNowMinute } from "~/hooks/useNowMinute";
 import { useEnvironmentQuery } from "~/state/query";
 import { vcsEnvironment } from "~/state/vcs";
 
+import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { RefreshIcon } from "../ui/refresh-icon";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -17,43 +20,38 @@ import {
   buildWorktreeRows,
   formatCommitAge,
   groupGraphRefsByOid,
-  remoteChipColors,
+  remoteLabelColor,
   shortOid,
   splitVisibleGraphRefs,
   type GitGraphWorktreeRow,
 } from "./gitGraphPresentation";
 
-/** Remote pills are tinted per remote, so `origin/main` and `upstream/main` differ at a glance. */
+/** Remote refs are tinted per remote, so `origin/main` and `upstream/main` differ at a glance. */
 function RefChip(props: { item: VcsGraphRef }) {
   const { item } = props;
-  const remoteColors =
-    item.kind === "remote" && item.remoteName !== null ? remoteChipColors(item.remoteName) : null;
+  const remoteColor =
+    item.kind === "remote" && item.remoteName !== null && !item.current
+      ? remoteLabelColor(item.remoteName)
+      : null;
 
   return (
-    <span
-      className={cn(
-        // Not inline-flex: ellipsis does not apply to a flex container's anonymous text child.
-        "inline-block min-w-0 max-w-[9rem] truncate rounded-full border px-1.5 py-px align-middle text-3xs leading-4",
+    <Badge
+      size="sm"
+      variant={
         item.current
-          ? "border-primary/50 bg-primary/15 font-medium text-primary"
-          : item.kind === "tag"
-            ? "border-warning/40 bg-warning/10 text-warning-foreground"
-            : remoteColors
-              ? "text-foreground"
-              : item.kind === "remote"
-                ? // A remote whose name git did not resolve; still a pill, just
-                  // without an identity colour.
-                  "border-border bg-muted/60 text-foreground"
-                : "border-border bg-muted text-foreground",
-      )}
-      style={
-        remoteColors
-          ? { borderColor: remoteColors.border, backgroundColor: remoteColors.background }
-          : undefined
+          ? "info"
+          : remoteColor
+            ? "label"
+            : item.kind === "tag"
+              ? "outline"
+              : "secondary"
       }
+      className="min-w-0 max-w-[9rem] shrink justify-start"
+      {...(remoteColor ? { style: { "--label": remoteColor } as CSSProperties } : {})}
     >
-      {item.name}
-    </span>
+      {item.kind === "tag" ? <TagIcon aria-hidden /> : null}
+      <span className="truncate">{item.name}</span>
+    </Badge>
   );
 }
 
@@ -174,9 +172,9 @@ function GitGraphPanel(props: {
                         <RefChip key={`${item.kind}:${item.name}`} item={item} />
                       ))}
                       {overflowCount > 0 ? (
-                        <span className="shrink-0 rounded-full border border-border bg-muted px-1.5 py-px text-3xs leading-4 text-muted-foreground">
+                        <Badge size="sm" variant="outline">
                           +{overflowCount}
-                        </span>
+                        </Badge>
                       ) : null}
                     </span>
                   ) : null}

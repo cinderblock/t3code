@@ -46,21 +46,10 @@ function hashString(value: string): number {
   return hash >>> 0;
 }
 
-export interface RemoteChipColors {
-  readonly border: string;
-  readonly background: string;
-}
-
-/**
- * A stable colour per remote. Only the border and a low-alpha background are tinted: a mid-hue
- * label would lack contrast on a light background, and this must work in both themes.
- */
-export function remoteChipColors(remoteName: string): RemoteChipColors {
+/** A stable colour per remote, for the `label` badge, which mixes it with the theme's text. */
+export function remoteLabelColor(remoteName: string): string {
   const hue = REMOTE_HUES[hashString(remoteName) % REMOTE_HUES.length]!;
-  return {
-    border: `oklch(0.65 0.16 ${hue} / 0.55)`,
-    background: `oklch(0.65 0.16 ${hue} / 0.14)`,
-  };
+  return `oklch(0.65 0.16 ${hue})`;
 }
 
 /** Ranks refs so the labels a reader scans for sit leftmost on the row. */

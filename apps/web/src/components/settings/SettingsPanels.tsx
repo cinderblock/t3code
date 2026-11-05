@@ -966,7 +966,7 @@ export function GeneralSettingsPanel() {
           />
         ) : null}
 
-        {INBOX_ORDER_GROUPS.map(({ group, searchId, label }) => {
+        {INBOX_ORDER_GROUPS.map(({ group, searchId, label }, index) => {
           const direction = settings.sidebarInboxSortDirections[group];
           const defaultDirection = DEFAULT_UNIFIED_SETTINGS.sidebarInboxSortDirections[group];
           const setDirection = (next: SidebarInboxSortDirection) =>
@@ -977,7 +977,11 @@ export function GeneralSettingsPanel() {
             <SettingsRow
               key={group}
               {...searchableSetting(searchId)}
-              description={`How ${label} threads are ordered in the inbox while the Working section is on. Boring sidebar folders list your latest message first, high priority on top.`}
+              description={
+                index === 0
+                  ? `How ${label} threads are ordered while the Working section is on. Boring sidebar folders list your latest message first, high priority on top.`
+                  : `How ${label} threads are ordered while the Working section is on.`
+              }
               resetAction={
                 direction !== defaultDirection ? (
                   <SettingResetButton

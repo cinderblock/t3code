@@ -153,14 +153,9 @@ export function PreviewMoreMenu({
                 </MenuRadioItem>
               </MenuRadioGroup>
               <MenuSeparator />
-              {/*
-                Spelled out rather than hidden behind a hover tooltip: the scope
-                of the rule is the whole point, and it is easy to read this as
-                "all links" otherwise.
-              */}
-              <p className="px-2 py-1.5 text-xs text-muted-foreground">
-                Applies to links that leave the current site. Links within the site, the address
-                bar, and agent navigation always stay in the preview.
+              {/* Spelled out, not a tooltip: it is easy to read this as "all links" otherwise. */}
+              <p className="max-w-56 px-2 py-1.5 text-xs text-muted-foreground">
+                Only links to other sites. The address bar and agents always stay in the preview.
               </p>
             </MenuSubPopup>
           </MenuSub>
