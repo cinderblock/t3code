@@ -559,6 +559,8 @@ type SidebarThreadRowProps = {
   dragOverPinned: boolean;
   sweepAction: SidebarSweepAction | null;
   snoozeWakeLabelText: string | null;
+  /** Set on Blocked rows: names the thread this one waits on. */
+  blockedOnLabelText: string | null;
   /** Holds a send-later message and the Scheduled section is on. */
   scheduled: boolean;
   wokeAt: string | null;
@@ -774,7 +776,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 ? {
                     label: "Scheduled",
                     icon: "scheduled" as const,
-                    className: "text-muted-foreground",
+                    className: "text-info-foreground",
                   }
                 : status === "limited"
                   ? {
@@ -1313,7 +1315,12 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                       !isWoke && "group-any-hover/sidebar-row:opacity-0",
                     )}
                   >
-                    {variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
+                    {variantAction === "unsnooze" && props.blockedOnLabelText !== null ? (
+                      <span className="inline-flex max-w-40 min-w-0 items-center gap-1 text-xs text-muted-foreground">
+                        <CircleDotDashedIcon aria-hidden className="size-3 shrink-0" />
+                        <span className="truncate">{props.blockedOnLabelText}</span>
+                      </span>
+                    ) : variantAction === "unsnooze" && props.snoozeWakeLabelText !== null ? (
                       <span className="inline-flex items-center gap-1 text-xs text-info-foreground tabular-nums">
                         {/* The clock tells a wake time from an age at a glance. */}
                         <AlarmClockIcon aria-hidden className="size-3" />
@@ -1363,7 +1370,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     !props.snoozeSupported ? null : (
                       <button
                         type="button"
-                        aria-label="Wake thread now"
+                        aria-label={
+                          props.blockedOnLabelText !== null ? "Stop waiting" : "Wake thread now"
+                        }
                         onClick={handleUnsnoozeClick}
                         onPointerDown={handleActionPointerDown}
                         className={cn(

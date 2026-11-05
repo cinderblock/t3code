@@ -3769,11 +3769,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             variant={rowVariant}
                             navigationParent={
                               folderRow ??
-                              (section === "working" ||
-                              section === "snoozed" ||
-                              section === "settled"
-                                ? `shelf:${section}`
-                                : undefined)
+                              (section === "pinned" || section === "active"
+                                ? undefined
+                                : `shelf:${section}`)
                             }
                             variantAction={
                               section === "snoozed" || section === "blocked"
@@ -3800,7 +3798,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             scheduled={scheduledThreadKeys.has(
                               `${thread.environmentId}:${thread.id}`,
                             )}
-                            snoozeWakeLabelText={
+                            blockedOnLabelText={
                               section === "blocked" && thread.blockedOn != null
                                 ? blockedOnLabel(
                                     readThreadShell(
@@ -3810,11 +3808,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                       ),
                                     )?.title,
                                   )
-                                : section === "snoozed" && thread.snoozedUntil != null
-                                  ? snoozeWakeLabel(thread.snoozedUntil, {
-                                      now: new Date().toISOString(),
-                                    })
-                                  : null
+                                : null
+                            }
+                            snoozeWakeLabelText={
+                              section === "snoozed" && thread.snoozedUntil != null
+                                ? snoozeWakeLabel(thread.snoozedUntil, {
+                                    now: new Date().toISOString(),
+                                  })
+                                : null
                             }
                             wokeAt={threadWokeAt(thread, { now: snoozeNow })}
                             isActive={routeRowThreadKey === threadKey}
