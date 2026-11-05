@@ -1467,17 +1467,23 @@ function OpenCommandPaletteDialog(props: {
     ) {
       const currentGroup = inboxPriorityGroup(thread.priority);
       for (const [group, label, priority] of [
-        ["high", "High", 1],
-        ["normal", "Normal", null],
-        ["low", "Low", -1],
+        ["high", "high", 1],
+        ["normal", "normal", null],
+        ["low", "low", -1],
       ] as const) {
         actionItems.push({
           kind: "action",
           value: `action:thread-priority-${group}`,
           searchTerms: ["priority", "thread priority", group, "sort", "inbox"],
-          title: `Set thread priority: ${label}`,
+          title: `Set priority to ${label}`,
           icon: <ArrowUpDownIcon className={ITEM_ICON_CLASS} />,
-          ...(currentGroup === group ? { description: "Current" } : {}),
+          ...(currentGroup === group
+            ? {
+                titleTrailingContent: (
+                  <CheckIcon className="ms-auto size-4 shrink-0 text-muted-foreground/70" />
+                ),
+              }
+            : {}),
           run: async () => {
             const result = await setThreadPriority({
               environmentId: thread.environmentId,

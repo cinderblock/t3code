@@ -297,6 +297,7 @@ export function UsageStatusBar(props: {
 
   // Advance the clock while visible, and at once on becoming visible again so
   // a catch-up read starts the moment the strip is back on screen.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- interval timer and document visibility listener drive the countdown clock
   useEffect(() => {
     const tick = () => {
       if (document.visibilityState === "visible") setNowMs(Date.now());
@@ -313,12 +314,9 @@ export function UsageStatusBar(props: {
   useUsageAutoRefresh({ environmentId, checkedMs, nowMs, refreshIntervalMs });
   const stale = usageIsStale(checkedMs, nowMs, refreshIntervalMs);
 
-  /*
-   * Each section is a clipped wrapper whose height is animated by CSS between
-   * 0 and its content's natural height. The content always lays out at full
-   * size inside the wrapper, so it can be measured whether the section is
-   * open or closed; the observer keeps the target honest as charts load.
-   */
+  // Sections animate between 0 and their content's natural height, which always lays out at
+  // full size inside a clipped wrapper so it can be measured open or closed.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- ResizeObserver measures the DOM sections the height animation targets
   useEffect(() => {
     if (!chartsInner || !metersInner) return;
     const measure = () => {
@@ -339,7 +337,7 @@ export function UsageStatusBar(props: {
       .join(", ");
     return (
       <div className="-mt-2 w-full shrink-0">
-        <div className="mx-auto w-full max-w-3xl">
+        <div className="mx-auto w-full max-w-(--chat-content-max-width)">
           <div
             data-usage-bubble="true"
             className="alert-glass overflow-hidden rounded-t-2xl border border-b-0 border-border/60 shadow-sm"
@@ -376,7 +374,7 @@ export function UsageStatusBar(props: {
     headlineNotice !== null
       ? headlineNotice
       : checkedMs !== null
-        ? `updated ${formatClockTime(checkedMs)} (${formatUsageAge(checkedMs, nowMs)})`
+        ? `Updated ${formatClockTime(checkedMs)} (${formatUsageAge(checkedMs, nowMs)})`
         : null,
     pendingQueuedCount > 0
       ? `${pendingQueuedCount} queued message${pendingQueuedCount === 1 ? "" : "s"}`
@@ -386,13 +384,10 @@ export function UsageStatusBar(props: {
     .join(" · ");
 
   return (
-    // Rendered inside the composer's column, which already supplies the
-    // horizontal inset; matching its max-width keeps the bubble exactly as
-    // wide as the input box.
-    // Negative top margin trims the composer's safe-area spacer above, which
-    // otherwise leaves a wide gap between the input and this bubble.
+    // Matching the composer column's max-width keeps the bubble as wide as the input box. The
+    // negative top margin trims the composer's safe-area spacer above.
     <div className="-mt-2 w-full shrink-0">
-      <div className="mx-auto w-full max-w-3xl">
+      <div className="mx-auto w-full max-w-(--chat-content-max-width)">
         {/*
          * One bubble sitting flush against the bottom edge of the window, so
          * only the top corners are rounded. Expanding grows it upward: the
@@ -422,18 +417,15 @@ export function UsageStatusBar(props: {
                       {headlineStatus}
                     </span>
                   ) : null}
-                  <button
-                    type="button"
+                  <Button
+                    variant="ghost-muted"
+                    size="icon-micro"
                     onClick={() => setExpanded(false)}
                     aria-label="Collapse usage details"
                     tabIndex={expanded ? undefined : -1}
-                    className={cn(
-                      "flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground outline-none",
-                      "hover:bg-accent/40 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset",
-                    )}
                   >
-                    <ChevronDownIcon className="size-3.5" />
-                  </button>
+                    <ChevronDownIcon />
+                  </Button>
                 </span>
               </div>
               <div className="max-h-[45dvh] overflow-y-auto px-3 pt-1 pb-2.5">

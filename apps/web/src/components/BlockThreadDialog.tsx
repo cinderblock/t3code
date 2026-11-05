@@ -1,4 +1,5 @@
 import type { ThreadBlockUntil } from "@t3tools/contracts";
+import { CheckIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { create } from "zustand";
 
@@ -77,13 +78,15 @@ export function AwaitedThreadPicker(props: {
             aria-selected={props.value === thread.id}
             onClick={() => props.onChange(thread.id)}
             className={cn(
-              "cursor-pointer truncate rounded-md px-2 py-1.5 text-left text-xs",
-              props.value === thread.id
-                ? "bg-primary/10 text-foreground"
-                : "text-muted-foreground hover:bg-accent hover:text-foreground",
+              "flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent hover:text-foreground",
+              props.value === thread.id ? "text-foreground" : "text-muted-foreground",
             )}
           >
-            {thread.title}
+            <span className="min-w-0 flex-1 truncate">{thread.title}</span>
+            <CheckIcon
+              aria-hidden
+              className={cn("size-3.5 shrink-0", props.value !== thread.id && "invisible")}
+            />
           </button>
         ))}
       </div>
@@ -113,7 +116,7 @@ export function AwaitedUntilToggle(props: {
 
 export function BlockThreadDialogHost() {
   const request = useRequest((state) => state.request);
-  // oxlint-disable-next-line t3code/react-effect-budget -- Settles the caller's promise if the host unmounts.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- settles the pending caller promise, held outside React, when the host unmounts
   useEffect(() => () => finish(null), []);
   return request ? <BlockThreadDialog target={request.target} /> : null;
 }
@@ -146,7 +149,7 @@ function BlockThreadDialog(props: { readonly target: BlockTarget }) {
           </div>
         </DialogPanel>
         <DialogFooter>
-          <Button variant="ghost" onClick={() => finish(null)}>
+          <Button variant="outline" onClick={() => finish(null)}>
             Cancel
           </Button>
           <Button

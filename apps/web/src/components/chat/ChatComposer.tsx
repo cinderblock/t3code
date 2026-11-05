@@ -239,6 +239,7 @@ import { observeResize } from "~/lib/observeResize";
 
 const isEnvironmentRequestInvalidError = Schema.is(EnvironmentRequestInvalidError);
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import { BuildingIcon, ClockIcon, PlayIcon } from "lucide-react";
 import { Button } from "../ui/button";
@@ -3540,19 +3541,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       open={isQueueTriggerPickerOpen}
                       onOpenChange={setIsQueueTriggerPickerOpen}
                     >
-                      <PopoverTrigger
-                        render={
-                          <Button
-                            type="button"
-                            variant="ghost-muted"
-                            size="icon-sm"
-                            disabled={queueDraftDisabled}
-                            aria-label="Queue message to send later"
-                          />
-                        }
-                      >
-                        <ClockIcon className="size-4" />
-                      </PopoverTrigger>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <PopoverTrigger
+                              render={
+                                <Button
+                                  type="button"
+                                  variant="ghost-muted"
+                                  size="icon-sm"
+                                  disabled={queueDraftDisabled}
+                                  aria-label="Queue message to send later"
+                                />
+                              }
+                            />
+                          }
+                        >
+                          <ClockIcon />
+                        </TooltipTrigger>
+                        <TooltipPopup side="top">Send later</TooltipPopup>
+                      </Tooltip>
                       <PopoverPopup side="top" align="end" className="w-72 max-w-none">
                         <QueuedMessageTriggerForm
                           accounts={usageAccounts}

@@ -1,6 +1,5 @@
 import { ThreadId, type QueuedMessageTrigger, type ThreadBlockUntil } from "@t3tools/contracts";
 import { useState } from "react";
-import { cn } from "~/lib/utils";
 import type { UsageAccountView } from "../../state/quota";
 import {
   accountWindowIdForKind,
@@ -10,6 +9,8 @@ import {
 import { AwaitedThreadPicker, AwaitedUntilToggle } from "../BlockThreadDialog";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
+import { Radio, RadioGroup } from "../ui/radio-group";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 
 const DEFAULT_HEADROOM_PERCENT = 20;
 const DEFAULT_HEADROOM_LEAD_MINUTES = 60;
@@ -205,25 +206,24 @@ export function QueuedMessageTriggerForm(props: {
   return (
     <div className="flex flex-col gap-2">
       <div className="font-medium text-muted-foreground text-xs">Send later</div>
-      <div className="flex flex-col gap-1" role="radiogroup" aria-label="Send trigger">
+      <RadioGroup
+        aria-label="Send trigger"
+        value={choice}
+        onValueChange={(value) => {
+          const next = choiceOptions.find((option) => option.value === value);
+          if (next) setChoice(next.value);
+        }}
+      >
         {choiceOptions.map((option) => (
-          <button
+          <label
             key={option.value}
-            type="button"
-            role="radio"
-            aria-checked={choice === option.value}
-            onClick={() => setChoice(option.value)}
-            className={cn(
-              "cursor-pointer rounded-md border px-2.5 py-1.5 text-left text-xs transition-colors",
-              choice === option.value
-                ? "border-primary/45 bg-primary/10 text-foreground"
-                : "border-border/65 text-muted-foreground hover:bg-accent hover:text-foreground",
-            )}
+            className="flex cursor-pointer items-center gap-2 text-xs text-foreground"
           >
+            <Radio value={option.value} />
             {option.label}
-          </button>
+          </label>
         ))}
-      </div>
+      </RadioGroup>
       {choice === "at" ? (
         <label className="flex flex-col gap-1 text-muted-foreground text-xs">
           Send at
@@ -260,25 +260,18 @@ export function QueuedMessageTriggerForm(props: {
             />
             <span className="whitespace-nowrap">% remaining</span>
           </label>
-          <div className="flex items-center gap-1" role="radiogroup" aria-label="Headroom window">
-            {(["session", "weekly"] as const).map((window) => (
-              <button
-                key={window}
-                type="button"
-                role="radio"
-                aria-checked={headroomWindow === window}
-                onClick={() => setHeadroomWindow(window)}
-                className={cn(
-                  "cursor-pointer rounded-md border px-2 py-1 text-xs transition-colors",
-                  headroomWindow === window
-                    ? "border-primary/45 bg-primary/10 text-foreground"
-                    : "border-border/65 text-muted-foreground hover:bg-accent hover:text-foreground",
-                )}
-              >
-                {window === "session" ? "5-hour window" : "Weekly window"}
-              </button>
-            ))}
-          </div>
+          <ToggleGroup
+            aria-label="Headroom window"
+            className="w-full *:flex-1"
+            value={[headroomWindow]}
+            onValueChange={(next) => {
+              const value = next[0];
+              if (value === "session" || value === "weekly") setHeadroomWindow(value);
+            }}
+          >
+            <Toggle value="session">5-hour window</Toggle>
+            <Toggle value="weekly">Weekly window</Toggle>
+          </ToggleGroup>
           <div className="text-2xs text-muted-foreground/70">
             Sends within {DEFAULT_HEADROOM_LEAD_MINUTES} minutes of the window reset.
           </div>

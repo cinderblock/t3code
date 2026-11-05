@@ -235,7 +235,7 @@ On mobile, blocked threads appear in **Snoozed**, and waking one ends the block.
 ### Set thread priority
 
 Open a thread's menu and choose **Priority**, then **High**, **Normal**, or **Low**. On web and
-desktop you can also use **Set thread priority** in the command palette, or bind keys to the
+desktop you can also search the command palette for **Set priority to high** (or normal, low), or bind keys to the
 **Thread: Priority: Raise** and **Thread: Priority: Lower** commands in
 [Keybindings](./keybindings.md). Choose **Normal** to clear it.
 

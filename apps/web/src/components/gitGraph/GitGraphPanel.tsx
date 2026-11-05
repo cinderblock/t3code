@@ -1,6 +1,5 @@
 import type { EnvironmentId, VcsGraphRef } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import { RefreshCwIcon } from "lucide-react";
 
 import { layoutGitGraph } from "~/lib/gitGraphLayout";
 import { cn } from "~/lib/utils";
@@ -9,6 +8,9 @@ import { useEnvironmentQuery } from "~/state/query";
 import { vcsEnvironment } from "~/state/vcs";
 
 import { Button } from "../ui/button";
+import { RefreshIcon } from "../ui/refresh-icon";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { FILE_SURFACE_SUBHEADER_CLASS } from "../files/fileSurfaceChrome";
 import { Skeleton } from "../ui/skeleton";
 import { GitGraphRowGlyph, GIT_GRAPH_LANE_WIDTH, GIT_GRAPH_ROW_HEIGHT } from "./GitGraphRowGlyph";
 import {
@@ -93,7 +95,7 @@ function GitGraphPanel(props: {
   const nowMs = Date.parse(`${nowMinute}:00.000Z`);
 
   const header = (
-    <div className="flex items-center justify-between gap-2 px-4" data-surface-subheader>
+    <div className={cn(FILE_SURFACE_SUBHEADER_CLASS, "justify-between")} data-surface-subheader>
       <span className="truncate text-sm font-medium">History</span>
       <div className="flex shrink-0 items-center gap-2">
         {snapshot ? (
@@ -102,16 +104,23 @@ function GitGraphPanel(props: {
             {snapshot.nextCursor === null ? "" : "+"} commits
           </span>
         ) : null}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-7"
-          onClick={snapshotQuery.refresh}
-          disabled={cwd === null}
-          aria-label="Refresh history"
-        >
-          <RefreshCwIcon className={cn("size-4", snapshotQuery.isPending && "animate-spin")} />
-        </Button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                onClick={snapshotQuery.refresh}
+                disabled={cwd === null}
+                aria-label="Refresh history"
+              />
+            }
+          >
+            <RefreshIcon refreshing={snapshotQuery.isPending} />
+          </TooltipTrigger>
+          <TooltipPopup>{snapshotQuery.isPending ? "Refreshing…" : "Refresh history"}</TooltipPopup>
+        </Tooltip>
       </div>
     </div>
   );
