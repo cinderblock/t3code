@@ -1,5 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
-import { useState } from "react";
+import { useLayoutEffect, useState } from "react";
 import type {
   EnvironmentId,
   ProviderInstanceId,
@@ -9,6 +9,7 @@ import type {
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
 
+import { observeResize } from "~/lib/observeResize";
 import { usageEnvironment } from "../../state/quota";
 import {
   formatPercent,
@@ -19,13 +20,13 @@ import {
   windowShortLabel,
 } from "./usagePresentation";
 
-const CHART_WIDTH = 640;
+/** Until the first measure; afterwards the chart draws at its real width so labels keep their size. */
+const DEFAULT_CHART_WIDTH = 640;
 const CHART_HEIGHT = 132;
 const PAD_LEFT = 30;
 const PAD_RIGHT = 8;
 const PAD_TOP = 8;
 const PAD_BOTTOM = 18;
-const PLOT_WIDTH = CHART_WIDTH - PAD_LEFT - PAD_RIGHT;
 const PLOT_HEIGHT = CHART_HEIGHT - PAD_TOP - PAD_BOTTOM;
 /**
  * Without a reset time the domain is anchored on "now", which changes every
@@ -37,12 +38,17 @@ const ANCHOR_BUCKET_MS = 5 * 60_000;
 interface ChartDomain {
   readonly startMs: number;
   readonly endMs: number;
+  readonly width: number;
+}
+
+function plotWidth(width: number): number {
+  return Math.max(1, width - PAD_LEFT - PAD_RIGHT);
 }
 
 function timeToX(timeMs: number, domain: ChartDomain): number {
   const span = Math.max(1, domain.endMs - domain.startMs);
   const fraction = (timeMs - domain.startMs) / span;
-  return PAD_LEFT + Math.max(0, Math.min(1, fraction)) * PLOT_WIDTH;
+  return PAD_LEFT + Math.max(0, Math.min(1, fraction)) * plotWidth(domain.width);
 }
 
 function percentToY(percent: number): number {
@@ -117,13 +123,12 @@ function SeriesLine(props: {
       <circle cx={lastX} cy={lastY} r={3} fill="currentColor" />
       {/* Direct label at the line end — identity is never color-alone. */}
       <text
-        x={lastX > CHART_WIDTH - 90 ? lastX - 6 : lastX + 6}
+        x={lastX > domain.width - 110 ? lastX - 6 : lastX + 6}
         y={Math.max(lastY - 5, PAD_TOP + 8)}
-        className="fill-muted-foreground"
-        fontSize={9}
-        textAnchor={lastX > CHART_WIDTH - 90 ? "end" : "start"}
+        className="fill-muted-foreground text-3xs"
+        textAnchor={lastX > domain.width - 110 ? "end" : "start"}
       >
-        {windowShortLabel(window)} {formatPercent(last.percent)}
+        {windowShortLabel(window)} {formatPercent(last.percent)} used
       </text>
       {hoverSample !== null ? (
         <g>
@@ -138,10 +143,9 @@ function SeriesLine(props: {
           <text
             x={timeToX(Date.parse(hoverSample.capturedAt), domain) + 6}
             y={percentToY(hoverSample.percent) - 5}
-            fontSize={9}
-            className="fill-foreground"
+            className="fill-foreground text-3xs"
           >
-            {formatPercent(hoverSample.percent)}
+            {formatPercent(hoverSample.percent)} used
           </text>
         </g>
       ) : null}
@@ -160,9 +164,22 @@ export function UsageHistoryChart(props: {
   /** The strip's clock, so the chart's "now" ticks with the meters. */
   nowMs: number;
   title: string;
+  color: string;
 }) {
-  const { environmentId, instanceId, windows, nowMs, title } = props;
+  const { environmentId, instanceId, windows, nowMs, title, color } = props;
   const [hoverX, setHoverX] = useState<number | null>(null);
+  const [svg, setSvg] = useState<SVGSVGElement | null>(null);
+  const [width, setWidth] = useState(DEFAULT_CHART_WIDTH);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- ResizeObserver measures the SVG so its user units stay 1:1 with pixels
+  useLayoutEffect(() => {
+    if (!svg) return;
+    const measure = () => {
+      const measured = Math.round(svg.getBoundingClientRect().width);
+      if (measured > 0) setWidth(measured);
+    };
+    measure();
+    return observeResize(svg, measure);
+  }, [svg]);
 
   const referenceWindow =
     windows.find((window) => windowScopeName(window) === null) ?? windows[0] ?? null;
@@ -174,11 +191,11 @@ export function UsageHistoryChart(props: {
     : Math.floor(nowMs / ANCHOR_BUCKET_MS) * ANCHOR_BUCKET_MS;
   const endMs = Math.max(anchorMs, nowMs);
   const startMs = anchorMs - hours * 3600_000;
-  const domain: ChartDomain = { startMs, endMs };
+  const domain: ChartDomain = { startMs, endMs, width };
   const since = new Date(startMs).toISOString();
 
   const hoverTimeMs =
-    hoverX === null ? null : startMs + ((hoverX - PAD_LEFT) / PLOT_WIDTH) * (endMs - startMs);
+    hoverX === null ? null : startMs + ((hoverX - PAD_LEFT) / plotWidth(width)) * (endMs - startMs);
   const nowX = timeToX(nowMs, domain);
 
   return (
@@ -189,7 +206,7 @@ export function UsageHistoryChart(props: {
         {windows.length > 1 ? (
           <span className="flex flex-wrap items-center gap-2">
             {windows.map((window, index) => {
-              const style = seriesStyle(index);
+              const style = seriesStyle(index, color);
               return (
                 <span
                   key={window.id}
@@ -214,14 +231,15 @@ export function UsageHistoryChart(props: {
         ) : null}
       </div>
       <svg
-        viewBox={`0 0 ${CHART_WIDTH} ${CHART_HEIGHT}`}
+        ref={setSvg}
+        viewBox={`0 0 ${width} ${CHART_HEIGHT}`}
         className="w-full"
         role="img"
         aria-label={`${title} usage history`}
         onMouseMove={(event) => {
           const rect = event.currentTarget.getBoundingClientRect();
-          const x = ((event.clientX - rect.left) / rect.width) * CHART_WIDTH;
-          setHoverX(x >= PAD_LEFT && x <= CHART_WIDTH - PAD_RIGHT ? x : null);
+          const x = ((event.clientX - rect.left) / rect.width) * width;
+          setHoverX(x >= PAD_LEFT && x <= width - PAD_RIGHT ? x : null);
         }}
         onMouseLeave={() => setHoverX(null)}
       >
@@ -230,7 +248,7 @@ export function UsageHistoryChart(props: {
           <g key={percent}>
             <line
               x1={PAD_LEFT}
-              x2={CHART_WIDTH - PAD_RIGHT}
+              x2={width - PAD_RIGHT}
               y1={percentToY(percent)}
               y2={percentToY(percent)}
               stroke="currentColor"
@@ -242,8 +260,7 @@ export function UsageHistoryChart(props: {
               x={PAD_LEFT - 4}
               y={percentToY(percent) + 3}
               textAnchor="end"
-              fontSize={9}
-              className="fill-muted-foreground/70"
+              className="fill-muted-foreground/70 text-3xs"
             >
               {percent}
             </text>
@@ -274,8 +291,7 @@ export function UsageHistoryChart(props: {
           x={nowX}
           y={CHART_HEIGHT - 6}
           textAnchor="middle"
-          fontSize={9}
-          className="fill-muted-foreground/60"
+          className="fill-muted-foreground/60 text-3xs"
         >
           now
         </text>
@@ -291,11 +307,10 @@ export function UsageHistoryChart(props: {
               strokeWidth={1}
             />
             <text
-              x={hoverX > CHART_WIDTH / 2 ? hoverX - 6 : hoverX + 6}
+              x={hoverX > width / 2 ? hoverX - 6 : hoverX + 6}
               y={CHART_HEIGHT - 6}
-              textAnchor={hoverX > CHART_WIDTH / 2 ? "end" : "start"}
-              fontSize={9}
-              className="fill-muted-foreground"
+              textAnchor={hoverX > width / 2 ? "end" : "start"}
+              className="fill-muted-foreground text-3xs"
             >
               {new Date(hoverTimeMs).toLocaleString(undefined, {
                 ...(hours > 24 ? { weekday: "short" as const } : {}),
@@ -311,7 +326,7 @@ export function UsageHistoryChart(props: {
             environmentId={environmentId}
             instanceId={instanceId}
             window={window}
-            style={seriesStyle(index)}
+            style={seriesStyle(index, color)}
             since={since}
             domain={domain}
             hoverTimeMs={hoverTimeMs}

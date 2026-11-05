@@ -6,7 +6,12 @@ import type {
   ProviderInstanceId,
   ServerProviderUsageWindow,
 } from "@t3tools/contracts";
-import { elapsedShare, formatResetsIn } from "@t3tools/shared/usageLimits";
+import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
+import {
+  formatResetsIn,
+  paceRemainingPercent,
+  remainingPercent,
+} from "@t3tools/shared/usageLimits";
 
 import { observeResize } from "~/lib/observeResize";
 import { cn } from "~/lib/utils";
@@ -21,11 +26,10 @@ import {
 } from "../../state/quota";
 import { providerClients } from "../settings/providerDriverMeta";
 import { Button } from "../ui/button";
-import { ResetCredits } from "../usage/UsageLimits";
+import { barColor, ResetCredits } from "../usage/UsageLimits";
 import { UsageHistoryChart } from "./UsageHistoryChart";
 import {
   emphasizedWeeklyWindowId,
-  formatPercent,
   formatUsageAge,
   oldestUsageCheckMs,
   selectedModelSlugForAccount,
@@ -47,13 +51,15 @@ const CLOCK_TICK_MS = 30_000;
 function WindowMeter(props: {
   window: ServerProviderUsageWindow;
   emphasized: boolean;
+  color: string;
   nowMs: number;
 }) {
-  const { window, emphasized, nowMs } = props;
-  const percent = Math.max(0, Math.min(100, window.usedPercent));
+  const { window, emphasized, color, nowMs } = props;
+  // Reads as room left, like upstream's Limits bars, so the two never disagree side by side.
+  const left = remainingPercent(window);
   const resetsIn = formatResetsIn(window, nowMs);
-  // Where even spending would have the fill by now, as upstream's Limits bars mark it.
-  const elapsed = elapsedShare(window, nowMs);
+  const timeLeft = paceRemainingPercent(window, nowMs);
+  const toneClass = severityMeterClass(window);
   return (
     <span
       className={cn(
@@ -77,22 +83,17 @@ function WindowMeter(props: {
         role="progressbar"
         aria-valuemin={0}
         aria-valuemax={100}
-        aria-valuenow={Math.round(percent)}
-        aria-label={`${windowLongLabel(window)}: ${formatPercent(window.usedPercent)} used${resetsIn ? `, ${resetsIn}` : ""}`}
+        aria-valuenow={left}
+        aria-label={`${windowLongLabel(window)}: ${left}% left${resetsIn ? `, ${resetsIn}` : ""}`}
       >
-        {/*
-         * The track has to read as the full 0–100% domain, otherwise on dark
-         * backgrounds the unfilled remainder disappears and you can't tell
-         * where one meter ends and the next begins. An inset ring gives it a
-         * definite end in every theme.
-         */}
+        {/* An inset ring gives the empty track a definite end on dark backgrounds. */}
         <span className="absolute inset-0 overflow-hidden rounded-full bg-muted ring-1 ring-border ring-inset">
           <span
             className={cn(
               "absolute inset-y-0 left-0 rounded-full transition-[width] duration-500 ease-out motion-reduce:transition-none",
-              severityMeterClass(window),
+              toneClass,
             )}
-            style={{ width: `${percent}%` }}
+            style={{ width: `${left}%`, ...(toneClass === null ? { backgroundColor: color } : {}) }}
           />
           {/* Quartile ticks, drawn over the fill so they stay legible. */}
           {[25, 50, 75].map((tick) => (
@@ -103,11 +104,11 @@ function WindowMeter(props: {
             />
           ))}
         </span>
-        {elapsed !== null ? (
+        {timeLeft !== null ? (
           <span
             aria-hidden
             className="absolute -inset-y-0.5 w-px -translate-x-1/2 bg-foreground/70"
-            style={{ left: `${elapsed * 100}%` }}
+            style={{ left: `${timeLeft}%` }}
           />
         ) : null}
       </span>
@@ -117,7 +118,7 @@ function WindowMeter(props: {
           emphasized ? "font-medium text-foreground/80" : "text-muted-foreground",
         )}
       >
-        {formatPercent(window.usedPercent)}
+        {left}% left
       </span>
     </span>
   );
@@ -146,6 +147,7 @@ function AccountMeters(props: {
 
   const windows = sortWindowsForDisplay(account.limits.windows);
   const emphasizedWeeklyId = emphasizedWeeklyWindowId(windows, selectedModel);
+  const color = accountColor(account);
 
   return (
     <span className="flex min-w-0 flex-1 items-center gap-3">
@@ -157,6 +159,7 @@ function AccountMeters(props: {
           key={window.id}
           window={window}
           emphasized={window.kind === "session" || window.id === emphasizedWeeklyId}
+          color={color}
           nowMs={nowMs}
         />
       ))}
@@ -210,6 +213,7 @@ function ExpandedPanel(props: {
           );
         }
         const windows = sortWindowsForDisplay(account.limits.windows);
+        const color = accountColor(account);
         const sessionWindows = windows.filter((window) => window.kind === "session");
         const weeklyWindows = windows.filter((window) => window.kind === "weekly");
         const otherWindows = windows.filter(
@@ -233,6 +237,7 @@ function ExpandedPanel(props: {
                 instanceId={account.instanceId}
                 windows={sessionWindows}
                 nowMs={nowMs}
+                color={color}
                 title={`5-hour window${sessionEta ? ` · ${sessionEta}` : ""}`}
               />
             ) : null}
@@ -242,6 +247,7 @@ function ExpandedPanel(props: {
                 instanceId={account.instanceId}
                 windows={weeklyWindows}
                 nowMs={nowMs}
+                color={color}
                 title={`Weekly windows${weeklyEta ? ` · ${weeklyEta}` : ""}`}
               />
             ) : null}
@@ -252,6 +258,7 @@ function ExpandedPanel(props: {
                 instanceId={account.instanceId}
                 windows={[window]}
                 nowMs={nowMs}
+                color={color}
                 title={windowLongLabel(window)}
               />
             ))}
@@ -261,6 +268,10 @@ function ExpandedPanel(props: {
       })}
     </div>
   );
+}
+
+function accountColor(account: UsageAccountView): string {
+  return normalizeProviderAccentColor(account.accentColor) ?? barColor(account.driver);
 }
 
 function driverLabel(account: UsageAccountView): string {

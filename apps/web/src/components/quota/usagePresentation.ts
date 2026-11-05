@@ -11,13 +11,9 @@ import type { UsageAccountView } from "../../state/quota";
 export { windowScopeName };
 
 /**
- * Presentation helpers for the usage meters. Kept free of React so the
- * ordering/emphasis rules are unit-testable.
- *
- * Windows are upstream's `ServerProviderUsageWindow`: a provider-assigned id
- * (`five_hour`, `seven_day`, `seven_day_fable`), a kind, a label and a used
- * percentage. A model-scoped window is labelled `<Kind> · <Model>` (Claude's
- * `Weekly · Fable`); an account-wide window carries the kind's generic label.
+ * Pure helpers for the usage meters, so the ordering and emphasis rules are unit-testable. A
+ * model-scoped window is labelled `<Kind> · <Model>` (Claude's `Weekly · Fable`); an account-wide
+ * window carries the kind's generic label.
  */
 
 export interface SeriesStyle {
@@ -26,21 +22,15 @@ export interface SeriesStyle {
 }
 
 /**
- * Chart series drawn from the active theme rather than a fixed palette, so
- * every theme (including imported VS Code ones) colours them. Themes carry no
- * categorical palette, so series past the first step away from the accent in
- * colour and dash together; the direct label at each line end carries
- * identity, never colour alone.
+ * Chart series in the provider's color, matching the meters. Series past the first step away from
+ * it in colour and dash together; the label at each line end carries identity, never colour alone.
  */
-const SERIES_STYLES: ReadonlyArray<SeriesStyle> = [
-  { color: "var(--primary)", dashArray: undefined },
-  { color: "color-mix(in oklab, var(--primary) 50%, var(--foreground))", dashArray: "6 3" },
-  { color: "var(--muted-foreground)", dashArray: "2 3" },
-];
-
-/** Style for the `index`th series of a chart whose windows are in display order. */
-export function seriesStyle(index: number): SeriesStyle {
-  return SERIES_STYLES[Math.min(index, SERIES_STYLES.length - 1)]!;
+export function seriesStyle(index: number, color: string): SeriesStyle {
+  if (index === 0) return { color, dashArray: undefined };
+  if (index === 1) {
+    return { color: `color-mix(in oklab, ${color} 50%, var(--foreground))`, dashArray: "6 3" };
+  }
+  return { color: "var(--muted-foreground)", dashArray: "2 3" };
 }
 
 /** Nominal window length in hours, from the provider when it says, else by kind. */
@@ -169,8 +159,8 @@ export function windowSeverity(window: ServerProviderUsageWindow): UsageSeverity
   return "normal";
 }
 
-/** Theme roles only, so the meters follow whichever theme is active. */
-export function severityMeterClass(window: ServerProviderUsageWindow): string {
+/** Near the cap a meter turns warning or destructive; otherwise it keeps the provider's color. */
+export function severityMeterClass(window: ServerProviderUsageWindow): string | null {
   switch (windowSeverity(window)) {
     case "exceeded":
     case "critical":
@@ -178,7 +168,7 @@ export function severityMeterClass(window: ServerProviderUsageWindow): string {
     case "warning":
       return "bg-warning";
     case "normal":
-      return "bg-primary";
+      return null;
   }
 }
 

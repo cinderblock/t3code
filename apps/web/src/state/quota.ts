@@ -40,6 +40,7 @@ export interface UsageAccountView {
   readonly email: string | undefined;
   /** Plan as the provider labels it (`Max 20x`), when it says. */
   readonly plan: string | undefined;
+  readonly accentColor: string | undefined;
   /** The freshest limits any instance on the account published. */
   readonly limits: ServerProviderUsageLimits;
 }
@@ -64,6 +65,7 @@ export function groupUsageAccounts(
         label: provider.displayName?.trim() || String(provider.instanceId),
         email,
         plan: provider.auth.label,
+        accentColor: provider.accentColor,
         limits,
       });
       continue;
@@ -73,6 +75,7 @@ export function groupUsageAccounts(
       ...previous,
       instanceIds: [...previous.instanceIds, provider.instanceId],
       plan: previous.plan ?? provider.auth.label,
+      accentColor: previous.accentColor ?? provider.accentColor,
       limits: fresher ? limits : previous.limits,
     });
   }
