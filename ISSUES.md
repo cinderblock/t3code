@@ -120,6 +120,11 @@ that tab. Not diagnosed. If it is the user's typing in the app, those keys go mi
 can't see. Setting text from the page and blurring the editor stopped it. Also seen in the same session: `preview_act`
 clicks timing out on some controls, and "No preview automation host" for about a minute afterwards.
 
+Seen again 2026-11-05 2:35 AM PST (10:35Z): in a tab opened with `open: false` on a dev server,
+`preview_snapshot` timed out every time (with and without an image), and a right-click via
+`preview_act` timed out with no menu opening. `preview_evaluate` worked. A hidden tab apparently
+neither paints nor takes input, which rules out hidden-tab visual checks entirely.
+
 ## mcp-tool-use eval's toolkit list is kept by hand
 
 `t3SourceTools` in `evals/mcp-tool-use/run.ts` repeats `McpHttpServer.layerTools` by hand. A new toolkit

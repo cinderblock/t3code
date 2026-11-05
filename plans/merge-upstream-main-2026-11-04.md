@@ -18,15 +18,47 @@ Predecessor: [`merge-upstream-main-2026-10-27.md`](./merge-upstream-main-2026-10
 
 ## What "the new beta UI" means
 
-Upstream has a **Settings → Labs → Beta** section (`LabsSettingsPanel.tsx`). Its main UI item is the
-**boring sidebar** (`boringSidebarEnabled`, #21039 and follow-ups): threads grouped into project
-folders, pinned on top, Snoozed/Settled below the folders, optional two-line rows
-(`boringSidebarMultilineRows`). Other Beta rows (guest links, linked environments, simlock) are
-server features without fork overlap. Interpretation to confirm with the user.
+**Corrected 2026-11-05:** the user pointed at Theo's video "Agents Sucked At UI (Until Today)"
+(https://www.youtube.com/watch?v=xq0eB8vxeqk, 2026-11-03), linked from upstream PR #25251. The beta
+UI is the **New design**, not the boring sidebar:
 
-Fork sidebar features that must work in the boring sidebar: host filter, thread priority arrow +
-inbox order, blocked threads, Scheduled section (send-later), snooze until usage reset, Working
-section behavior, Ctrl+W settle, Alt+Enter send-and-next.
+- #24865 (10-25): UI overhaul behind a Settings → Beta toggle.
+- #25251 (10-26): color back where it means something. Identity icons in color; action and state
+  in T3 blue (`primary`/`info`); semantic add/delete colors; wake times blue with a clock; shelf
+  headers "label, count, chevron"; shelf rows drop the PR number.
+- #25600: dark-mode emphasis. **#25778 (10-27): the new design is the only design, no toggle.**
+  It is in this merge, so every fork surface already renders in the new design.
+- The video covers the process (a model council scoring screenshots), not a spec. Its transcript
+  was saved to session scratch only.
+
+So the job is a design audit of every fork UI surface against the New design, plus a real-client
+visual pass. The boring-sidebar work (below) still stands; it is a separate Beta option.
+
+Fork sidebar features that must also work in the boring sidebar: host filter, thread priority
+arrow + inbox order, blocked threads, Scheduled section (send-later), snooze until usage reset,
+Working section behavior, Ctrl+W settle, Alt+Enter send-and-next.
+
+### New-design audit findings
+
+- [x] Blocked rows reused the snooze wake slot (blue alarm clock, "Wake thread now"). Now a muted
+      waiting icon + truncated "Waiting on X", action "Stop waiting" (`1e50dc14b0`).
+- [x] Scheduled/Blocked rows had no keyboard-tree parent; every shelf now links (`1e50dc14b0`).
+- [x] "Scheduled" row status now `info` blue (`1e50dc14b0`).
+- [x] Audit of other fork surfaces (read-only agent), fixes in `d30315555e`: queue rows on
+      `ComposerBannerStack` (detached); usage strip + queue follow Chat width; trigger picker on
+      RadioGroup/ToggleGroup; block dialog check + outline Cancel; History subheader + RefreshIcon;
+      send-later tooltip; palette "Set priority to high" + check; one primary button on pairing.
+- [ ] **Needs the user:** the usage strip under the composer shows **% used** filling in blue
+      (warning/destructive near the cap); upstream's usage bars show **% left** draining in the
+      provider's color. Same window can read "30%" and "70% left" a few pixels apart.
+- [ ] Not done (nitpicks): usage chart SVG labels use `fontSize={9}` instead of HTML `text-3xs`;
+      git graph ref chips are hand-rolled pills (could be `Badge`), tags use `warning` color;
+      preview menu help paragraph is long; three Inbox-order settings repeat one description.
+- [ ] Real-client visual pass: **blocked.** Worktree
+      `C:\Users\camer\.t3\worktrees\t3code\design-audit-1105` (branch `verify/design-audit-1105`,
+      seeded with `migrate-dev-db`, ports 16169/8129, server stopped). A hidden preview tab neither
+      paints nor takes input (snapshot and right-click time out; see ISSUES.md). Needs a visible
+      preview panel, which the user's keep-off-screen rule says to ask about.
 
 ## Decisions already made (don't re-ask)
 
@@ -103,16 +135,18 @@ Resolution table filled in as files are done.
       Remaining fork lint debt (45 errors, untouched files) logged in ISSUES.md.
 - [x] Merge commit `8131be7e66`; `master` fast-forwarded (2026-11-05 12:33 AM PST).
 - [x] Idle restart watcher started 2026-11-05 12:33 AM PST (08:33Z), pid 31416, via WMI; log
-      `C:	emp	3runs
-  estart-when-idle.log`. It waits for this thread to go idle.
+      `C:\temp\t3runs\restart-when-idle.log`. It waits for this thread to go idle.
 - [x] Worktree + branch removed.
 - [ ] Push `master` to `origin` — user's call (not pushed; previous merges also unpushed).
 
 ## Open questions for the user
 
-1. Is "new beta UI" the boring sidebar (Labs → Beta)? Working assumption: yes.
+1. ~~Is "new beta UI" the boring sidebar?~~ Answered 2026-11-05: it's the New design (see above).
 2. Push `master` to `origin`?
-3. Boring-sidebar behavior choices to confirm: Scheduled stays in folders (no shelf), priority
+3. Usage strip: switch to upstream's "% left" in provider color? Recommendation: yes, so the two
+   usage displays agree.
+4. OK to run the visual pass in a visible preview panel (on screen, inside T3 Code)?
+5. Boring-sidebar behavior choices to confirm: Scheduled stays in folders (no shelf), priority
    orders threads within a folder, Blocked stays a shelf below folders.
 
 ## Things not to do
