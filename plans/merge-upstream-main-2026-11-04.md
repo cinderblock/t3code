@@ -137,7 +137,8 @@ Resolution table filled in as files are done.
       `C:\temp\t3runs\restart-when-idle.log`. It waits for this thread to go idle.
 - [x] Worktree + branch removed.
 - [x] Push `master` to `origin` — approved by the user 2026-11-05.
-- [x] Idle restart watcher restarted after the design fixes (see Progress log tail).
+- [x] Idle restart watcher restarted 2026-11-05 12:40 PM PST (20:40Z), pid 3556, via WMI, after
+      the design fixes were pushed. Same log.
 
 ## Open questions for the user
 
