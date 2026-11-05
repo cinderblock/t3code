@@ -48,17 +48,16 @@ Working section behavior, Ctrl+W settle, Alt+Enter send-and-next.
       `ComposerBannerStack` (detached); usage strip + queue follow Chat width; trigger picker on
       RadioGroup/ToggleGroup; block dialog check + outline Cancel; History subheader + RefreshIcon;
       send-later tooltip; palette "Set priority to high" + check; one primary button on pairing.
-- [ ] **Needs the user:** the usage strip under the composer shows **% used** filling in blue
-      (warning/destructive near the cap); upstream's usage bars show **% left** draining in the
-      provider's color. Same window can read "30%" and "70% left" a few pixels apart.
-- [ ] Not done (nitpicks): usage chart SVG labels use `fontSize={9}` instead of HTML `text-3xs`;
-      git graph ref chips are hand-rolled pills (could be `Badge`), tags use `warning` color;
-      preview menu help paragraph is long; three Inbox-order settings repeat one description.
-- [ ] Real-client visual pass: **blocked.** Worktree
-      `C:\Users\camer\.t3\worktrees\t3code\design-audit-1105` (branch `verify/design-audit-1105`,
-      seeded with `migrate-dev-db`, ports 16169/8129, server stopped). A hidden preview tab neither
-      paints nor takes input (snapshot and right-click time out; see ISSUES.md). Needs a visible
-      preview panel, which the user's keep-off-screen rule says to ask about.
+- [x] Usage strip now reads **% left** in the provider's accent color (warning/destructive near
+      the cap, pace tick at time left), matching upstream's Limits bars. History chart kept (user,
+      2026-11-05): labels say "used", series in the provider color, drawn at measured width so
+      labels stay `text-3xs` (`6657393378`).
+- [x] Nitpicks fixed (`36af67f183`): History refs on `Badge` (current `info`, remotes `label` in
+      per-remote color, tags `outline` + icon); preview External links help cut to one line; only
+      the first Inbox order setting carries the boring-sidebar note.
+- [x] Real-client visual pass: the user will check it in the relaunched desktop app (2026-11-05).
+      A hidden preview tab neither paints nor takes input (see ISSUES.md), so it can't be done
+      headless here.
 
 ## Decisions already made (don't re-ask)
 
@@ -137,17 +136,15 @@ Resolution table filled in as files are done.
 - [x] Idle restart watcher started 2026-11-05 12:33 AM PST (08:33Z), pid 31416, via WMI; log
       `C:\temp\t3runs\restart-when-idle.log`. It waits for this thread to go idle.
 - [x] Worktree + branch removed.
-- [ ] Push `master` to `origin` — user's call (not pushed; previous merges also unpushed).
+- [x] Push `master` to `origin` — approved by the user 2026-11-05.
+- [x] Idle restart watcher restarted after the design fixes (see Progress log tail).
 
 ## Open questions for the user
 
-1. ~~Is "new beta UI" the boring sidebar?~~ Answered 2026-11-05: it's the New design (see above).
-2. Push `master` to `origin`?
-3. Usage strip: switch to upstream's "% left" in provider color? Recommendation: yes, so the two
-   usage displays agree.
-4. OK to run the visual pass in a visible preview panel (on screen, inside T3 Code)?
-5. Boring-sidebar behavior choices to confirm: Scheduled stays in folders (no shelf), priority
-   orders threads within a folder, Blocked stays a shelf below folders.
+All answered 2026-11-05: beta UI is the New design; push yes; usage strip to upstream's style
+(keep the chart); the user does the visual check in the relaunched app; the boring-sidebar choices
+(Scheduled stays in folders, priority within folders, Blocked a shelf) still apply, since the
+boring sidebar survives as a Labs option rendered in the New design.
 
 ## Things not to do
 
