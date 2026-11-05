@@ -52,17 +52,16 @@ same code.
 Neither file is touched by uncommitted work. CI would fail this test, and a skipped component loses
 all memoization. The last commits to touch them are the upstream merge `0f33eeeaee` and `8212f66f55`.
 
-## Fork comments break upstream's new 4-line comment cap (lint)
+## Fork code fails upstream's newer lint rules
 
-Upstream added `t3code(no-low-value-comments)`, which fails lint on comment blocks over four
-lines (and on `@public` followed by prose). Fork code arriving through the 2026-10-27 upstream
-merge has ~35 violations across ~25 files, among them `server/vcs/VcsStatusBroadcaster.ts`,
-`server/vcs/GitVcsDriverCore.ts`, `server/processSpawnObserver.ts`, `server/processRunner.ts`,
-`server/auth/{PublicAccess,AuthAttemptLimiter}.ts`, `client-runtime/connection/supervisor.ts`,
-`contracts/{queuedMessage,rpc,git,settings,auth}.ts`, `desktop/preview/Manager(.test).ts`.
-Reproduce: `vp lint` on any of them. Matters because CI lint is red on fork code until the
-comments are cut to their constraint (keep the why, drop the history; move long history to
-`plans/`).
+The 2026-11-04 upstream merge fixed every violation in files it touched (the pre-commit hook lints
+staged files), but 45 errors remain in 31 fork-only files: 30 `t3code(no-low-value-comments)`
+(fork migrations, `quota/*`, `scripts/*`, `ExternalLinkPolicy.ts`, `webauthn.ts`, contracts
+`queuedMessage`/`quota`), 6 `t3code(no-unreasoned-state-sync)` (`BlockThreadDialog`,
+`PasskeyEnrollmentOffer`, `useUsageAutoRefresh`, `useEnvironmentsSettled`, `UsageStatusBar`),
+7 `t3code(require-disposable-render)` in `AssistantSelectionToolbar.browser.test.tsx`, and 1
+`t3code(namespace-node-imports)`. Reproduce: `vp lint` on any of them. Matters because CI lint is
+red on fork code, and the next commit touching one of these files fails its pre-commit hook.
 
 ## Four test suites fail on Windows regardless of the change under test
 
@@ -94,6 +93,16 @@ images, and paths"), `ProviderTurnStartService.test.ts` (4), `OpenCode2AdapterV2
 `AcpRegistryReplayFixtures.integration.test.ts` (1), `ThreadMessageIntake.test.ts` (1, "claims
 question uploads"). Not confirmed on a clean `master`, and not diagnosed. Matters for the same
 reason as the entry above: a red run hides real regressions.
+
+## More upstream tests fail on Windows (paths and line endings)
+
+Seen 2026-11-04 after the upstream merge, in files the fork does not change: desktop
+`DesktopClientSettings.test.ts` "saves through a symlinked client settings file" (expects
+`dir/client-settings.json`, gets `dir\client-settings.json`); mobile
+`checkout-new-task-branch.test.ts` (8, git output ends in CRLF, test expects LF); server
+`ServerEnvironment.test.ts` "publishes proven install ownership" (mixed separators) and
+`GuestShareService.test.ts` "serves an image on the host only when..." (`${dir}/x.png` paths).
+Matters because red Windows runs hide real regressions.
 
 ## `userInputAttachments.test.ts` fails three path tests on Windows
 

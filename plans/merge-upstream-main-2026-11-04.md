@@ -96,11 +96,24 @@ Resolution table filled in as files are done.
 - [x] `vp fmt` on the 199 files differing from both parents; lint clean except fork
       `no-low-value-comments` (already in ISSUES.md).
 - [x] Boring-sidebar audit of fork features (see the Sidebar row; settings text + `docs/user/thread-sidebar.md` updated).
-- [ ] Merge commit, fast-forward `master`, remove worktree.
+- [x] Pre-commit hook (lint + knip on staged files) forced fork cleanup: 39 long comments trimmed,
+      `GitGraphPanel` brought to upstream's React/shadcn rules, 35 unused fork exports un-exported
+      or deleted (dead `ForkMigrationsLive`, `processSpawnObserver` layers), fork scripts added
+      as knip entries, web `ChatView` back on upstream's `client-runtime` resume-compaction helpers.
+      Remaining fork lint debt (45 errors, untouched files) logged in ISSUES.md.
+- [x] Merge commit `8131be7e66`; `master` fast-forwarded (2026-11-05 12:33 AM PST).
+- [x] Idle restart watcher started 2026-11-05 12:33 AM PST (08:33Z), pid 31416, via WMI; log
+      `C:	emp	3runs
+  estart-when-idle.log`. It waits for this thread to go idle.
+- [x] Worktree + branch removed.
+- [ ] Push `master` to `origin` — user's call (not pushed; previous merges also unpushed).
 
 ## Open questions for the user
 
 1. Is "new beta UI" the boring sidebar (Labs → Beta)? Working assumption: yes.
+2. Push `master` to `origin`?
+3. Boring-sidebar behavior choices to confirm: Scheduled stays in folders (no shelf), priority
+   orders threads within a folder, Blocked stays a shelf below folders.
 
 ## Things not to do
 
